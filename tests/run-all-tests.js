@@ -192,7 +192,7 @@ async function runTests() {
     } else if (msg.type === 'TunnelData') {
       const sock = agentSockets.get(msg.payload.stream_id);
       if (sock) sock.write(Buffer.from(msg.payload.data_base64, 'base64'));
-    } else if (['FileList', 'FileRead', 'FileWrite', 'FileDelete', 'ProcessList', 'ServiceList', 'ServiceAction'].includes(msg.type)) {
+    } else if (['FileList', 'FileRead', 'FileWrite', 'FileDelete', 'ProcessList', 'ProcessKill', 'ProcessStart', 'ProcessDetails', 'ServiceList', 'ServiceAction'].includes(msg.type)) {
       const payload = msg.payload || {};
       const request_id = payload.request_id;
       let result = {};
@@ -217,6 +217,12 @@ async function runTests() {
           { pid: 101, name: 'systemd', user: 'root', cpu_percent: 0.1, memory_mb: 18, status: 'Running' },
           { pid: 9408, name: 'node', user: 'daytona', cpu_percent: 1.2, memory_mb: 48, status: 'Running' }
         ];
+      } else if (msg.type === 'ProcessKill') {
+        result = { pid: payload.pid, killed: true, force: payload.force };
+      } else if (msg.type === 'ProcessStart') {
+        result = { pid: 12345, command: payload.command, started: true };
+      } else if (msg.type === 'ProcessDetails') {
+        result = { pid: payload.pid, name: 'node', exe: '/usr/bin/node', cmdline: 'node server.js', status: 'Running' };
       } else if (msg.type === 'ServiceList') {
         result = [
           { name: 'sshd', display_name: 'OpenSSH Daemon', status: 'Running', startup_type: 'Automatic' },
@@ -467,6 +473,32 @@ async function runTests() {
   const procData = JSON.parse(procRes.body);
   assert.strictEqual(procData.length, 2);
   console.log(`  ✅ Processes retrieved: ${procData.map(p => p.name).join(', ')}`);
+
+  const procDetRes = await request(`${SERVER_URL}/api/v1/processes/details?machine_id=${remoteNodeId}&pid=9408`);
+  assert.strictEqual(procDetRes.statusCode, 200);
+  const procDetData = JSON.parse(procDetRes.body);
+  assert.strictEqual(procDetData.pid, 9408);
+  console.log(`  ✅ Process details verified: PID ${procDetData.pid} (${procDetData.name})`);
+
+  const procStartRes = await request(`${SERVER_URL}/api/v1/processes/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, command: 'ping' })
+  });
+  assert.strictEqual(procStartRes.statusCode, 200);
+  const procStartData = JSON.parse(procStartRes.body);
+  assert.strictEqual(procStartData.started, true);
+  console.log(`  ✅ Process start executed: PID ${procStartData.pid}`);
+
+  const procKillRes = await request(`${SERVER_URL}/api/v1/processes/kill`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, pid: 9408, force: false })
+  });
+  assert.strictEqual(procKillRes.statusCode, 200);
+  const procKillData = JSON.parse(procKillRes.body);
+  assert.strictEqual(procKillData.killed, true);
+  console.log(`  ✅ Process terminate executed: PID ${procKillData.pid}`);
 
   const svcRes = await request(`${SERVER_URL}/api/v1/services?machine_id=${remoteNodeId}`);
   assert.strictEqual(svcRes.statusCode, 200);

@@ -737,13 +737,73 @@ const server = http.createServer(async (req, res) => {
   // 3E. PROCESSES & SERVICES MANAGEMENT API
   if (pathname === '/api/v1/processes' && method === 'GET') {
     const machineId = parsedUrl.searchParams.get('machine_id');
+    const search = parsedUrl.searchParams.get('search') || '';
+    const sort = parsedUrl.searchParams.get('sort') || 'memory';
+    const limit = parseInt(parsedUrl.searchParams.get('limit') || '150', 10);
     if (!machineId) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'machine_id parameter required' }));
       return;
     }
     try {
-      const data = await sendAgentRequest(machineId, 'ProcessList', {});
+      const data = await sendAgentRequest(machineId, 'ProcessList', { search, sort, limit }, 15000);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/processes/kill' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, pid, force } = JSON.parse(body || '{}');
+        if (!machine_id || pid === undefined) throw new Error('machine_id and pid required');
+        const data = await sendAgentRequest(machine_id, 'ProcessKill', { pid: parseInt(pid, 10), force: Boolean(force) }, 12000);
+        logAudit('process_kill', 'user', machine_id, `Killed PID ${pid} (force=${Boolean(force)})`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/processes/start' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, command, args, cwd } = JSON.parse(body || '{}');
+        if (!machine_id || !command) throw new Error('machine_id and command required');
+        const data = await sendAgentRequest(machine_id, 'ProcessStart', { command, args: args || [], cwd }, 12000);
+        logAudit('process_start', 'user', machine_id, `Started process: ${command}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/processes/details' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const pid = parsedUrl.searchParams.get('pid');
+    if (!machineId || !pid) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id and pid required' }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'ProcessDetails', { pid: parseInt(pid, 10) }, 10000);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {
@@ -755,13 +815,15 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/v1/services' && method === 'GET') {
     const machineId = parsedUrl.searchParams.get('machine_id');
+    const search = parsedUrl.searchParams.get('search') || '';
+    const status = parsedUrl.searchParams.get('status') || 'all';
     if (!machineId) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'machine_id parameter required' }));
       return;
     }
     try {
-      const data = await sendAgentRequest(machineId, 'ServiceList', {});
+      const data = await sendAgentRequest(machineId, 'ServiceList', { search, status }, 15000);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {
@@ -778,7 +840,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const { machine_id, service_name, action } = JSON.parse(body || '{}');
         if (!machine_id || !service_name || !action) throw new Error('machine_id, service_name and action required');
-        const data = await sendAgentRequest(machine_id, 'ServiceAction', { service_name, action });
+        const data = await sendAgentRequest(machine_id, 'ServiceAction', { service_name, action }, 15000);
         logAudit('service_action', 'user', machine_id, `Service ${action}: ${service_name}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));

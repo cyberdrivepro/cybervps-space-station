@@ -34,6 +34,11 @@ try:
 except ImportError:
     winreg = None
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 # Ensure unbuffered stdio for background logs
 if sys.version_info >= (3, 7):
     try:
@@ -819,48 +824,304 @@ class CyberVPSAgent:
             })
 
     # =========================================================================
-    # Process & Service Management Engine
+    # Task Manager: Universal Process & Service Management Engine
     # =========================================================================
     def handle_process_list(self, payload):
         req_id = payload.get("request_id")
+        limit = int(payload.get("limit", 150))
+        search = (payload.get("search") or "").lower().strip()
+        sort_by = payload.get("sort", "memory") # memory, cpu, pid, name
         try:
             procs = []
-            if platform.system() == "Windows":
-                out = subprocess.check_output(["tasklist", "/FO", "CSV", "/NH"], timeout=3).decode("utf-8", errors="ignore")
-                reader = csv.reader(io.StringIO(out))
-                for row in reader:
-                    if len(row) >= 5:
-                        mem_str = row[4].replace(",", "").replace(" K", "").replace(" ", "")
-                        try:
-                            mem_mb = round(int(mem_str) / 1024, 1)
-                        except ValueError:
-                            mem_mb = 0
+            host_cpu = 0.0
+            host_mem_used = 0
+            host_mem_total = 0
+            cores = os.cpu_count() or 1
+
+            if psutil:
+                try:
+                    host_cpu = round(psutil.cpu_percent(interval=None), 1)
+                    vmem = psutil.virtual_memory()
+                    host_mem_used = round(vmem.used / (1024 * 1024), 1)
+                    host_mem_total = round(vmem.total / (1024 * 1024), 1)
+                except Exception:
+                    pass
+
+                attrs = ['pid', 'ppid', 'name', 'username', 'status', 'memory_info', 'memory_percent', 'create_time', 'num_threads']
+                for p in psutil.process_iter(attrs):
+                    try:
+                        p_info = p.info
+                        pid = p_info['pid']
+                        name = p_info['name'] or f"PID_{pid}"
+                        user = p_info.get('username') or "N/A"
+
+                        if search and (search not in name.lower() and search not in str(pid) and search not in user.lower()):
+                            continue
+
+                        raw_cpu = p.cpu_percent(interval=None)
+                        norm_cpu = round(raw_cpu / cores, 1)
+
+                        mem_bytes = p_info['memory_info'].rss if p_info.get('memory_info') else 0
+                        mem_mb = round(mem_bytes / (1024 * 1024), 1)
+                        mem_pct = round(p_info.get('memory_percent') or 0, 1)
+                        status = p_info.get('status') or "running"
+
                         procs.append({
-                            "pid": int(row[1]),
-                            "name": row[0],
-                            "user": row[2],
-                            "cpu_percent": 0.0,
+                            "pid": pid,
+                            "ppid": p_info.get('ppid') or 0,
+                            "name": name,
+                            "user": user,
+                            "cpu_percent": norm_cpu,
                             "memory_mb": mem_mb,
-                            "status": "Running"
+                            "memory_percent": mem_pct,
+                            "status": status.capitalize(),
+                            "threads": p_info.get('num_threads') or 1,
+                            "create_time": p_info.get('create_time') or 0
                         })
-                procs.sort(key=lambda x: x["memory_mb"], reverse=True)
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue
+            elif platform.system() == "Windows":
+                try:
+                    out = subprocess.check_output(["tasklist", "/V", "/FO", "CSV", "/NH"], timeout=4).decode("utf-8", errors="ignore")
+                    reader = csv.reader(io.StringIO(out))
+                    for row in reader:
+                        if len(row) >= 8:
+                            pid = int(row[1])
+                            name = row[0]
+                            user = row[6] if len(row) > 6 else row[2]
+                            if search and (search not in name.lower() and search not in str(pid) and search not in user.lower()):
+                                continue
+                            mem_str = row[4].replace(",", "").replace(" K", "").replace(" ", "")
+                            try:
+                                mem_mb = round(int(mem_str) / 1024, 1)
+                            except ValueError:
+                                mem_mb = 0
+                            procs.append({
+                                "pid": pid,
+                                "ppid": 0,
+                                "name": name,
+                                "user": user,
+                                "cpu_percent": 0.0,
+                                "memory_mb": mem_mb,
+                                "memory_percent": 0.0,
+                                "status": row[5] if len(row) > 5 else "Running",
+                                "threads": 1,
+                                "create_time": 0
+                            })
+                except Exception:
+                    pass
             else:
-                out = subprocess.check_output(["ps", "-eo", "pid,user,%cpu,%mem,comm", "--sort=-%mem", "--no-headers"], timeout=3).decode("utf-8", errors="ignore")
-                for line in out.strip().splitlines()[:60]:
-                    parts = line.strip().split(None, 4)
-                    if len(parts) >= 5:
-                        procs.append({
-                            "pid": int(parts[0]),
-                            "user": parts[1],
-                            "cpu_percent": float(parts[2]),
-                            "memory_mb": round(float(parts[3]) * 10, 1),
-                            "name": parts[4],
-                            "status": "Running"
-                        })
+                try:
+                    out = subprocess.check_output(
+                        ["ps", "-eo", "pid,ppid,user,%cpu,%mem,rss,stat,comm", "--no-headers"],
+                        timeout=4
+                    ).decode("utf-8", errors="ignore")
+                    for line in out.strip().splitlines():
+                        parts = line.strip().split(None, 7)
+                        if len(parts) >= 8:
+                            pid = int(parts[0])
+                            ppid = int(parts[1])
+                            user = parts[2]
+                            cpu_val = float(parts[3])
+                            mem_pct = float(parts[4])
+                            rss_kb = int(parts[5])
+                            stat_val = parts[6]
+                            name = parts[7]
+
+                            if search and (search not in name.lower() and search not in str(pid) and search not in user.lower()):
+                                continue
+
+                            procs.append({
+                                "pid": pid,
+                                "ppid": ppid,
+                                "name": name,
+                                "user": user,
+                                "cpu_percent": round(cpu_val / cores, 1),
+                                "memory_mb": round(rss_kb / 1024, 1),
+                                "memory_percent": mem_pct,
+                                "status": "Running" if "R" in stat_val or "S" in stat_val else "Sleeping",
+                                "threads": 1,
+                                "create_time": 0
+                            })
+                except Exception:
+                    pass
+
+            total_count = len(procs)
+
+            if sort_by == "cpu":
+                procs.sort(key=lambda x: x["cpu_percent"], reverse=True)
+            elif sort_by == "pid":
+                procs.sort(key=lambda x: x["pid"])
+            elif sort_by == "name":
+                procs.sort(key=lambda x: x["name"].lower())
+            else:
+                procs.sort(key=lambda x: x["memory_mb"], reverse=True)
 
             self.send_agent_event({
                 "type": "AgentRpcResponse",
-                "payload": {"request_id": req_id, "success": True, "result": procs[:60]}
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "result": {
+                        "processes": procs[:limit],
+                        "total_count": total_count,
+                        "host_cpu_percent": host_cpu,
+                        "host_mem_used_mb": host_mem_used,
+                        "host_mem_total_mb": host_mem_total,
+                        "provider": "psutil" if psutil else ("windows_native" if platform.system() == "Windows" else "linux_proc")
+                    }
+                }
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_process_kill(self, payload):
+        req_id = payload.get("request_id")
+        pid = int(payload.get("pid", -1))
+        force = bool(payload.get("force", False))
+        if pid <= 0:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": "Invalid PID specified"}
+            })
+            return
+
+        if pid == os.getpid():
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": "Access Denied: Cannot kill CyberVPS Agent host process."}
+            })
+            return
+
+        if platform.system() == "Windows" and pid in [0, 4]:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Access Denied: PID {pid} is a protected Windows kernel process."}
+            })
+            return
+        if platform.system() == "Linux" and pid == 1:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": "Access Denied: PID 1 is Linux init/systemd."}
+            })
+            return
+
+        try:
+            killed = False
+            proc_name = ""
+            if psutil:
+                try:
+                    p = psutil.Process(pid)
+                    proc_name = p.name()
+                    if force:
+                        p.kill()
+                    else:
+                        p.terminate()
+                    try:
+                        p.wait(timeout=1.5)
+                        killed = True
+                    except psutil.TimeoutExpired:
+                        if force:
+                            p.kill()
+                        killed = not p.is_running()
+                except psutil.NoSuchProcess:
+                    killed = True
+            elif platform.system() == "Windows":
+                cmd = ["taskkill", "/F" if force else "/T", "/PID", str(pid)]
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=4)
+                killed = True
+            else:
+                os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+                killed = True
+
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "result": {
+                        "pid": pid,
+                        "name": proc_name,
+                        "killed": killed,
+                        "force": force
+                    }
+                }
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_process_start(self, payload):
+        req_id = payload.get("request_id")
+        command = payload.get("command", "").strip()
+        args = payload.get("args", [])
+        cwd = payload.get("cwd") or None
+
+        if not command:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": "Executable command cannot be empty"}
+            })
+            return
+
+        try:
+            full_cmd = [command] + (args if isinstance(args, list) else [])
+            p = subprocess.Popen(full_cmd, cwd=cwd, shell=False)
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "result": {
+                        "pid": p.pid,
+                        "command": command,
+                        "started": True
+                    }
+                }
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_process_details(self, payload):
+        req_id = payload.get("request_id")
+        pid = int(payload.get("pid", -1))
+        try:
+            details = {"pid": pid}
+            if psutil:
+                try:
+                    p = psutil.Process(pid)
+                    details["name"] = p.name()
+                    details["ppid"] = p.ppid()
+                    details["status"] = p.status().capitalize()
+                    details["username"] = p.username()
+                    try: details["exe"] = p.exe()
+                    except Exception: details["exe"] = "Access Denied"
+                    try: details["cmdline"] = " ".join(p.cmdline())
+                    except Exception: details["cmdline"] = details["name"]
+                    try: details["cwd"] = p.cwd()
+                    except Exception: details["cwd"] = "N/A"
+                    details["num_threads"] = p.num_threads()
+                    details["create_time"] = p.create_time()
+                    mem = p.memory_info()
+                    details["memory_rss_mb"] = round(mem.rss / (1024 * 1024), 1)
+                    details["memory_vms_mb"] = round(mem.vms / (1024 * 1024), 1)
+                    details["cpu_percent"] = round(p.cpu_percent(None) / (os.cpu_count() or 1), 1)
+                except psutil.NoSuchProcess:
+                    raise FileNotFoundError(f"Process PID {pid} no longer exists")
+            else:
+                details["name"] = f"PID {pid}"
+
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": details}
             })
         except Exception as e:
             self.send_agent_event({
@@ -870,31 +1131,67 @@ class CyberVPSAgent:
 
     def handle_service_list(self, payload):
         req_id = payload.get("request_id")
+        search = (payload.get("search") or "").lower().strip()
+        status_filter = (payload.get("status") or "").lower().strip()
         try:
             svcs = []
-            if platform.system() == "Windows":
-                cmd = ["powershell", "-NoProfile", "-Command", "Get-Service | Select-Object -First 50 Name, DisplayName, Status, StartType | ConvertTo-Json -Compress"]
-                out = subprocess.check_output(cmd, timeout=4).decode("utf-8", errors="ignore")
-                raw_list = json.loads(out)
-                if isinstance(raw_list, dict):
-                    raw_list = [raw_list]
-                for s in raw_list:
-                    status_name = "Running" if s.get("Status") == 4 or str(s.get("Status")).lower() == "running" else "Stopped"
-                    svcs.append({
-                        "name": s.get("Name"),
-                        "display_name": s.get("DisplayName"),
-                        "status": status_name,
-                        "startup_type": str(s.get("StartType", "Automatic"))
-                    })
+            if psutil and platform.system() == "Windows" and hasattr(psutil, "win_service_iter"):
+                for s in psutil.win_service_iter():
+                    try:
+                        name = s.name()
+                        disp = s.display_name() or name
+                        stat_val = s.status()
+                        st_name = "Running" if stat_val == "running" else "Stopped"
+                        start_t = s.start_type()
+
+                        if search and (search not in name.lower() and search not in disp.lower()):
+                            continue
+                        if status_filter and status_filter != "all" and st_name.lower() != status_filter:
+                            continue
+
+                        svcs.append({
+                            "name": name,
+                            "display_name": disp,
+                            "status": st_name,
+                            "startup_type": start_t.capitalize(),
+                            "binpath": getattr(s, "binpath", lambda: "")() if callable(getattr(s, "binpath", None)) else ""
+                        })
+                    except Exception:
+                        continue
+            elif platform.system() == "Windows":
+                try:
+                    cmd = ["powershell", "-NoProfile", "-Command", "Get-Service | Select-Object Name, DisplayName, Status, StartType | ConvertTo-Json -Compress"]
+                    out = subprocess.check_output(cmd, timeout=6).decode("utf-8", errors="ignore")
+                    raw_list = json.loads(out)
+                    if isinstance(raw_list, dict):
+                        raw_list = [raw_list]
+                    for s in raw_list:
+                        name = s.get("Name") or ""
+                        disp = s.get("DisplayName") or name
+                        status_name = "Running" if s.get("Status") == 4 or str(s.get("Status")).lower() == "running" else "Stopped"
+                        if search and (search not in name.lower() and search not in disp.lower()):
+                            continue
+                        svcs.append({
+                            "name": name,
+                            "display_name": disp,
+                            "status": status_name,
+                            "startup_type": str(s.get("StartType", "Automatic"))
+                        })
+                except Exception:
+                    pass
             else:
                 if os.path.exists("/bin/systemctl") or os.path.exists("/usr/bin/systemctl"):
-                    out = subprocess.check_output(["systemctl", "list-units", "--type=service", "--all", "--no-legend", "--no-pager"], timeout=4).decode("utf-8", errors="ignore")
-                    for line in out.strip().splitlines()[:60]:
+                    out = subprocess.check_output(["systemctl", "list-units", "--type=service", "--all", "--no-legend", "--no-pager"], timeout=5).decode("utf-8", errors="ignore")
+                    for line in out.strip().splitlines():
                         parts = line.strip().split(None, 4)
                         if len(parts) >= 4:
                             name = parts[0].replace(".service", "")
                             status = "Running" if parts[2] == "active" and parts[3] == "running" else ("Failed" if parts[3] == "failed" else "Stopped")
                             desc = parts[4] if len(parts) >= 5 else name
+                            if search and (search not in name.lower() and search not in desc.lower()):
+                                continue
+                            if status_filter and status_filter != "all" and status.lower() != status_filter:
+                                continue
                             svcs.append({
                                 "name": name,
                                 "display_name": desc,
@@ -902,8 +1199,9 @@ class CyberVPSAgent:
                                 "startup_type": parts[1]
                             })
                 else:
-                    svcs.append({"name": "cron", "display_name": "Cron Daemon", "status": "Running", "startup_type": "Auto"})
-                    svcs.append({"name": "ssh", "display_name": "OpenSSH Daemon", "status": "Running", "startup_type": "Auto"})
+                    svcs = []
+
+            svcs.sort(key=lambda x: x["name"].lower())
 
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -917,27 +1215,50 @@ class CyberVPSAgent:
 
     def handle_service_action(self, payload):
         req_id = payload.get("request_id")
-        svc_name = payload.get("service_name")
-        action = payload.get("action", "").lower()
-        if action not in ["start", "stop", "restart"]:
+        svc_name = (payload.get("service_name") or "").strip()
+        action = (payload.get("action") or "").lower().strip()
+
+        if action not in ["start", "stop", "restart", "enable", "disable"]:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": False, "error": f"Invalid action: {action}"}
             })
             return
 
+        if not svc_name:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": "Service name required"}
+            })
+            return
+
         try:
             output = ""
+            new_status = "Unknown"
             if platform.system() == "Windows":
-                ps_cmd = f"{action.capitalize()}-Service -Name '{svc_name}' -Force"
-                output = subprocess.check_output(["powershell", "-NoProfile", "-Command", ps_cmd], timeout=10).decode("utf-8", errors="ignore")
+                ps_script = "param($a, $s) if ($a -eq 'restart') { Restart-Service -Name $s -Force } elseif ($a -eq 'start') { Start-Service -Name $s } elseif ($a -eq 'stop') { Stop-Service -Name $s -Force }; (Get-Service -Name $s).Status"
+                res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_script, action, svc_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+                output = res.stdout.decode("utf-8", errors="ignore").strip()
+                new_status = "Running" if "Running" in output or "4" in output else "Stopped"
             else:
-                cmd = ["systemctl", action, f"{svc_name}.service"]
-                output = subprocess.check_output(cmd, timeout=10).decode("utf-8", errors="ignore")
+                res = subprocess.run(["systemctl", action, f"{svc_name}.service"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+                output = res.stdout.decode("utf-8", errors="ignore").strip()
+                chk = subprocess.run(["systemctl", "is-active", f"{svc_name}.service"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+                active_out = chk.stdout.decode("utf-8", errors="ignore").strip()
+                new_status = "Running" if active_out == "active" else "Stopped"
 
             self.send_agent_event({
                 "type": "AgentRpcResponse",
-                "payload": {"request_id": req_id, "success": True, "result": {"service": svc_name, "action": action, "output": output.strip()}}
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "result": {
+                        "service": svc_name,
+                        "action": action,
+                        "status": new_status,
+                        "output": output
+                    }
+                }
             })
         except Exception as e:
             self.send_agent_event({
@@ -1228,6 +1549,12 @@ class CyberVPSAgent:
             self.handle_file_stat(payload)
         elif c_type == "ProcessList":
             self.handle_process_list(payload)
+        elif c_type == "ProcessKill":
+            self.handle_process_kill(payload)
+        elif c_type == "ProcessStart":
+            self.handle_process_start(payload)
+        elif c_type == "ProcessDetails":
+            self.handle_process_details(payload)
         elif c_type == "ServiceList":
             self.handle_service_list(payload)
         elif c_type == "ServiceAction":

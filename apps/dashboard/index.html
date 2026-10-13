@@ -1167,18 +1167,68 @@
         </div>
       </div>
 
-      <!-- VIEW: PROCESSES & SERVICES MANAGEMENT -->
+      <!-- VIEW: PROCESSES & SERVICES MANAGEMENT (FULL TASK MANAGER) -->
       <div id="view-services" class="view-panel" style="display:none;">
+        <!-- Top Control Bar -->
         <div class="card" style="margin-bottom:1.25rem;">
-          <div class="card-header" style="flex-wrap:wrap; gap:1rem;">
-            <div style="display:flex; align-items:center; gap:0.75rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
               <select id="services-machine-select" class="form-control" style="min-width:240px; font-weight:600;" onchange="loadProcessesAndServices(this.value)">
                 <option value="">Select Target Machine...</option>
               </select>
-              <button class="btn btn-secondary" onclick="refreshProcessesAndServices()">🔄 Refresh</button>
+              <button id="btn-refresh-proc" class="btn btn-secondary" onclick="refreshProcessesAndServices()">🔄 Refresh</button>
+              <select id="proc-auto-refresh" class="form-control" style="font-size:0.8rem; padding:0.35rem 0.65rem;" onchange="toggleProcAutoRefresh(this.value)">
+                <option value="0">Auto-Refresh: Off</option>
+                <option value="2000">Auto-Refresh: 2s (Live)</option>
+                <option value="5000">Auto-Refresh: 5s</option>
+                <option value="10000">Auto-Refresh: 10s</option>
+              </select>
+              <button class="btn btn-primary" onclick="openStartProcessModal()">+ Start Task</button>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.6rem; font-size:0.78rem;">
+              <span id="proc-stale-tag" class="badge badge-warning" style="display:none;">⚠️ Stale Data</span>
+              <span id="proc-provider-badge" class="badge badge-subtle">Provider: Native OS</span>
+              <span id="proc-last-update" style="color:var(--text-muted);">Awaiting sync...</span>
             </div>
           </div>
-          <div class="card-body" style="padding-bottom:0;">
+
+          <!-- Task Manager KPI Metrics Grid -->
+          <div class="card-body" style="padding-top:0.75rem; padding-bottom:1rem;">
+            <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.85rem;">
+              <div class="kpi-card" style="padding:0.85rem 1rem;">
+                <div class="kpi-label">Host CPU Utilization</div>
+                <div id="kpi-proc-cpu" class="kpi-value" style="font-size:1.5rem; color:var(--accent-cyan);">— %</div>
+                <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; margin:6px 0; overflow:hidden;">
+                  <div id="kpi-proc-cpu-bar" style="height:100%; width:0%; background:var(--accent-cyan); transition:width 0.3s;"></div>
+                </div>
+                <div id="kpi-proc-cpu-sub" class="kpi-subtext">Sampling per-process utilization</div>
+              </div>
+
+              <div class="kpi-card" style="padding:0.85rem 1rem;">
+                <div class="kpi-label">Host Memory (RAM)</div>
+                <div id="kpi-proc-mem" class="kpi-value" style="font-size:1.5rem; color:var(--status-success);">— MB</div>
+                <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; margin:6px 0; overflow:hidden;">
+                  <div id="kpi-proc-mem-bar" style="height:100%; width:0%; background:var(--status-success); transition:width 0.3s;"></div>
+                </div>
+                <div id="kpi-proc-mem-sub" class="kpi-subtext">Resident active memory</div>
+              </div>
+
+              <div class="kpi-card" style="padding:0.85rem 1rem;">
+                <div class="kpi-label">Active Processes</div>
+                <div id="kpi-proc-count" class="kpi-value" style="font-size:1.5rem;">0</div>
+                <div class="kpi-subtext" id="kpi-proc-count-sub">Enumerated tasks on host</div>
+              </div>
+
+              <div class="kpi-card" style="padding:0.85rem 1rem;">
+                <div class="kpi-label">System Services</div>
+                <div id="kpi-svc-count" class="kpi-value" style="font-size:1.5rem; color:var(--accent-purple);">0</div>
+                <div class="kpi-subtext" id="kpi-svc-count-sub">Operating system units</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab Bar -->
+          <div class="card-body" style="padding-top:0; padding-bottom:0;">
             <div class="tab-bar">
               <button class="tab-btn active" id="tab-btn-processes" onclick="switchServicesTab('processes')">Active Processes (<span id="proc-count-badge">0</span>)</button>
               <button class="tab-btn" id="tab-btn-services" onclick="switchServicesTab('services')">System Services (<span id="svc-count-badge">0</span>)</button>
@@ -1186,42 +1236,52 @@
           </div>
         </div>
 
-        <!-- Tab 1: Running Processes -->
+        <!-- Tab 1: Running Processes Table -->
         <div id="tab-content-processes" class="card">
-          <div class="card-header">
+          <div class="card-header" style="flex-wrap:wrap; gap:0.75rem;">
             <div>
-              <div class="card-title">Top Host Processes</div>
-              <div class="card-desc">Processes sorted by memory consumption on the remote system</div>
+              <div class="card-title">Live Host Task Manager</div>
+              <div class="card-desc">Genuine real-time process telemetry with graceful termination and force-kill controls</div>
             </div>
-            <input type="text" id="proc-filter-input" class="form-control" placeholder="Search process name or PID..." style="max-width:240px; font-size:0.8rem;" oninput="filterProcessesTable()">
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <input type="text" id="proc-filter-input" class="form-control" placeholder="Search name, PID, or user..." style="max-width:260px; font-size:0.8rem;" oninput="filterProcessesTable()">
+            </div>
           </div>
           <div class="table-container">
             <table>
               <thead>
                 <tr>
-                  <th>PID</th>
-                  <th>Name</th>
-                  <th>User / Session</th>
-                  <th>CPU %</th>
-                  <th>Memory</th>
-                  <th>Status</th>
+                  <th onclick="sortProcesses('pid')" style="cursor:pointer;" title="Click to sort by PID">PID ↕</th>
+                  <th onclick="sortProcesses('name')" style="cursor:pointer;" title="Click to sort by Name">Process Name ↕</th>
+                  <th onclick="sortProcesses('user')" style="cursor:pointer;" title="Click to sort by User">User / Session ↕</th>
+                  <th onclick="sortProcesses('cpu')" style="cursor:pointer;" title="Click to sort by CPU %">CPU % ↕</th>
+                  <th onclick="sortProcesses('memory')" style="cursor:pointer;" title="Click to sort by Memory">RAM (RSS) ↕</th>
+                  <th onclick="sortProcesses('status')" style="cursor:pointer;" title="Click to sort by Status">Status ↕</th>
+                  <th style="text-align:right;">Actions</th>
                 </tr>
               </thead>
               <tbody id="proc-table-body">
-                <tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;">Select a machine to inspect processes.</td></tr>
+                <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2.5rem;">Select a machine to inspect processes.</td></tr>
               </tbody>
             </table>
           </div>
         </div>
 
-        <!-- Tab 2: System Services -->
+        <!-- Tab 2: System Services Table -->
         <div id="tab-content-services" class="card" style="display:none;">
-          <div class="card-header">
+          <div class="card-header" style="flex-wrap:wrap; gap:0.75rem;">
             <div>
               <div class="card-title">Operating System Services</div>
-              <div class="card-desc">Windows Services / Linux systemd units with live state and management controls</div>
+              <div class="card-desc">Windows Services / Linux systemd units with genuine state verification and controls</div>
             </div>
-            <input type="text" id="svc-filter-input" class="form-control" placeholder="Search service name..." style="max-width:240px; font-size:0.8rem;" oninput="filterServicesTable()">
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <select id="svc-status-filter" class="form-control" style="font-size:0.8rem; padding:0.35rem 0.65rem;" onchange="filterServicesTable()">
+                <option value="all">All States</option>
+                <option value="running">Running Only</option>
+                <option value="stopped">Stopped Only</option>
+              </select>
+              <input type="text" id="svc-filter-input" class="form-control" placeholder="Search service name..." style="max-width:240px; font-size:0.8rem;" oninput="filterServicesTable()">
+            </div>
           </div>
           <div class="table-container">
             <table>
@@ -1669,6 +1729,79 @@
     </div>
   </div>
 
+  <!-- MODAL: START NEW TASK / PROCESS -->
+  <div id="modal-proc-start" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Start New Task on Host</strong>
+        <button class="btn-icon" onclick="closeStartProcessModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Executable Program / Command</label>
+          <input type="text" id="modal-proc-cmd" class="form-control" placeholder="e.g. notepad.exe, python, /bin/bash, ping">
+          <span style="font-size:0.75rem; color:var(--text-muted);">The executable binary or program to launch on the remote system.</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Arguments (Space-separated, Optional)</label>
+          <input type="text" id="modal-proc-args" class="form-control" placeholder="e.g. -v, --help, 127.0.0.1">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Working Directory (Optional)</label>
+          <input type="text" id="modal-proc-cwd" class="form-control" placeholder="Leave blank for host user home directory">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeStartProcessModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitStartProcess()">Launch Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: END TASK / TERMINATE CONFIRMATION -->
+  <div id="modal-proc-kill" class="modal-backdrop">
+    <div class="modal" style="max-width:440px;">
+      <div class="modal-header">
+        <strong style="color:var(--status-danger); font-size:1rem;">⚠️ End Task Confirmation</strong>
+        <button class="btn-icon" onclick="closeKillProcessModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:0.9rem; line-height:1.5;">
+          Are you sure you want to terminate this process on <strong id="modal-kill-hostname">Host</strong>?
+        </div>
+        <div style="background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.85rem; margin-top:1rem; font-family:var(--font-mono); font-size:0.82rem;">
+          <div><strong>PID:</strong> <span id="modal-kill-pid" style="color:var(--accent-cyan);"></span></div>
+          <div><strong>Process:</strong> <span id="modal-kill-name" style="color:var(--text-primary);"></span></div>
+          <div><strong>Owner:</strong> <span id="modal-kill-user" style="color:var(--text-muted);"></span></div>
+        </div>
+        <div style="margin-top:1rem; display:flex; align-items:center; gap:0.5rem; font-size:0.8rem; color:var(--status-danger);">
+          <input type="checkbox" id="modal-kill-force">
+          <label for="modal-kill-force" style="cursor:pointer; font-weight:600;">Force Kill immediately (SIGKILL / taskkill /F)</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeKillProcessModal()">Cancel</button>
+        <button class="btn btn-danger" onclick="submitKillProcess()">Terminate Process</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PROCESS INSPECTOR / DETAILS -->
+  <div id="modal-proc-details" class="modal-backdrop">
+    <div class="modal" style="max-width:620px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Process Inspector</strong>
+        <button class="btn-icon" onclick="closeProcessDetailsModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-proc-details-body" style="font-size:0.85rem; max-height:480px; overflow-y:auto;">
+        <div style="color:var(--text-muted); text-align:center; padding:2rem;">Loading process details...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeProcessDetailsModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container"></div>
 
@@ -1776,8 +1909,24 @@
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
       const url = `${base}${cleanEndpoint}`;
+
+      // Intelligent timeout: 18s for host RPC commands (processes, services, files), 4s for /health, 8s default
+      let defaultTimeout = 8000;
+      if (cleanEndpoint.startsWith('/api/v1/processes') || cleanEndpoint.startsWith('/api/v1/services') || cleanEndpoint.startsWith('/api/v1/files')) {
+        defaultTimeout = 18000;
+      } else if (cleanEndpoint === '/health') {
+        defaultTimeout = 4000;
+      }
+      const timeoutMs = options.timeout || defaultTimeout;
+
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), options.timeout || 4000);
+      const timeoutId = setTimeout(() => {
+        try {
+          controller.abort(new Error(`Host request timed out after ${Math.round(timeoutMs/1000)}s`));
+        } catch (_) {
+          controller.abort();
+        }
+      }, timeoutMs);
 
       const headers = {
         'Accept': 'application/json',
@@ -1794,13 +1943,26 @@
         const duration = Math.round(performance.now() - start);
 
         if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          let errDetail = res.statusText;
+          try {
+            const errJson = await res.json();
+            if (errJson && errJson.error) errDetail = errJson.error;
+          } catch (_) {}
+          throw new Error(`HTTP ${res.status}: ${errDetail}`);
         }
         const data = await res.json();
         return { ok: true, data, duration };
       } catch (err) {
         clearTimeout(timeoutId);
-        return { ok: false, error: err.message };
+        let errorMsg = err.message || 'Network request failed';
+        if (controller.signal.aborted) {
+          if (controller.signal.reason && controller.signal.reason.message) {
+            errorMsg = controller.signal.reason.message;
+          } else {
+            errorMsg = `Host request timed out after ${Math.round(timeoutMs/1000)}s (remote host may still be processing)`;
+          }
+        }
+        return { ok: false, error: errorMsg, isTimeout: controller.signal.aborted };
       }
     }
 
@@ -3676,7 +3838,13 @@
       showToast(`Downloading "${name}"...`, 'info');
     }
 
-    // 14. PROCESSES & SYSTEM SERVICES MANAGEMENT
+    // 14. TASK MANAGER: PROCESSES & SYSTEM SERVICES CONTROLLER
+    let isProcLoading = false;
+    let procAutoRefreshTimer = null;
+    let procSortColumn = 'memory';
+    let procSortAsc = false;
+    let pendingKillPid = null;
+
     function openServicesForMachine(machineId) {
       appState.selectedMachineId = machineId;
       navigate('services');
@@ -3685,46 +3853,149 @@
       loadProcessesAndServices(machineId);
     }
 
-    async function loadProcessesAndServices(machineId) {
+    async function loadProcessesAndServices(machineId, isAuto = false) {
+      if (isProcLoading && isAuto) return;
+
       if (!machineId) {
         machineId = appState.selectedMachineId || (appState.machines[0] ? appState.machines[0].id : null);
       }
       if (!machineId) {
-        document.getElementById('proc-table-body').innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No machines enrolled.</td></tr>';
-        document.getElementById('svc-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No machines enrolled.</td></tr>';
+        document.getElementById('proc-table-body').innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No machines enrolled in fleet.</td></tr>';
+        document.getElementById('svc-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No machines enrolled in fleet.</td></tr>';
         return;
       }
       appState.selectedMachineId = machineId;
       const sel = document.getElementById('services-machine-select');
-      if (sel) sel.value = machineId;
+      if (sel && sel.value !== machineId) sel.value = machineId;
 
-      document.getElementById('proc-table-body').innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;"><span class="badge badge-subtle">Querying active processes...</span></td></tr>';
-      document.getElementById('svc-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;"><span class="badge badge-subtle">Querying system services...</span></td></tr>';
+      const refreshBtn = document.getElementById('btn-refresh-proc');
+      if (refreshBtn) refreshBtn.innerText = '⏳ Syncing...';
+      isProcLoading = true;
+
+      if (!appState.activeProcesses || appState.activeProcesses.length === 0) {
+        document.getElementById('proc-table-body').innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2.5rem;"><span class="badge badge-subtle">Querying host processes...</span></td></tr>';
+      }
+      if (!appState.activeServices || appState.activeServices.length === 0) {
+        document.getElementById('svc-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;"><span class="badge badge-subtle">Querying system services...</span></td></tr>';
+      }
 
       const [pRes, sRes] = await Promise.all([
-        apiRequest(`/api/v1/processes?machine_id=${encodeURIComponent(machineId)}`),
+        apiRequest(`/api/v1/processes?machine_id=${encodeURIComponent(machineId)}&limit=250&sort=${procSortColumn}`),
         apiRequest(`/api/v1/services?machine_id=${encodeURIComponent(machineId)}`)
       ]);
 
+      isProcLoading = false;
+      if (refreshBtn) refreshBtn.innerText = '🔄 Refresh';
+
+      const lastUpdatePill = document.getElementById('proc-last-update');
+      if (lastUpdatePill) {
+        lastUpdatePill.innerText = `Updated ${new Date().toLocaleTimeString()} (${Math.round(pRes.duration || sRes.duration || 0)}ms)`;
+      }
+
       if (pRes.ok) {
-        appState.activeProcesses = pRes.data || [];
+        const pData = pRes.data;
+        if (pData && Array.isArray(pData.processes)) {
+          appState.activeProcesses = pData.processes;
+          appState.procSummary = pData;
+        } else if (Array.isArray(pData)) {
+          appState.activeProcesses = pData;
+          appState.procSummary = { processes: pData, total_count: pData.length };
+        } else {
+          appState.activeProcesses = [];
+          appState.procSummary = {};
+        }
+
+        const staleTag = document.getElementById('proc-stale-tag');
+        if (staleTag) staleTag.style.display = 'none';
+
+        const providerBadge = document.getElementById('proc-provider-badge');
+        if (providerBadge && appState.procSummary?.provider) {
+          providerBadge.innerText = `Provider: ${appState.procSummary.provider.toUpperCase()}`;
+        }
+
         document.getElementById('proc-count-badge').innerText = appState.activeProcesses.length;
+        renderProcessSummaryKpis();
         renderProcessesTable();
       } else {
-        document.getElementById('proc-table-body').innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--status-danger); padding:2.5rem;">Error querying processes: ${escapeHtml(pRes.error)}</td></tr>`;
+        if (appState.activeProcesses && appState.activeProcesses.length > 0) {
+          const staleTag = document.getElementById('proc-stale-tag');
+          if (staleTag) staleTag.style.display = 'inline-block';
+          if (!isAuto) showToast(`Process query failed: ${pRes.error}. Retaining last active state.`, 'warning');
+        } else {
+          document.getElementById('proc-table-body').innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--status-danger); padding:2.5rem;">Error querying processes: ${escapeHtml(pRes.error)}<br><button class="btn btn-secondary" style="margin-top:0.75rem;" onclick="loadProcessesAndServices('${escapeHtml(machineId)}')">Retry</button></td></tr>`;
+        }
       }
 
       if (sRes.ok) {
-        appState.activeServices = sRes.data || [];
+        appState.activeServices = Array.isArray(sRes.data) ? sRes.data : [];
         document.getElementById('svc-count-badge').innerText = appState.activeServices.length;
+        renderServicesSummaryKpis();
         renderServicesTable();
       } else {
-        document.getElementById('svc-table-body').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--status-danger); padding:2.5rem;">Error querying services: ${escapeHtml(sRes.error)}</td></tr>`;
+        if (!appState.activeServices || appState.activeServices.length === 0) {
+          document.getElementById('svc-table-body').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--status-danger); padding:2.5rem;">Error querying services: ${escapeHtml(sRes.error)}<br><button class="btn btn-secondary" style="margin-top:0.75rem;" onclick="loadProcessesAndServices('${escapeHtml(machineId)}')">Retry</button></td></tr>`;
+        }
       }
     }
 
+    function renderProcessSummaryKpis() {
+      const summary = appState.procSummary || {};
+      const cpuVal = summary.host_cpu_percent !== undefined ? summary.host_cpu_percent : 0;
+      const memUsed = summary.host_mem_used_mb || 0;
+      const memTotal = summary.host_mem_total_mb || 0;
+      const memPct = memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0;
+
+      const cpuEl = document.getElementById('kpi-proc-cpu');
+      const cpuBar = document.getElementById('kpi-proc-cpu-bar');
+      if (cpuEl) cpuEl.innerText = `${cpuVal}%`;
+      if (cpuBar) cpuBar.style.width = `${Math.min(cpuVal, 100)}%`;
+
+      const memEl = document.getElementById('kpi-proc-mem');
+      const memBar = document.getElementById('kpi-proc-mem-bar');
+      const memSub = document.getElementById('kpi-proc-mem-sub');
+      if (memEl) memEl.innerText = `${memUsed > 1024 ? (memUsed/1024).toFixed(1) + ' GB' : memUsed + ' MB'}`;
+      if (memBar) memBar.style.width = `${Math.min(memPct, 100)}%`;
+      if (memSub) memSub.innerText = `${memPct}% of ${memTotal > 1024 ? (memTotal/1024).toFixed(1) + ' GB' : memTotal + ' MB'} capacity`;
+
+      const countEl = document.getElementById('kpi-proc-count');
+      const countSub = document.getElementById('kpi-proc-count-sub');
+      if (countEl) countEl.innerText = String(summary.total_count || appState.activeProcesses.length);
+      if (countSub) countSub.innerText = `${appState.activeProcesses.length} displayed`;
+    }
+
+    function renderServicesSummaryKpis() {
+      const svcs = appState.activeServices || [];
+      const runningCount = svcs.filter(s => (s.status || '').toLowerCase() === 'running').length;
+      const stoppedCount = svcs.length - runningCount;
+
+      const svcCountEl = document.getElementById('kpi-svc-count');
+      const svcSubEl = document.getElementById('kpi-svc-count-sub');
+      if (svcCountEl) svcCountEl.innerText = String(svcs.length);
+      if (svcSubEl) svcSubEl.innerText = `${runningCount} Running | ${stoppedCount} Stopped`;
+    }
+
     function refreshProcessesAndServices() {
-      loadProcessesAndServices(appState.selectedMachineId);
+      loadProcessesAndServices(appState.selectedMachineId, false);
+    }
+
+    function toggleProcAutoRefresh(val) {
+      if (procAutoRefreshTimer) {
+        clearInterval(procAutoRefreshTimer);
+        procAutoRefreshTimer = null;
+      }
+      const ms = parseInt(val, 10);
+      if (ms > 0) {
+        procAutoRefreshTimer = setInterval(() => {
+          if (document.hidden) return;
+          const curView = document.getElementById('view-services');
+          if (curView && curView.style.display !== 'none') {
+            loadProcessesAndServices(appState.selectedMachineId, true);
+          }
+        }, ms);
+        showToast(`Task Manager live polling active (${ms/1000}s interval)`, 'info');
+      } else {
+        showToast('Auto-refresh paused. Use manual refresh.', 'info');
+      }
     }
 
     function switchServicesTab(tab) {
@@ -3747,39 +4018,103 @@
       }
     }
 
+    function sortProcesses(column) {
+      if (procSortColumn === column) {
+        procSortAsc = !procSortAsc;
+      } else {
+        procSortColumn = column;
+        procSortAsc = false;
+      }
+      renderProcessesTable();
+    }
+
     function renderProcessesTable() {
       const tbody = document.getElementById('proc-table-body');
       const filter = (document.getElementById('proc-filter-input')?.value || '').toLowerCase();
-      let list = appState.activeProcesses || [];
+      let list = [...(appState.activeProcesses || [])];
 
       if (filter) {
-        list = list.filter(p => (p.name || '').toLowerCase().includes(filter) || String(p.pid).includes(filter));
+        list = list.filter(p =>
+          (p.name || '').toLowerCase().includes(filter) ||
+          String(p.pid).includes(filter) ||
+          (p.user || '').toLowerCase().includes(filter)
+        );
       }
 
+      // Sort
+      list.sort((a, b) => {
+        let valA = a[procSortColumn];
+        let valB = b[procSortColumn];
+        if (procSortColumn === 'name' || procSortColumn === 'user' || procSortColumn === 'status') {
+          valA = (valA || '').toLowerCase();
+          valB = (valB || '').toLowerCase();
+          return procSortAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        }
+        valA = Number(valA || 0);
+        valB = Number(valB || 0);
+        return procSortAsc ? valA - valB : valB - valA;
+      });
+
       if (list.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No matching processes found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No matching processes found.</td></tr>';
         return;
       }
 
-      tbody.innerHTML = list.map(p => `
-        <tr>
-          <td><code style="font-size:0.8rem; color:var(--accent-cyan);">${p.pid}</code></td>
-          <td><strong>${escapeHtml(p.name)}</strong></td>
-          <td style="color:var(--text-secondary); font-size:0.78rem;">${escapeHtml(p.user || p.session_name || 'System')}</td>
-          <td><code style="color:var(--status-success);">${p.cpu_percent !== undefined ? p.cpu_percent + '%' : '—'}</code></td>
-          <td style="font-family:var(--font-mono); font-weight:600;">${p.memory_mb ? p.memory_mb + ' MB' : (p.mem_kb ? Math.round(p.mem_kb/1024) + ' MB' : '—')}</td>
-          <td><span class="badge badge-success">${escapeHtml(p.status || 'Running')}</span></td>
-        </tr>
-      `).join('');
+      tbody.innerHTML = list.map(p => {
+        const cpu = p.cpu_percent !== undefined ? p.cpu_percent : 0;
+        const cpuColor = cpu > 50 ? 'var(--status-danger)' : (cpu > 15 ? 'var(--status-warning)' : 'var(--text-primary)');
+        const memMb = p.memory_mb !== undefined ? p.memory_mb : (p.mem_kb ? Math.round(p.mem_kb/1024) : 0);
+        const memStr = memMb > 1024 ? (memMb/1024).toFixed(1) + ' GB' : memMb + ' MB';
+        const isRunning = (p.status || '').toLowerCase() === 'running';
+        const safeName = escapeHtml(p.name).replace(/'/g, "\\'");
+        const safeUser = escapeHtml(p.user || 'System').replace(/'/g, "\\'");
+
+        return `
+          <tr>
+            <td><code style="font-size:0.8rem; color:var(--accent-cyan); font-weight:700;">${p.pid}</code></td>
+            <td>
+              <div style="font-weight:600; color:var(--text-primary);">${escapeHtml(p.name)}</div>
+              ${p.threads ? `<div style="font-size:0.7rem; color:var(--text-muted);">${p.threads} threads</div>` : ''}
+            </td>
+            <td style="color:var(--text-secondary); font-size:0.78rem;">${escapeHtml(p.user || 'System')}</td>
+            <td>
+              <div style="font-family:var(--font-mono); font-weight:700; color:${cpuColor};">${cpu}%</div>
+              <div style="height:3px; width:45px; background:rgba(255,255,255,0.06); border-radius:2px; margin-top:2px;">
+                <div style="height:100%; width:${Math.min(cpu, 100)}%; background:${cpuColor};"></div>
+              </div>
+            </td>
+            <td style="font-family:var(--font-mono); font-weight:600;">
+              <div>${memStr}</div>
+              ${p.memory_percent ? `<div style="font-size:0.7rem; color:var(--text-muted);">${p.memory_percent}% RAM</div>` : ''}
+            </td>
+            <td>
+              <span class="badge ${isRunning ? 'badge-success' : 'badge-subtle'}">${escapeHtml(p.status || 'Running')}</span>
+            </td>
+            <td style="text-align:right; white-space:nowrap;">
+              <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem;" onclick="inspectProcessDetails(${p.pid})" title="View Details">🔍</button>
+              <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="openKillProcessModal(${p.pid}, '${safeName}', '${safeUser}', false)" title="Graceful Terminate">🛑 End</button>
+              <button class="btn btn-danger" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="openKillProcessModal(${p.pid}, '${safeName}', '${safeUser}', true)" title="Force Kill">⚡ Kill</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
     }
 
     function renderServicesTable() {
       const tbody = document.getElementById('svc-table-body');
       const filter = (document.getElementById('svc-filter-input')?.value || '').toLowerCase();
-      let list = appState.activeServices || [];
+      const statusFilter = (document.getElementById('svc-status-filter')?.value || 'all').toLowerCase();
+      let list = [...(appState.activeServices || [])];
 
       if (filter) {
-        list = list.filter(s => (s.name || '').toLowerCase().includes(filter) || (s.display_name || '').toLowerCase().includes(filter));
+        list = list.filter(s =>
+          (s.name || '').toLowerCase().includes(filter) ||
+          (s.display_name || '').toLowerCase().includes(filter)
+        );
+      }
+
+      if (statusFilter !== 'all') {
+        list = list.filter(s => (s.status || '').toLowerCase() === statusFilter);
       }
 
       if (list.length === 0) {
@@ -3789,9 +4124,10 @@
 
       tbody.innerHTML = list.map(s => {
         const isRunning = (s.status || '').toLowerCase() === 'running';
+        const isFailed = (s.status || '').toLowerCase() === 'failed';
         const statusBadge = isRunning
           ? '<span class="badge badge-success">RUNNING</span>'
-          : '<span class="badge badge-subtle">STOPPED</span>';
+          : (isFailed ? '<span class="badge badge-danger">FAILED</span>' : '<span class="badge badge-subtle">STOPPED</span>');
 
         const safeName = escapeHtml(s.name).replace(/'/g, "\\'");
 
@@ -3809,7 +4145,7 @@
 
         return `
           <tr>
-            <td><code style="font-weight:600; font-size:0.82rem; color:var(--text-primary);">${escapeHtml(s.name)}</code></td>
+            <td><code style="font-weight:700; font-size:0.82rem; color:var(--text-primary);">${escapeHtml(s.name)}</code></td>
             <td style="color:var(--text-secondary); font-size:0.8rem;">${escapeHtml(s.display_name || s.name)}</td>
             <td>${statusBadge}</td>
             <td style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(s.startup_type || 'Manual')}</td>
@@ -3821,6 +4157,137 @@
 
     function filterProcessesTable() { renderProcessesTable(); }
     function filterServicesTable() { renderServicesTable(); }
+
+    // PROCESS CONTROLS: START, KILL, DETAILS
+    function openStartProcessModal() {
+      document.getElementById('modal-proc-cmd').value = '';
+      document.getElementById('modal-proc-args').value = '';
+      document.getElementById('modal-proc-cwd').value = '';
+      document.getElementById('modal-proc-start').style.display = 'flex';
+      setTimeout(() => document.getElementById('modal-proc-cmd').focus(), 50);
+    }
+
+    function closeStartProcessModal() {
+      document.getElementById('modal-proc-start').style.display = 'none';
+    }
+
+    async function submitStartProcess() {
+      const command = document.getElementById('modal-proc-cmd').value.trim();
+      const rawArgs = document.getElementById('modal-proc-args').value.trim();
+      const cwd = document.getElementById('modal-proc-cwd').value.trim();
+
+      if (!command) return showToast('Please enter an executable command', 'warning');
+
+      const args = rawArgs ? rawArgs.split(/\s+/).filter(Boolean) : [];
+      showToast(`Launching task "${command}"...`, 'info');
+
+      const res = await apiRequest('/api/v1/processes/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          machine_id: appState.selectedMachineId,
+          command,
+          args,
+          cwd: cwd || null
+        })
+      });
+
+      if (!res.ok) {
+        showToast(`Failed to start task: ${res.error}`, 'error');
+        return;
+      }
+
+      closeStartProcessModal();
+      showToast(`Task started successfully! (PID: ${res.data?.pid || 'active'})`, 'success');
+      setTimeout(() => loadProcessesAndServices(appState.selectedMachineId), 1200);
+    }
+
+    function openKillProcessModal(pid, name, user, isForce = false) {
+      pendingKillPid = pid;
+      const m = appState.machines.find(x => x.id === appState.selectedMachineId);
+      document.getElementById('modal-kill-hostname').innerText = m ? (m.hostname || m.friendly_name) : 'Remote Host';
+      document.getElementById('modal-kill-pid').innerText = String(pid);
+      document.getElementById('modal-kill-name').innerText = name;
+      document.getElementById('modal-kill-user').innerText = user || 'System';
+      document.getElementById('modal-kill-force').checked = isForce;
+      document.getElementById('modal-proc-kill').style.display = 'flex';
+    }
+
+    function closeKillProcessModal() {
+      pendingKillPid = null;
+      document.getElementById('modal-proc-kill').style.display = 'none';
+    }
+
+    async function submitKillProcess() {
+      if (!pendingKillPid) return;
+      const pid = pendingKillPid;
+      const force = document.getElementById('modal-kill-force').checked;
+
+      showToast(`Terminating process PID ${pid}...`, 'info');
+      const res = await apiRequest('/api/v1/processes/kill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          machine_id: appState.selectedMachineId,
+          pid,
+          force
+        })
+      });
+
+      closeKillProcessModal();
+
+      if (!res.ok) {
+        showToast(`Failed to terminate PID ${pid}: ${res.error}`, 'error');
+        return;
+      }
+
+      showToast(`Process PID ${pid} terminated successfully!`, 'success');
+      appState.activeProcesses = appState.activeProcesses.filter(p => p.pid !== pid);
+      renderProcessesTable();
+      setTimeout(() => loadProcessesAndServices(appState.selectedMachineId), 1200);
+    }
+
+    async function inspectProcessDetails(pid) {
+      document.getElementById('modal-proc-details').style.display = 'flex';
+      const bodyEl = document.getElementById('modal-proc-details-body');
+      bodyEl.innerHTML = '<div style="color:var(--text-muted); text-align:center; padding:2rem;">Fetching process diagnostics from host...</div>';
+
+      const res = await apiRequest(`/api/v1/processes/details?machine_id=${encodeURIComponent(appState.selectedMachineId)}&pid=${pid}`);
+      if (!res.ok) {
+        bodyEl.innerHTML = `<div style="color:var(--status-danger); padding:1.5rem; text-align:center;">Failed to inspect process: ${escapeHtml(res.error)}</div>`;
+        return;
+      }
+
+      const d = res.data?.result || res.data || {};
+      bodyEl.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:0.75rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-subtle); padding-bottom:0.75rem;">
+            <div>
+              <div style="font-size:1.1rem; font-weight:700; color:var(--text-primary);">${escapeHtml(d.name || 'Process')}</div>
+              <div style="font-size:0.78rem; color:var(--text-muted);">PID: <span style="color:var(--accent-cyan); font-family:var(--font-mono); font-weight:700;">${d.pid}</span> | PPID: ${d.ppid || '0'} | Status: ${escapeHtml(d.status || 'Active')}</div>
+            </div>
+            <span class="badge badge-success">${escapeHtml(d.status || 'Running')}</span>
+          </div>
+
+          <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+            <tbody>
+              <tr><td style="color:var(--text-muted); width:130px; padding:4px 0;">Executable Path:</td><td><code style="word-break:break-all;">${escapeHtml(d.exe || 'N/A')}</code></td></tr>
+              <tr><td style="color:var(--text-muted); padding:4px 0;">Command Line:</td><td><code style="word-break:break-all;">${escapeHtml(d.cmdline || d.name || 'N/A')}</code></td></tr>
+              <tr><td style="color:var(--text-muted); padding:4px 0;">Owner / User:</td><td><strong>${escapeHtml(d.username || 'System')}</strong></td></tr>
+              <tr><td style="color:var(--text-muted); padding:4px 0;">Working Dir:</td><td><code>${escapeHtml(d.cwd || 'N/A')}</code></td></tr>
+              <tr><td style="color:var(--text-muted); padding:4px 0;">Active Threads:</td><td>${d.num_threads || 1}</td></tr>
+              <tr><td style="color:var(--text-muted); padding:4px 0;">RAM RSS:</td><td><strong>${d.memory_rss_mb || 0} MB</strong></td></tr>
+              <tr><td style="color:var(--text-muted); padding:4px 0;">Virtual Memory:</td><td>${d.memory_vms_mb || 0} MB</td></tr>
+              <tr><td style="color:var(--text-muted); padding:4px 0;">Normalized CPU:</td><td><strong>${d.cpu_percent || 0}%</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function closeProcessDetailsModal() {
+      document.getElementById('modal-proc-details').style.display = 'none';
+    }
 
     async function executeServiceAction(serviceName, action) {
       if (!confirm(`Are you sure you want to ${action.toUpperCase()} service "${serviceName}"?`)) return;
@@ -3841,7 +4308,7 @@
         return;
       }
 
-      showToast(`Service ${serviceName} ${action} succeeded!`, 'success');
+      showToast(`Service ${serviceName} ${action} verified!`, 'success');
       setTimeout(() => loadProcessesAndServices(appState.selectedMachineId), 1500);
     }
 
@@ -3942,6 +4409,9 @@
           closeFmUploadModal();
           closeFmNewFolderModal();
           closeFmNewFileModal();
+          closeStartProcessModal();
+          closeKillProcessModal();
+          closeProcessDetailsModal();
         }
       });
 
