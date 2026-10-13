@@ -1,0 +1,430 @@
+#!/usr/bin/env node
+/**
+ * CyberVPS SPACE STATION - Official Cross-Platform CLI
+ * Commands: install, start, stop, restart, status, doctor, update, uninstall, logs, version, tunnel
+ */
+
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const http = require('http');
+
+const VERSION = '1.0.0';
+const APP_DIR = path.resolve(__dirname, '..');
+const RUN_DIR = path.join(os.homedir(), '.cybervps', 'run');
+const LOG_DIR = path.join(os.homedir(), '.cybervps', 'logs');
+const PID_FILE = path.join(RUN_DIR, 'space-station.pid');
+const LOG_FILE = path.join(LOG_DIR, 'space-station.log');
+
+// Ensure system directories exist
+if (!fs.existsSync(RUN_DIR)) fs.mkdirSync(RUN_DIR, { recursive: true });
+if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+
+const args = process.argv.slice(2);
+const command = args[0] || 'help';
+
+async function main() {
+  switch (command.toLowerCase()) {
+    case 'start':
+      await handleStart();
+      break;
+    case 'stop':
+      await handleStop();
+      break;
+    case 'restart':
+      await handleStop();
+      await new Promise(r => setTimeout(r, 1000));
+      await handleStart();
+      break;
+    case 'status':
+      await handleStatus();
+      break;
+    case 'doctor':
+      await handleDoctor();
+      break;
+    case 'logs':
+      handleLogs();
+      break;
+    case 'tunnel':
+      await handleTunnel();
+      break;
+    case 'install':
+      handleInstall();
+      break;
+    case 'update':
+      handleUpdate();
+      break;
+    case 'uninstall':
+      handleUninstall();
+      break;
+    case 'version':
+    case '-v':
+    case '--version':
+      console.log(`CyberVPS Space Station v${VERSION} (${process.platform}-${os.arch()})`);
+      break;
+    case 'help':
+    case '--help':
+    default:
+      showHelp();
+      break;
+  }
+}
+
+function showHelp() {
+  console.log(`
+🛰️  CYBERVPS SPACE STATION CLI v${VERSION}
+================================================================
+Usage: cybervps <command> [options]
+
+Commands:
+  start       Start Space Station Control Plane & Auto-Tunnel
+              Options: --daemon (run in background), --port <number>
+  stop        Stop running background Space Station instance
+  restart     Restart running Space Station instance
+  status      Show live health, connected fleet, and public URLs
+  doctor      Run comprehensive system diagnostics & egress tests
+  tunnel      Show active HTTPS tunnel URL & secure pairing link
+  logs        Display recent server and relay logs
+  install     Verify environment and install production dependencies
+  update      Update Space Station from GitHub repository
+  uninstall   Remove background daemon, logs, and CLI shortcuts
+  version     Display current CLI and platform version
+
+Examples:
+  cybervps start              Start server in foreground with live logs
+  cybervps start --daemon     Start as background daemon
+  cybervps status             Check backend reachability and node fleet
+  cybervps doctor             Inspect DNS, egress firewall, and ports
+================================================================
+`);
+}
+
+function isPidRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function handleStart() {
+  const isDaemon = args.includes('--daemon');
+  const portArgIdx = args.indexOf('--port');
+  const port = portArgIdx !== -1 && args[portArgIdx + 1] ? args[portArgIdx + 1] : (process.env.PORT || '8080');
+
+  // Check if already running
+  if (fs.existsSync(PID_FILE)) {
+    const existingPid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    if (isPidRunning(existingPid)) {
+      console.log(`⚠️  Space Station is already running (PID: ${existingPid}) on port ${port}.`);
+      console.log(`   Run 'cybervps status' to view live links, or 'cybervps stop' to terminate.`);
+      return;
+    } else {
+      fs.unlinkSync(PID_FILE);
+    }
+  }
+
+  // Ensure production dependencies are available
+  const serverPath = path.join(APP_DIR, 'services', 'server.js');
+  if (!fs.existsSync(serverPath)) {
+    console.error(`❌ Fatal: Server entrypoint not found at ${serverPath}`);
+    process.exit(1);
+  }
+
+  const nodeModulesPath = path.join(APP_DIR, 'node_modules', 'ws');
+  if (!fs.existsSync(nodeModulesPath)) {
+    console.log('[*] Installing required production dependencies (ws)...');
+    try {
+      execSync('npm install --omit=dev', { cwd: APP_DIR, stdio: 'inherit' });
+    } catch (e) {
+      console.warn(`[!] Note: npm install returned: ${e.message}`);
+    }
+  }
+
+  const env = { ...process.env, PORT: port };
+
+  if (isDaemon) {
+    console.log(`[*] Launching CyberVPS Space Station in daemon mode on port ${port}...`);
+    const outLog = fs.openSync(LOG_FILE, 'a');
+    const errLog = fs.openSync(LOG_FILE, 'a');
+
+    const child = spawn(process.execPath, [serverPath], {
+      cwd: APP_DIR,
+      env,
+      detached: true,
+      stdio: ['ignore', outLog, errLog]
+    });
+
+    child.unref();
+    fs.writeFileSync(PID_FILE, String(child.pid), 'utf8');
+
+    console.log(`✅ Daemon started with PID: ${child.pid}`);
+    console.log(`📄 Logs available at: ${LOG_FILE}`);
+
+    // Wait 2.5s and check health
+    await new Promise(r => setTimeout(r, 2500));
+    await handleStatus();
+  } else {
+    // Foreground mode
+    const child = spawn(process.execPath, [serverPath], {
+      cwd: APP_DIR,
+      env,
+      stdio: 'inherit'
+    });
+
+    fs.writeFileSync(PID_FILE, String(child.pid), 'utf8');
+
+    const cleanExit = () => {
+      if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
+      process.exit(0);
+    };
+    process.on('SIGINT', cleanExit);
+    process.on('SIGTERM', cleanExit);
+
+    child.on('exit', (code) => {
+      if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
+      process.exit(code || 0);
+    });
+  }
+}
+
+async function handleStop() {
+  if (!fs.existsSync(PID_FILE)) {
+    console.log('ℹ️  No Space Station daemon is currently running (PID file missing).');
+    return;
+  }
+
+  const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+  if (!isPidRunning(pid)) {
+    console.log(`ℹ️  Stale PID file found (${pid}). Process already stopped. Cleaning up.`);
+    fs.unlinkSync(PID_FILE);
+    return;
+  }
+
+  console.log(`[*] Stopping Space Station process (PID: ${pid})...`);
+  try {
+    process.kill(pid, 'SIGTERM');
+    let stopped = false;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 300));
+      if (!isPidRunning(pid)) {
+        stopped = true;
+        break;
+      }
+    }
+    if (!stopped) {
+      console.log('[*] Process did not stop gracefully. Forcing termination...');
+      process.kill(pid, 'SIGKILL');
+    }
+    console.log('✅ Space Station daemon stopped successfully.');
+  } catch (e) {
+    console.error(`❌ Failed to stop process ${pid}: ${e.message}`);
+  } finally {
+    if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
+  }
+}
+
+function fetchJson(urlStr, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    try {
+      const parsed = new URL(urlStr);
+      const req = http.get({
+        hostname: parsed.hostname,
+        port: parsed.port || 80,
+        path: parsed.pathname + (parsed.search || ''),
+        timeout: timeoutMs
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            resolve({ statusCode: res.statusCode, data: JSON.parse(data) });
+          } catch (_) {
+            resolve({ statusCode: res.statusCode, data: null });
+          }
+        });
+      });
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.on('error', () => resolve(null));
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+async function handleStatus() {
+  console.log('================================================================');
+  console.log('📊 CYBERVPS SPACE STATION STATUS');
+  console.log('================================================================');
+
+  let pid = null;
+  let isRunning = false;
+
+  if (fs.existsSync(PID_FILE)) {
+    pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    isRunning = isPidRunning(pid);
+  }
+
+  const port = process.env.PORT || '8080';
+  const health = await fetchJson(`http://127.0.0.1:${port}/health`);
+  const access = await fetchJson(`http://127.0.0.1:${port}/api/v1/access/status`);
+
+  if (health && health.statusCode === 200) {
+    console.log(`🟢 Control Plane:    ACTIVE (Listening on http://localhost:${port})`);
+    if (pid) console.log(`⚙️  Process ID:       ${pid}`);
+    console.log(`🖥️  Connected Nodes:  ${health.data.active_machines || 0}`);
+    console.log(`🌉 Port Bridges:     ${health.data.active_bridge_mappings || 0}`);
+    console.log(`🪐 Virtual Network:  ${health.data.virtual_network_cidr || '10.77.0.0/24'}`);
+
+    if (access && access.data && access.data.public_url) {
+      console.log(`🌐 Remote Access:    ${access.data.public_url} (${access.data.provider})`);
+      console.log(``);
+      console.log(`👉 Live Dashboard URL:`);
+      console.log(`   ${access.data.public_url}`);
+      console.log(`👉 GitHub Pages Linked:`);
+      console.log(`   https://cyberdrivepro.github.io/cybervps-space-station/?backend=${encodeURIComponent(access.data.public_url)}`);
+    } else {
+      console.log(`👉 Local Dashboard: http://localhost:${port}`);
+    }
+  } else {
+    console.log(`🔴 Control Plane:    STOPPED / UNREACHABLE`);
+    if (isRunning) {
+      console.log(`⚠️  Process ${pid} is running, but port ${port} is not responding.`);
+    } else {
+      console.log(`ℹ️  Run 'cybervps start' to start the Space Station.`);
+    }
+  }
+  console.log('================================================================');
+}
+
+async function handleTunnel() {
+  const port = process.env.PORT || '8080';
+  const access = await fetchJson(`http://127.0.0.1:${port}/api/v1/access/status`);
+  if (access && access.data && access.data.public_url) {
+    console.log(`🌐 Remote Access URL: ${access.data.public_url}`);
+    console.log(`Provider: ${access.data.provider}`);
+    console.log(`Status: ${access.data.status}`);
+  } else {
+    console.log('ℹ️  No active remote tunnel detected on http://127.0.0.1:' + port);
+  }
+}
+
+async function handleDoctor() {
+  console.log('================================================================');
+  console.log('🩺 CYBERVPS SYSTEM DOCTOR & ENVIRONMENT DIAGNOSTICS');
+  console.log('================================================================');
+
+  console.log(`[OS] Platform: ${process.platform}, Arch: ${os.arch()}, Release: ${os.release()}`);
+  console.log(`[OS] CPUs: ${os.cpus().length}, Memory: ${Math.round(os.totalmem() / 1024 / 1024)} MB`);
+  console.log(`[Node] Version: ${process.version}, Executable: ${process.execPath}`);
+
+  // Check npm
+  try {
+    const npmVer = execSync('npm -v', { encoding: 'utf8' }).trim();
+    console.log(`[npm] Version: ${npmVer} ✅`);
+  } catch (_) {
+    console.log(`[npm] Not found in PATH ⚠️`);
+  }
+
+  // Check git
+  try {
+    const gitVer = execSync('git --version', { encoding: 'utf8' }).trim();
+    console.log(`[git] Version: ${gitVer} ✅`);
+  } catch (_) {
+    console.log(`[git] Not found in PATH ⚠️`);
+  }
+
+  // Check port 8080
+  const port = process.env.PORT || '8080';
+  const portFree = await new Promise((resolve) => {
+    const s = http.createServer();
+    s.once('error', () => resolve(false));
+    s.once('listening', () => { s.close(); resolve(true); });
+    s.listen(parseInt(port, 10), '127.0.0.1');
+  });
+  console.log(`[Port] Port ${port} status: ${portFree ? 'Available ✅' : 'Occupied (or in use by Space Station) ℹ️'}`);
+
+  // Test outbound DNS & HTTPS
+  console.log('[Network] Checking outbound HTTPS reachability...');
+  const checkUrl = (u) => new Promise(r => {
+    try {
+      const parsed = new URL(u);
+      const req = require('https').get({ hostname: parsed.hostname, path: '/', timeout: 4000 }, (res) => r(res.statusCode));
+      req.on('error', () => r(null));
+      req.on('timeout', () => { req.destroy(); r(null); });
+    } catch (_) { r(null); }
+  });
+
+  const ghStatus = await checkUrl('https://github.com');
+  console.log(`[Egress] GitHub HTTPS: ${ghStatus ? 'REACHABLE ✅' : 'UNREACHABLE / BLOCKED ❌'}`);
+
+  const cfStatus = await checkUrl('https://cloudflare.com');
+  console.log(`[Egress] Cloudflare HTTPS: ${cfStatus ? 'REACHABLE ✅' : 'UNREACHABLE / BLOCKED ❌'}`);
+
+  console.log('\n✅ Diagnostic scan complete.');
+  console.log('================================================================');
+}
+
+function handleLogs() {
+  if (!fs.existsSync(LOG_FILE)) {
+    console.log('ℹ️  No log file found at ' + LOG_FILE);
+    return;
+  }
+  const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n').filter(Boolean);
+  const tail = lines.slice(-40);
+  console.log(`--- [Last ${tail.length} lines of ${LOG_FILE}] ---`);
+  console.log(tail.join('\n'));
+}
+
+function handleInstall() {
+  console.log('================================================================');
+  console.log('📦 CYBERVPS SPACE STATION DEPENDENCY INSTALLER');
+  console.log('================================================================');
+  try {
+    console.log(`[*] Working directory: ${APP_DIR}`);
+    execSync('npm install --omit=dev', { cwd: APP_DIR, stdio: 'inherit' });
+    console.log('\n🎉 Space Station dependencies verified and installed successfully!');
+    console.log('👉 Run "cybervps start" to launch.');
+  } catch (e) {
+    console.error(`❌ Installation error: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+function handleUpdate() {
+  console.log('================================================================');
+  console.log('🔄 UPDATING CYBERVPS SPACE STATION FROM GITHUB');
+  console.log('================================================================');
+  try {
+    console.log('[*] Fetching latest changes from origin/main...');
+    execSync('git pull origin main', { cwd: APP_DIR, stdio: 'inherit' });
+    console.log('[*] Verifying dependencies...');
+    execSync('npm install --omit=dev', { cwd: APP_DIR, stdio: 'inherit' });
+    console.log('\n🎉 CyberVPS Space Station updated to latest version!');
+  } catch (e) {
+    console.error(`❌ Update failed: ${e.message}`);
+    console.log('Please ensure git is installed and network access is available.');
+  }
+}
+
+function handleUninstall() {
+  console.log('================================================================');
+  console.log('🗑️  UNINSTALL CYBERVPS SPACE STATION');
+  console.log('================================================================');
+  if (fs.existsSync(PID_FILE)) {
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    if (isPidRunning(pid)) {
+      console.log(`[*] Terminating running daemon (PID: ${pid})...`);
+      try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+    }
+    fs.unlinkSync(PID_FILE);
+  }
+  console.log('✅ Daemons stopped. You can safely remove the repository folder.');
+}
+
+main().catch(err => {
+  console.error('Fatal CLI Error:', err);
+  process.exit(1);
+});

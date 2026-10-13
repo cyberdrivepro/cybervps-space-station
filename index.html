@@ -723,12 +723,29 @@ $ </div>
   </div>
 
   <script>
-    // State
+    // State & Dynamic Configuration
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramBackend = urlParams.get('backend');
+    const paramPair = urlParams.get('pair');
+
+    if (paramBackend) {
+      const cleanUrl = paramBackend.trim().replace(/\/+$/, '');
+      localStorage.setItem('cvps_server_url', cleanUrl);
+    }
+    if (paramPair) {
+      localStorage.setItem('cvps_pairing_key', paramPair.trim());
+    }
+
+    const isGitHubPages = window.location.hostname.endsWith('github.io');
+    const defaultOrigin = isGitHubPages ? 'http://localhost:8080' : window.location.origin;
+
     let config = {
-      serverUrl: localStorage.getItem('cvps_server_url') || 'http://localhost:8080'
+      serverUrl: localStorage.getItem('cvps_server_url') || defaultOrigin,
+      pairingKey: localStorage.getItem('cvps_pairing_key') || ''
     };
 
     let backendOnline = false;
+    let accessStatus = null;
     let currentData = {
       machines: [],
       bridges: [],
@@ -792,6 +809,18 @@ $ </div>
           backendOnline = true;
           statusEl.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--success);"></span><span style="color:var(--success);">ONLINE</span>`;
           bannerEl.style.display = 'none';
+
+          // Query tunnel access info
+          try {
+            const accRes = await fetch(`${config.serverUrl}/api/v1/access/status`);
+            if (accRes.ok) {
+              accessStatus = await accRes.json();
+              if (accessStatus.provider && accessStatus.provider !== 'localhost') {
+                statusEl.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--success);"></span><span style="color:var(--success); font-size:0.75rem;">ONLINE (${accessStatus.provider.toUpperCase()})</span>`;
+              }
+            }
+          } catch (_) {}
+
           if (!silent) testResultEl.innerHTML = `<span style="color:var(--success);">✅ Successfully connected to Control Plane at ${config.serverUrl}</span>`;
           await syncData();
           return;

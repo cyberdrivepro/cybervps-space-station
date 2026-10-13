@@ -10,9 +10,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer, WebSocket } = require('ws');
+const TunnelManager = require('./tunnel-manager');
 
 const PORT = process.env.PORT || 8080;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
+const tunnelManager = new TunnelManager({ port: PORT });
 
 // Virtual IP Pool for Mode B (10.77.0.0/24)
 class VirtualIpPool {
@@ -76,7 +78,7 @@ function logAudit(eventType, actor, machineId, details, severity = 'info') {
 
 // HTTP Server
 const server = http.createServer(async (req, res) => {
-  const parsedUrl = url.parse(req.url, true);
+  const parsedUrl = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
   const pathname = parsedUrl.pathname;
   const method = req.method;
 
@@ -136,6 +138,35 @@ const server = http.createServer(async (req, res) => {
     fs.readFile(docPath, 'utf8', (err, data) => {
       res.writeHead(200, { 'Content-Type': 'text/x-shellscript' });
       res.end(data || '# Error loading script');
+    });
+    return;
+  }
+
+  // 2B. REMOTE ACCESS & PAIRING ENDPOINTS
+  if (pathname === '/api/v1/access/status' && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(tunnelManager.getInfo()));
+    return;
+  }
+
+  if (pathname === '/api/v1/access/pairing' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const token = tunnelManager.verifyPairingKey(payload.pairing_key);
+        if (token) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, session_token: token }));
+        } else {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid pairing key' }));
+        }
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
     });
     return;
   }
@@ -385,7 +416,8 @@ const wssRelay = new WebSocketServer({ noServer: true });
 const wssTerminal = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
-  const pathname = url.parse(request.url).pathname;
+  const parsedUrl = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
+  const pathname = parsedUrl.pathname;
 
   if (pathname === '/api/v1/relay/connect') {
     wssRelay.handleUpgrade(request, socket, head, (ws) => {
@@ -429,8 +461,8 @@ wssRelay.on('connection', (ws, request) => {
 });
 
 wssTerminal.on('connection', (ws, request) => {
-  const parsed = url.parse(request.url, true);
-  const machineId = parsed.query.machine_id;
+  const parsed = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
+  const machineId = parsed.searchParams.get('machine_id');
   const sessionId = 'term_' + crypto.randomUUID().slice(0, 8);
 
   if (!machineId || !db.machines.has(machineId)) {
@@ -1247,11 +1279,53 @@ function getUniversalBridgeDashboardHtml(host) {
 </html>`;
 }
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`================================================================`);
-  console.log(`🛰️  CYBERVPS SPACE STATION UNIVERSAL NETWORK BRIDGE READY`);
-  console.log(`🌐 Dashboard: http://localhost:${PORT}`);
-  console.log(`🌉 Mode A (TCP Port Bridge API): http://localhost:${PORT}/api/v1/bridge/mappings`);
-  console.log(`🪐 Mode B (Virtual Network Mesh): http://localhost:${PORT}/api/v1/vpn/network`);
+  console.log(`🛰️  CYBERVPS SPACE STATION UNIVERSAL CONTROL PLANE READY`);
+  console.log(`================================================================`);
+  console.log(`🏠 Local Control Plane:  http://localhost:${PORT}`);
+
+  let tunnelInfo = { provider: 'localhost', public_url: `http://localhost:${PORT}` };
+  try {
+    tunnelInfo = await tunnelManager.start(PORT);
+  } catch (err) {
+    console.warn(`[!] Remote tunnel check notice: ${err.message}`);
+  }
+
+  const publicUrl = tunnelInfo.public_url || `http://localhost:${PORT}`;
+  const pairingKey = tunnelManager.pairingKey;
+  const isRemote = tunnelInfo.provider !== 'localhost';
+
+  if (isRemote) {
+    console.log(`🌐 Remote Public URL:     ${publicUrl} (${tunnelInfo.provider})`);
+    console.log(`🔑 Secure Pairing Key:    ${pairingKey}`);
+    console.log(``);
+    console.log(`👉 DIRECT ACCESS:`);
+    console.log(`   ${publicUrl}/?pair=${pairingKey}`);
+    console.log(``);
+    console.log(`👉 CONNECT GITHUB PAGES DASHBOARD:`);
+    console.log(`   https://cyberdrivepro.github.io/cybervps-space-station/?backend=${encodeURIComponent(publicUrl)}&pair=${pairingKey}`);
+    console.log(``);
+    console.log(`👉 CONNECT ANY REMOTE AGENT (VPS / SSH / Ubuntu / Windows):`);
+    console.log(`   curl -sSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/scripts/install-agent.sh | bash -s -- --server ${publicUrl}`);
+  } else {
+    console.log(`ℹ️  Running in Local Mode: ${publicUrl}`);
+    console.log(`👉 Local Dashboard:        http://localhost:${PORT}`);
+    console.log(`👉 Connect GitHub Pages:   https://cyberdrivepro.github.io/cybervps-space-station/?backend=http://localhost:${PORT}`);
+  }
+
+  console.log(``);
+  console.log(`🌉 Mode A (TCP Port Bridge API): ${publicUrl}/api/v1/bridge/mappings`);
+  console.log(`🪐 Mode B (Virtual Network Mesh): ${publicUrl}/api/v1/vpn/network`);
   console.log(`================================================================`);
 });
+
+// Clean process termination
+const cleanup = async () => {
+  console.log('\n[!] Shutting down Space Station server...');
+  await tunnelManager.stop();
+  server.close(() => process.exit(0));
+};
+process.on('SIGINT', cleanup);
+process.on('SIGTERM', cleanup);
+

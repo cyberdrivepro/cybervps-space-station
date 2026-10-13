@@ -66,39 +66,98 @@ CyberVPS Space Station creates an **encrypted outbound virtual bridge** between 
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start & Universal Zero-Friction Installers
 
-### 1. Launch the Space Station Hub
+### ⚡ Option 1: 1-Line Universal Bootstrap Installers (No Git/Manual NPM Required)
+
+#### 🐧 Linux (Ubuntu, Debian, Non-Root VPS, Termux, Daytona):
 ```bash
-git clone https://github.com/cybervps/space-station.git
+curl -fsSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.sh -o install.sh && sh install.sh
+```
+
+#### 🪟 Windows PowerShell (10 / 11, PowerShell 5.1 & 7+):
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1')))
+```
+
+#### 💻 Windows Command Prompt (CMD):
+```cmd
+curl -sSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.cmd -o install.cmd && install.cmd
+```
+
+---
+
+### 🛠️ Unified CLI: `cybervps`
+
+Once installed, use the unified `cybervps` CLI across any operating system:
+
+```bash
+# Start Space Station with automatic HTTPS tunnel & live links
+cybervps start
+
+# Start as a 24/7 background daemon
+cybervps start --daemon
+
+# Check running status, connected fleet, and public URLs
+cybervps status
+
+# Comprehensive system doctor & egress network diagnostics
+cybervps doctor
+
+# View recent live logs
+cybervps logs
+
+# Stop running Space Station daemon
+cybervps stop
+```
+
+---
+
+### 🌐 Auto-Public HTTPS Links & Zero-IP Connectivity
+
+When starting inside a remote VPS or cloud sandbox (such as Daytona, Railway, or VPS behind NAT with blocked inbound ports):
+1. **Zero VPS IP Required**: CyberVPS Space Station automatically establishes or detects a reachable HTTPS endpoint (Daytona native preview proxy, Cloudflare Quick Tunnel, or Pinggy SSH tunnel).
+2. **Instant Terminal Banner**: The actual public HTTPS link and cryptographic pairing key are printed right in your terminal.
+3. **Frontend / Backend Separation**:
+   - **Standalone Web Dashboard (The Body)**: Host anywhere, or access live at **[https://cyberdrivepro.github.io/cybervps-space-station/](https://cyberdrivepro.github.io/cybervps-space-station/)**.
+   - **One-Click Connect**: Clicking the generated link `https://cyberdrivepro.github.io/cybervps-space-station/?backend=<YOUR_TUNNEL_URL>&pair=<PAIRING_KEY>` automatically connects the dashboard frontend to your remote backend with live telemetry and authenticated control!
+
+---
+
+### 2. Manual Git Clone (Development)
+```bash
+git clone https://github.com/cyberdrivepro/cybervps-space-station.git
 cd cybervps-space-station
 npm install
 npm start
 ```
-* Dashboard will be live at: **`http://localhost:8080`**
+- Dashboard will be live at: **`http://localhost:8080`** (and via its generated remote public HTTPS URL).
 
-### 2. Connect Remote Machines (1-Line Installers)
+---
 
-#### 🐧 On Linux (Ubuntu / Debian / Root / Non-Root):
+### 3. Connect Remote Machines (Agents)
+
+#### 🐧 On Remote Linux Machines (Ubuntu / Debian / Root / Non-Root):
 ```bash
-curl -sSL http://<your-server-ip>:8080/install.sh | bash
+curl -sSL <YOUR_BACKEND_URL>/install.sh | bash
 ```
 
-#### 🪟 On Windows PowerShell:
+#### 🪟 On Remote Windows Machines:
 ```powershell
-irm http://<your-server-ip>:8080/install.ps1 | iex
+irm <YOUR_BACKEND_URL>/install.ps1 | iex
 ```
 
 #### 🩺 Run System Doctor & Curl Timeout Diagnostic:
 ```bash
-curl -sSL http://<your-server-ip>:8080/doctor.sh | bash
+curl -sSL <YOUR_BACKEND_URL>/doctor.sh | bash
 ```
 
-### 3. Start the Windows Port Bridge Daemon
+### 4. Start the Windows Port Bridge Daemon
 To map remote ports onto your local Windows PC:
 ```powershell
-node apps/windows-client/bridge-daemon.js http://localhost:8080
+node apps/windows-client/bridge-daemon.js <YOUR_BACKEND_URL>
 ```
+
 
 ---
 

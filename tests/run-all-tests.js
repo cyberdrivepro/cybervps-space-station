@@ -9,6 +9,7 @@ const http = require('http');
 const net = require('net');
 const { WebSocket, WebSocketServer } = require('ws');
 const assert = require('assert');
+const { spawn, execSync } = require('child_process');
 
 const SERVER_URL = 'http://localhost:8080';
 
@@ -46,9 +47,11 @@ async function runTests() {
   const healthCheck = await request(`${SERVER_URL}/health`).catch(() => null);
   if (!healthCheck || healthCheck.statusCode !== 200) {
     console.log('[*] Starting local Space Station Control Plane for testing...');
-    const { spawn } = require('child_process');
-    serverProcess = spawn(process.execPath, [require('path').join(__dirname, '../services/server.js')], { stdio: 'ignore' });
-    await wait(1000);
+    serverProcess = spawn(process.execPath, [require('path').join(__dirname, '../services/server.js')], {
+      env: { ...process.env, ENABLE_TUNNEL: 'false' },
+      stdio: 'ignore'
+    });
+    await wait(1200);
   }
 
   // TEST 1: Control Plane Health & Virtual Network Configuration
@@ -221,6 +224,32 @@ async function runTests() {
   console.log(`  ✅ Conflict handled safely: Preferred port 18888 was occupied; automatically resolved to ${conflictMapping.localPort}`);
   dummyServer.close();
 
+  // TEST 9: Remote Access & Secure Pairing Verification
+  console.log('\n[TEST 9] Testing Remote Access & Pairing endpoints (/api/v1/access/*)...');
+  const accessRes = await request(`${SERVER_URL}/api/v1/access/status`);
+  assert.strictEqual(accessRes.statusCode, 200);
+  const accessData = JSON.parse(accessRes.body);
+  assert(accessData.status, 'Status field must be present');
+  assert(accessData.public_url, 'Public or local URL must be present');
+  assert.strictEqual(accessData.pairing_key, undefined, 'Private pairing key must NOT be disclosed in public status');
+  console.log(`  ✅ Remote Access status verified (Provider: ${accessData.provider}, URL: ${accessData.public_url})`);
+
+  // Test Pairing key verification
+  const pairTestRes = await request(`${SERVER_URL}/api/v1/access/pairing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pairing_key: 'invalid_token' })
+  });
+  assert.strictEqual(pairTestRes.statusCode, 401, 'Invalid pairing key must be rejected');
+  console.log('  ✅ Secure Pairing endpoint correctly rejects invalid tokens');
+
+  // TEST 10: CLI Status & Version Verification
+  console.log('\n[TEST 10] Testing Unified cybervps CLI execution...');
+  const { execSync } = require('child_process');
+  const cliVer = execSync(`"${process.execPath}" "${require('path').join(__dirname, '../bin/cybervps')}" version`, { encoding: 'utf8' });
+  assert(cliVer.includes('CyberVPS Space Station v1.0.0'), 'CLI version must report 1.0.0');
+  console.log(`  ✅ Unified CLI verified: ${cliVer.trim()}`);
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -228,10 +257,11 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 8 ADVANCED UNIVERSAL BRIDGE VERIFICATION TESTS PASSED!');
+  console.log('🎉 ALL 10 ADVANCED UNIVERSAL BRIDGE & REMOTE ACCESS TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }
+
 
 runTests().catch(e => {
   console.error('\n❌ Verification failed:', e);
