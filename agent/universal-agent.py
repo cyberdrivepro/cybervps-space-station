@@ -34,10 +34,10 @@ except ImportError:
 
 try:
     import ctypes
-    if hasattr(ctypes, "wintypes"):
-        import ctypes.wintypes
-except ImportError:
+    from ctypes import wintypes
+except Exception:
     ctypes = None
+    wintypes = None
 
 try:
     import winreg
@@ -111,12 +111,12 @@ class ConPTYTerminal:
 
         class STARTUPINFO(ctypes.Structure):
             _fields_ = [
-                ('cb', ctypes.wintypes.DWORD), ('lpReserved', ctypes.c_wchar_p), ('lpDesktop', ctypes.c_wchar_p),
-                ('lpTitle', ctypes.c_wchar_p), ('dwX', ctypes.wintypes.DWORD), ('dwY', ctypes.wintypes.DWORD),
-                ('dwXSize', ctypes.wintypes.DWORD), ('dwYSize', ctypes.wintypes.DWORD), ('dwXCountChars', ctypes.wintypes.DWORD),
-                ('dwYCountChars', ctypes.wintypes.DWORD), ('dwFillAttribute', ctypes.wintypes.DWORD), ('dwFlags', ctypes.wintypes.DWORD),
-                ('wShowWindow', ctypes.wintypes.WORD), ('cbReserved2', ctypes.wintypes.WORD), ('lpReserved2', ctypes.c_char_p),
-                ('hStdInput', ctypes.wintypes.HANDLE), ('hStdOutput', ctypes.wintypes.HANDLE), ('hStdError', ctypes.wintypes.HANDLE)
+                ('cb', wintypes.DWORD), ('lpReserved', ctypes.c_wchar_p), ('lpDesktop', ctypes.c_wchar_p),
+                ('lpTitle', ctypes.c_wchar_p), ('dwX', wintypes.DWORD), ('dwY', wintypes.DWORD),
+                ('dwXSize', wintypes.DWORD), ('dwYSize', wintypes.DWORD), ('dwXCountChars', wintypes.DWORD),
+                ('dwYCountChars', wintypes.DWORD), ('dwFillAttribute', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
+                ('wShowWindow', wintypes.WORD), ('cbReserved2', wintypes.WORD), ('lpReserved2', ctypes.c_char_p),
+                ('hStdInput', wintypes.HANDLE), ('hStdOutput', wintypes.HANDLE), ('hStdError', wintypes.HANDLE)
             ]
 
         class STARTUPINFOEX(ctypes.Structure):
@@ -124,17 +124,19 @@ class ConPTYTerminal:
 
         class PROCESS_INFORMATION(ctypes.Structure):
             _fields_ = [
-                ('hProcess', ctypes.wintypes.HANDLE), ('hThread', ctypes.wintypes.HANDLE),
-                ('dwProcessId', ctypes.wintypes.DWORD), ('dwThreadId', ctypes.wintypes.DWORD)
+                ('hProcess', wintypes.HANDLE), ('hThread', wintypes.HANDLE),
+                ('dwProcessId', wintypes.DWORD), ('dwThreadId', wintypes.DWORD)
             ]
 
         r_in, w_in = os.pipe()
         r_out, w_out = os.pipe()
         self.w_in = w_in
         self.r_out = r_out
+        self.r_in = r_in
+        self.w_out = w_out
 
-        h_in = ctypes.wintypes.HANDLE(msvcrt.get_osfhandle(r_in))
-        h_out = ctypes.wintypes.HANDLE(msvcrt.get_osfhandle(w_out))
+        h_in = wintypes.HANDLE(msvcrt.get_osfhandle(r_in))
+        h_out = wintypes.HANDLE(msvcrt.get_osfhandle(w_out))
 
         hpcon_val = ctypes.c_void_p()
         size = COORD(self.cols, self.rows)
@@ -159,10 +161,13 @@ class ConPTYTerminal:
 
         si = STARTUPINFOEX()
         si.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEX)
+        si.StartupInfo.dwFlags = 0x00000001 # STARTF_USESHOWWINDOW
+        si.StartupInfo.wShowWindow = 0      # SW_HIDE
         si.lpAttributeList = ctypes.cast(attr_buf, ctypes.c_void_p)
 
         pi = PROCESS_INFORMATION()
         EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+        CREATE_NO_WINDOW = 0x08000000
 
         cmd_str = shell_cmd or "powershell.exe -NoLogo"
         if "cmd" in cmd_str.lower() and not cmd_str.lower().endswith(".exe"):
@@ -170,11 +175,9 @@ class ConPTYTerminal:
 
         ok = kernel32.CreateProcessW(
             None, cmd_str, None, None, False,
-            EXTENDED_STARTUPINFO_PRESENT, None, None,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, None, None,
             ctypes.byref(si), ctypes.byref(pi)
         )
-        os.close(r_in)
-        os.close(w_out)
 
         if not ok:
             self.close()
@@ -245,6 +248,14 @@ class ConPTYTerminal:
             try: os.close(self.r_out)
             except Exception: pass
             self.r_out = None
+        if getattr(self, "r_in", None):
+            try: os.close(self.r_in)
+            except Exception: pass
+            self.r_in = None
+        if getattr(self, "w_out", None):
+            try: os.close(self.w_out)
+            except Exception: pass
+            self.w_out = None
 
 
 class RelayWebSocket:
@@ -1682,53 +1693,46 @@ class CyberVPSAgent:
         cols = int(cols or 80)
         rows = int(rows or 24)
         if platform.system() == "Windows":
-            # Prefer native ConPTY for full VT100/ANSI, arrow keys, Tab, interactive repls
+            shell_choice = (shell or "powershell").lower().strip()
+            if "cmd" in shell_choice:
+                shell_cmd_list = ["cmd.exe"]
+                backend_label = "cmd.exe"
+            elif "pwsh" in shell_choice and shutil.which("pwsh"):
+                shell_cmd_list = [shutil.which("pwsh"), "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"]
+                backend_label = "pwsh.exe"
+            else:
+                shell_cmd_list = ["powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"]
+                backend_label = "powershell.exe"
+
+            # Guaranteed 100% hidden background process (ABSOLUTELY ZERO DESKTOP POPUP)
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            CREATE_NO_WINDOW = 0x08000000
+
             try:
-                shell_cmd = shell
-                if not shell_cmd:
-                    shell_cmd = "powershell.exe -NoLogo"
-                term = ConPTYTerminal(
-                    session_id,
-                    cols=cols,
-                    rows=rows,
-                    shell_cmd=shell_cmd,
-                    on_output=lambda sid, out: self.send_agent_event({
-                        "type": "TerminalOutput",
-                        "payload": {"session_id": sid, "data": out}
-                    }),
-                    on_exit=lambda sid: self.send_agent_event({
-                        "type": "TerminalExit",
-                        "payload": {"session_id": sid, "exit_code": 0}
-                    })
+                p = subprocess.Popen(
+                    shell_cmd_list,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    bufsize=0,
+                    creationflags=CREATE_NO_WINDOW,
+                    startupinfo=startupinfo
                 )
                 with self.lock:
-                    self.active_terminals[session_id] = {"term": term, "type": "conpty"}
+                    self.active_terminals[session_id] = {"proc": p, "type": "pipe"}
 
+                threading.Thread(target=self._pipe_terminal_reader, args=(session_id, p.stdout), daemon=True).start()
                 self.send_agent_event({
                     "type": "TerminalReady",
-                    "payload": {"session_id": session_id, "backend": "conpty", "cols": cols, "rows": rows}
+                    "payload": {"session_id": session_id, "backend": f"Background ({backend_label})", "cols": cols, "rows": rows}
                 })
-                return
-            except Exception:
-                pass
-
-            cmd = [shell or "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass"]
-            p = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0
-            )
-            with self.lock:
-                self.active_terminals[session_id] = {"proc": p, "type": "pipe"}
-
-            threading.Thread(target=self._pipe_terminal_reader, args=(session_id, p.stdout), daemon=True).start()
-            threading.Thread(target=self._pipe_terminal_reader, args=(session_id, p.stderr), daemon=True).start()
-            self.send_agent_event({
-                "type": "TerminalReady",
-                "payload": {"session_id": session_id, "backend": "pipe", "cols": cols, "rows": rows}
-            })
+            except Exception as e:
+                self.send_agent_event({
+                    "type": "TerminalOutput",
+                    "payload": {"session_id": session_id, "data": f"\r\n[!] Failed to start background terminal: {e}\r\n"}
+                })
         else:
             import pty
             master, slave = pty.openpty()
@@ -1790,7 +1794,10 @@ class CyberVPSAgent:
     def _pipe_terminal_reader(self, session_id, stream):
         try:
             while self.running:
-                chunk = stream.read1(1024) if hasattr(stream, "read1") else stream.read(1024)
+                with self.lock:
+                    if session_id not in self.active_terminals:
+                        break
+                chunk = stream.read1(2048) if hasattr(stream, "read1") else stream.read(2048)
                 if not chunk:
                     break
                 self.send_agent_event({
@@ -1802,6 +1809,11 @@ class CyberVPSAgent:
                 })
         except Exception:
             pass
+        finally:
+            self.send_agent_event({
+                "type": "TerminalExit",
+                "payload": {"session_id": session_id, "exit_code": 0}
+            })
 
     def write_terminal_input(self, session_id, text):
         with self.lock:

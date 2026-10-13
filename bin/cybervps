@@ -258,25 +258,22 @@ async function handleStart() {
 
   const pyArgs = ['-u', agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
 
-  let childPid = null;
+  let execBinary = execCmd;
   if (process.platform === 'win32') {
-    try {
-      const psOneLiner = `$psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = '${execCmd.replace(/\\/g, '\\\\')}'; $psi.Arguments = '-u \\"${agentScript.replace(/\\/g, '\\\\')}\\" --server \\"${serverUrl}\\" --token \\"${token}\\" --config \\"${CONFIG_FILE.replace(/\\/g, '\\\\')}\\"'; $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden; $psi.CreateNoWindow = $true; $psi.UseShellExecute = $true; $p = [System.Diagnostics.Process]::Start($psi); $p.Id`;
-      const rawPid = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${psOneLiner}"`, { encoding: 'utf8', env: agentEnv }).trim();
-      childPid = parseInt(rawPid, 10);
-    } catch (_) {}
+    const pythonwCandidate = path.join(path.dirname(execCmd), 'pythonw.exe');
+    if (fs.existsSync(pythonwCandidate)) {
+      execBinary = pythonwCandidate;
+    }
   }
 
-  if (!childPid || isNaN(childPid)) {
-    const child = spawn(execCmd, pyArgs, {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      env: agentEnv
-    });
-    child.unref();
-    childPid = child.pid;
-  }
+  const child = spawn(execBinary, pyArgs, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    env: agentEnv
+  });
+  child.unref();
+  const childPid = child.pid;
 
   fs.writeFileSync(AGENT_PID_FILE, String(childPid), 'utf8');
 

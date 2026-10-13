@@ -600,15 +600,32 @@ async function runTests() {
       env: { ...process.env, ENABLE_TUNNEL: 'false' },
       stdio: 'ignore'
     });
-    await wait(1200);
-    const postRestartMachines = await request(`${SERVER_URL}/api/v1/machines`);
-    assert.strictEqual(postRestartMachines.statusCode, 200);
+    let postRestartMachines = null;
+    for (let r = 0; r < 12; r++) {
+      await wait(400);
+      try {
+        postRestartMachines = await request(`${SERVER_URL}/api/v1/machines`);
+        if (postRestartMachines && postRestartMachines.statusCode === 200) break;
+      } catch (_) {}
+    }
+    assert(postRestartMachines && postRestartMachines.statusCode === 200, 'Server must respond after restart');
     const machinesList = JSON.parse(postRestartMachines.body);
     const foundPersisted = machinesList.some(m => m.id === httpNodeId);
     assert(foundPersisted, 'Enrolled machine must survive server process restart via state file');
     console.log(`  ✅ State persistence verified: Node ${httpNodeId} successfully restored after server restart!`);
   } else {
     console.log('  ✅ State persistence active (Server running externally).');
+  }
+
+  // TEST 22: Windows 100% Background Terminal & Progressive Streaming Verification
+  if (process.platform === 'win32') {
+    console.log('\n[TEST 22] Testing Windows 100% Background Terminal & Live Streaming...');
+    const pythonExe = process.env.PYTHON || 'python';
+    const winTermTest = execSync(`${pythonExe} "${require('path').join(__dirname, 'test-windows-terminal.py')}"`, {
+      encoding: 'utf-8'
+    });
+    assert(winTermTest.includes('ALL WINDOWS BACKGROUND TERMINAL TESTS PASSED'), 'Windows terminal test must pass');
+    console.log('  ✅ Windows Background Terminal verified: zero desktop popups, persistent state & live streaming operational.');
   }
 
   // Clean up
@@ -618,7 +635,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 21 ADVANCED UNIVERSAL BRIDGE, DEVICE INTEL, FILE MANAGER, TERMINAL & PERSISTENCE TESTS PASSED!');
+  console.log('🎉 ALL 22 ADVANCED UNIVERSAL BRIDGE, DEVICE INTEL, FILE MANAGER, TERMINAL & PERSISTENCE TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }
