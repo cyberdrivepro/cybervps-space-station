@@ -623,11 +623,29 @@ wssTerminal.on('connection', (ws, request) => {
 
   ws.on('message', (data) => {
     try {
-      const msg = JSON.parse(data.toString());
-      if (msg.type === 'input') {
+      const str = data.toString();
+      let inputData = null;
+      try {
+        const msg = JSON.parse(str);
+        if (msg && msg.type === 'input') {
+          inputData = msg.data;
+        } else if (msg && msg.type === 'resize') {
+          sendServerCommand(machineId, {
+            type: 'TerminalResize',
+            payload: { session_id: sessionId, cols: msg.cols || 80, rows: msg.rows || 24 }
+          });
+          return;
+        } else if (typeof msg === 'string') {
+          inputData = msg;
+        }
+      } catch (_) {
+        inputData = str;
+      }
+
+      if (inputData !== null && inputData !== undefined) {
         sendServerCommand(machineId, {
           type: 'TerminalInput',
-          payload: { session_id: sessionId, data: msg.data }
+          payload: { session_id: sessionId, data: inputData }
         });
       }
     } catch (e) {}

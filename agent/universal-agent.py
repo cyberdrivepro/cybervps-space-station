@@ -266,7 +266,7 @@ class CyberVPSAgent:
     def _pty_terminal_reader(self, session_id, master_fd):
         try:
             while self.running:
-                r, _, _ = select.select([master_fd], [], [], 0.5)
+                r, _, _ = select.select([master_fd], [], [], 0.05)
                 if master_fd in r:
                     data = os.read(master_fd, 2048)
                     if not data:
@@ -289,7 +289,7 @@ class CyberVPSAgent:
     def _pipe_terminal_reader(self, session_id, stream):
         try:
             while self.running:
-                chunk = stream.read(1024)
+                chunk = stream.read1(1024) if hasattr(stream, "read1") else stream.read(1024)
                 if not chunk:
                     break
                 self.send_agent_event({
@@ -313,6 +313,20 @@ class CyberVPSAgent:
             elif term["type"] == "pipe":
                 term["proc"].stdin.write(text.encode("utf-8"))
                 term["proc"].stdin.flush()
+        except Exception:
+            pass
+
+    def resize_terminal(self, session_id, cols=80, rows=24):
+        with self.lock:
+            term = self.active_terminals.get(session_id)
+        if not term or term.get("type") != "pty":
+            return
+        try:
+            import fcntl
+            import termios
+            import struct
+            winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+            fcntl.ioctl(term["master"], termios.TIOCSWINSZ, winsize)
         except Exception:
             pass
 
@@ -476,6 +490,8 @@ class CyberVPSAgent:
             )
         elif c_type == "TerminalInput":
             self.write_terminal_input(payload.get("session_id"), payload.get("data", ""))
+        elif c_type == "TerminalResize":
+            self.resize_terminal(payload.get("session_id"), payload.get("cols", 80), payload.get("rows", 24))
         elif c_type == "TerminalKill":
             self.kill_terminal(payload.get("session_id"))
         elif c_type == "TunnelOpenStream":
@@ -553,7 +569,13 @@ class CyberVPSAgent:
 
             # Poll for any server commands (terminals, tunnels)
             self.poll_server_commands()
-            time.sleep(1)
+
+            with self.lock:
+                has_active_term = len(self.active_terminals) > 0
+            if has_active_term:
+                time.sleep(0.08)
+            else:
+                time.sleep(1)
 
 
 if __name__ == "__main__":

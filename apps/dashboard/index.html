@@ -473,53 +473,102 @@
     .modal-body { padding: 1.5rem; overflow-y: auto; max-height: 75vh; }
     .modal-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border-subtle); background: var(--bg-subtle); display: flex; justify-content: flex-end; gap: 0.75rem; }
 
-    /* Terminal Window */
+    /* Terminal Window - Ultra-Premium Console Styling */
     .terminal-container {
       background: #020408;
-      border: 1px solid var(--border-subtle);
+      border: 1px solid rgba(56, 189, 248, 0.2);
       border-radius: var(--radius-md);
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      height: 480px;
+      height: 520px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+      transition: height 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .terminal-container.expanded {
+      height: 750px;
     }
     .terminal-header {
-      background: #060910;
-      padding: 0.6rem 1rem;
-      border-bottom: 1px solid var(--border-subtle);
+      background: #070c16;
+      padding: 0.65rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       display: flex;
       align-items: center;
       justify-content: space-between;
       font-size: 0.75rem;
       font-family: var(--font-mono);
       color: var(--text-muted);
+      user-select: none;
+    }
+    .terminal-quick-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.45rem 1rem;
+      background: #050811;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .quick-chip-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      margin-right: 0.35rem;
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+    .quick-cmd-chip {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.22);
+      color: #38bdf8;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      line-height: 1.2;
+      flex-shrink: 0;
+    }
+    .quick-cmd-chip:hover {
+      background: rgba(56, 189, 248, 0.25);
+      border-color: #38bdf8;
+      color: #ffffff;
+      transform: translateY(-1px);
     }
     .terminal-body {
       flex: 1;
-      padding: 1rem;
-      font-family: var(--font-mono);
-      font-size: 0.82rem;
-      color: #38bdf8;
+      padding: 1rem 1.25rem;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, Monaco, monospace;
+      font-size: 0.84rem;
+      color: #e2e8f0;
+      background: #020408;
       overflow-y: auto;
       white-space: pre-wrap;
-      line-height: 1.45;
+      word-break: break-all;
+      line-height: 1.5;
+      cursor: text;
     }
     .terminal-prompt-line {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      border-top: 1px solid #111827;
-      padding: 0.5rem 1rem;
-      background: #060910;
+      gap: 0.65rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 0.6rem 1rem;
+      background: #070c16;
     }
     .terminal-input {
       flex: 1;
       background: transparent;
       border: none;
-      color: #fff;
-      font-family: var(--font-mono);
+      color: #f8fafc;
+      font-family: 'JetBrains Mono', Consolas, monospace;
       font-size: 0.85rem;
       outline: none;
+    }
+    .terminal-input::placeholder {
+      color: #475569;
     }
 
     /* Toast Container */
@@ -911,29 +960,76 @@
 
       <!-- VIEW: WEB TERMINAL -->
       <div id="view-terminal" class="view-panel" style="display:none;">
-        <div class="card">
-          <div class="card-header">
-            <div style="display:flex; align-items:center; gap:1rem;">
-              <div class="card-title">Browser Web Terminal</div>
-              <select id="terminal-machine-select" class="form-control" style="font-size:0.8rem; padding:0.35rem 0.6rem;" onchange="initTerminalSession()">
+        <div class="card" style="box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
+          <div class="card-header" style="flex-wrap: wrap; gap: 0.75rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem; flex: 1; min-width: 280px;">
+              <div style="display:flex; align-items:center; gap:0.5rem;">
+                <svg viewBox="0 0 24 24" style="width:1.25rem; height:1.25rem; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+                <div class="card-title" style="margin:0;">Browser Web Terminal</div>
+              </div>
+              <select id="terminal-machine-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:240px;" onchange="initTerminalSession(true)">
                 <option value="">Select Target Machine...</option>
               </select>
             </div>
-            <div style="display:flex; gap:0.5rem;">
-              <button class="btn btn-secondary" onclick="clearTerminalScreen()">Clear</button>
-              <button class="btn btn-secondary" onclick="initTerminalSession()">Reconnect</button>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <button class="btn btn-secondary" onclick="copyTerminalOutput()" title="Copy terminal output buffer" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
+                <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy
+              </button>
+              <button class="btn btn-secondary" onclick="clearTerminalScreen()" title="Clear terminal screen (Ctrl+L)" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
+                <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Clear
+              </button>
+              <button class="btn btn-secondary" onclick="initTerminalSession(false)" title="Reconnect terminal WebSocket" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
+                <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Reconnect
+              </button>
+              <button id="btn-terminal-fullscreen" class="btn btn-secondary" onclick="toggleTerminalFullscreen()" title="Toggle full height terminal" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
+                <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>Maximize
+              </button>
             </div>
           </div>
           <div class="card-body" style="padding:0;">
             <div class="terminal-container">
+              <!-- Window top-bar with Mac dots and metadata -->
               <div class="terminal-header">
-                <span id="terminal-session-label">Session: Idle</span>
-                <span id="terminal-status-badge" class="badge badge-subtle">Disconnected</span>
+                <div style="display:flex; align-items:center; gap:0.65rem;">
+                  <span style="display:inline-flex; gap:5px;">
+                    <span style="width:10px; height:10px; border-radius:50%; background:#ef4444; display:inline-block;"></span>
+                    <span style="width:10px; height:10px; border-radius:50%; background:#eab308; display:inline-block;"></span>
+                    <span style="width:10px; height:10px; border-radius:50%; background:#22c55e; display:inline-block;"></span>
+                  </span>
+                  <span id="terminal-session-label" style="font-weight:600; color:var(--text-main);">Session: Idle</span>
+                  <span id="terminal-machine-meta" style="color:var(--text-muted); font-size:0.72rem; padding: 0.15rem 0.5rem; background:rgba(255,255,255,0.05); border-radius:4px; font-family:var(--font-mono);">No Target</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                  <span id="terminal-status-badge" class="badge badge-subtle">Disconnected</span>
+                </div>
               </div>
-              <div id="terminal-output" class="terminal-body">Select a connected machine above to stream an interactive bash/powershell session.</div>
+
+              <!-- Quick command buttons strip -->
+              <div class="terminal-quick-bar">
+                <span class="quick-chip-label">Quick Actions:</span>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('whoami')">whoami</button>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('uname -a')">uname -a</button>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('ls -la')">ls -la</button>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('df -h')">df -h</button>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('free -m')">free -m</button>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('ps aux | head -20')">ps aux</button>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('ip a')">ip a</button>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('uptime')">uptime</button>
+                <button class="quick-cmd-chip" onclick="sendTerminalCommand('clear')">clear</button>
+              </div>
+
+              <!-- Streamed Terminal Screen -->
+              <div id="terminal-output" class="terminal-body" onclick="focusTerminalInput()">
+                <div style="color:var(--text-muted); padding:2rem; text-align:center;">
+                  Select a machine or wait for auto-connect...
+                </div>
+              </div>
+
+              <!-- Interactive Prompt Input -->
               <div class="terminal-prompt-line">
-                <span style="color:var(--accent-cyan); font-family:var(--font-mono); font-weight:600;">$&gt;</span>
-                <input type="text" id="terminal-cmd-input" class="terminal-input" placeholder="Enter shell command..." onkeydown="handleTerminalKey(event)">
+                <span id="terminal-prompt-prefix" style="color:var(--accent-cyan); font-family:var(--font-mono); font-weight:600; white-space:nowrap;">$&gt;</span>
+                <input type="text" id="terminal-cmd-input" class="terminal-input" placeholder="Type command (Up/Down for history, Ctrl+C to abort, Ctrl+L to clear)..." onkeydown="handleTerminalKey(event)" autocomplete="off" spellcheck="false">
+                <button class="btn btn-primary" onclick="submitTerminalInput()" style="padding:0.3rem 0.85rem; font-size:0.75rem;">Send</button>
               </div>
             </div>
           </div>
@@ -1492,9 +1588,38 @@
       const selectTerm = document.getElementById('terminal-machine-select');
       if (!selectModal || !selectTerm) return;
 
-      const opts = appState.machines.map(m => `<option value="${m.id}">${escapeHtml(m.hostname || m.id)} (${m.os || 'Linux'})</option>`).join('');
-      selectModal.innerHTML = opts || '<option value="">No machines available</option>';
-      selectTerm.innerHTML = '<option value="">Select Target Machine...</option>' + opts;
+      const currentModalVal = selectModal.value;
+      const currentTermVal = selectTerm.value;
+
+      const modalOpts = appState.machines.map(m => `<option value="${m.id}">${escapeHtml(m.hostname || m.id)} (${m.os || 'Linux'})</option>`).join('');
+      selectModal.innerHTML = modalOpts || '<option value="">No machines available</option>';
+      if (currentModalVal && appState.machines.some(m => m.id === currentModalVal)) {
+        selectModal.value = currentModalVal;
+      }
+
+      const termOpts = appState.machines.map(m => {
+        const isOnline = m.status === 'online';
+        const icon = isOnline ? '🟢' : '⚪';
+        const statusText = isOnline ? 'ONLINE' : 'OFFLINE';
+        return `<option value="${m.id}">${icon} ${escapeHtml(m.hostname || m.id)} [${statusText} - ${m.os || 'Linux'}]</option>`;
+      }).join('');
+
+      selectTerm.innerHTML = '<option value="">Select Target Machine...</option>' + termOpts;
+
+      // Preserve existing selection if valid
+      if (currentTermVal && appState.machines.some(m => m.id === currentTermVal)) {
+        selectTerm.value = currentTermVal;
+      } else {
+        // Auto-select first online machine
+        const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
+        if (firstOnline) {
+          selectTerm.value = firstOnline.id;
+          const termView = document.getElementById('view-terminal');
+          if (termView && termView.style.display !== 'none' && (!appState.activeTerminalWs || appState.activeTerminalWs.readyState !== WebSocket.OPEN)) {
+            initTerminalSession(false);
+          }
+        }
+      }
     }
 
     // 6. MUTATIONS (CREATE BRIDGE & REVOKE)
@@ -1558,33 +1683,165 @@
       openBridgeModal();
     }
 
-    // 7. INTERACTIVE WEB TERMINAL STREAMING
-    function initTerminalSession() {
-      const machineId = document.getElementById('terminal-machine-select').value;
+    // 7. INTERACTIVE WEB TERMINAL STREAMING & ANSI ENGINE
+    let terminalHistory = [];
+    let historyIndex = -1;
+
+    function ansiToHtml(text) {
+      if (!text) return '';
+      let s = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      const fgColors = {
+        30: '#1e293b', 31: '#f87171', 32: '#4ade80', 33: '#facc15',
+        34: '#60a5fa', 35: '#c084fc', 36: '#38bdf8', 37: '#f1f5f9',
+        90: '#64748b', 91: '#ef4444', 92: '#22c55e', 93: '#eab308',
+        94: '#3b82f6', 95: '#a855f7', 96: '#06b6d4', 97: '#ffffff'
+      };
+      const bgColors = {
+        40: '#000000', 41: '#7f1d1d', 42: '#14532d', 43: '#713f12',
+        44: '#1e3a8a', 45: '#581c87', 46: '#164e63', 47: '#334155',
+        100: '#1e293b', 101: '#991b1b', 102: '#166534', 103: '#854d0e',
+        104: '#1e40af', 105: '#6b21a8', 106: '#155e75', 107: '#475569'
+      };
+
+      let openSpans = 0;
+      s = s.replace(/\x1b\[([0-9;]*)m/g, (match, codesStr) => {
+        if (!codesStr || codesStr === '0') {
+          const closing = '</span>'.repeat(openSpans);
+          openSpans = 0;
+          return closing;
+        }
+        const codes = codesStr.split(';').map(c => parseInt(c, 10));
+        let style = '';
+        for (let i = 0; i < codes.length; i++) {
+          const c = codes[i];
+          if (c === 0) {
+            let res = '</span>'.repeat(openSpans);
+            openSpans = 0;
+            return res;
+          } else if (c === 1) {
+            style += 'font-weight:700;';
+          } else if (c === 2) {
+            style += 'opacity:0.75;';
+          } else if (c === 4) {
+            style += 'text-decoration:underline;';
+          } else if (fgColors[c]) {
+            style += `color:${fgColors[c]};`;
+          } else if (bgColors[c]) {
+            style += `background-color:${bgColors[c]};`;
+          } else if (c === 38 && codes[i + 1] === 5 && codes[i + 2] !== undefined) {
+            const n = codes[i + 2];
+            style += `color:hsl(${(n * 36) % 360}, 80%, 65%);`;
+            i += 2;
+          } else if (c === 48 && codes[i + 1] === 5 && codes[i + 2] !== undefined) {
+            const n = codes[i + 2];
+            style += `background-color:hsl(${(n * 36) % 360}, 60%, 25%);`;
+            i += 2;
+          }
+        }
+        if (style) {
+          openSpans++;
+          return `<span style="${style}">`;
+        }
+        return '';
+      });
+
+      s = s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+      s = s.replace(/\x1b\([a-zA-Z]/g, '');
+
+      if (openSpans > 0) {
+        s += '</span>'.repeat(openSpans);
+      }
+      return s;
+    }
+
+    function appendTerminalRaw(text) {
+      if (!text) return;
+      const output = document.getElementById('terminal-output');
+      if (!output) return;
+
+      const html = ansiToHtml(text);
+      output.insertAdjacentHTML('beforeend', html);
+      output.scrollTop = output.scrollHeight;
+
+      if (output.childNodes.length > 500) {
+        while (output.childNodes.length > 300) {
+          output.removeChild(output.firstChild);
+        }
+      }
+    }
+
+    function appendTerminalBanner(text) {
+      appendTerminalRaw(`\x1b[90m${text}\x1b[0m`);
+    }
+
+    function updateTerminalPromptPrefix(machineObj) {
+      const promptEl = document.getElementById('terminal-prompt-prefix');
+      if (!promptEl) return;
+      if (machineObj && machineObj.os === 'Windows') {
+        promptEl.innerText = 'PS >';
+      } else {
+        const host = machineObj ? (machineObj.hostname || machineObj.id) : 'space-station';
+        const user = host.includes('daytona') ? 'daytona' : 'root';
+        promptEl.innerText = `${user}@${host.slice(0, 15)}:~$ `;
+      }
+    }
+
+    function initTerminalSession(forceClear = false) {
+      const select = document.getElementById('terminal-machine-select');
+      if (!select) return;
+
+      let machineId = select.value;
+      if (!machineId) {
+        const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
+        if (firstOnline) {
+          select.value = firstOnline.id;
+          machineId = firstOnline.id;
+        }
+      }
+
       const output = document.getElementById('terminal-output');
       const badge = document.getElementById('terminal-status-badge');
       const label = document.getElementById('terminal-session-label');
+      const meta = document.getElementById('terminal-machine-meta');
 
       if (!machineId) {
-        output.innerText = 'Select a connected machine above to stream an interactive bash/powershell session.';
+        output.innerHTML = '<div style="color:var(--text-muted); padding:2rem; text-align:center;">No machines currently enrolled. Connect a VPS or run the agent to begin.</div>';
         badge.className = 'badge badge-subtle';
         badge.innerText = 'Disconnected';
         label.innerText = 'Session: Idle';
+        if (meta) meta.innerText = 'No Target';
         return;
       }
 
+      const machineObj = appState.machines.find(m => m.id === machineId);
+      const hostLabel = machineObj ? (machineObj.hostname || machineObj.id) : machineId;
+      const osLabel = machineObj ? (machineObj.os || 'Linux') : 'Remote';
+      const vipLabel = machineObj?.virtual_ip ? ` | VIP: ${machineObj.virtual_ip}` : '';
+
+      if (forceClear || !output.innerText.trim()) {
+        output.innerHTML = '';
+      }
+
       if (appState.activeTerminalWs) {
-        appState.activeTerminalWs.close();
+        try {
+          appState.activeTerminalWs.close();
+        } catch (_) {}
       }
 
       badge.className = 'badge badge-warning';
       badge.innerText = 'Connecting...';
-      label.innerText = `Session: ${machineId}`;
-      output.innerText = `[*] Connecting to live terminal streaming relay for [${machineId}]...\n`;
+      label.innerText = `Host: ${hostLabel}`;
+      if (meta) meta.innerText = `${osLabel}${vipLabel}`;
+
+      appendTerminalBanner(`[*] Connecting live terminal streaming bridge for [${hostLabel}] (${osLabel})...\n`);
 
       const wsProtocol = appConfig.serverUrl.startsWith('https') ? 'wss:' : 'ws:';
       const wsHost = appConfig.serverUrl.replace(/^https?:\/\//, '');
-      const wsUrl = `${wsProtocol}//${wsHost}/api/v1/terminal/stream?machine_id=${machineId}`;
+      const wsUrl = `${wsProtocol}//${wsHost}/api/v1/terminal/stream?machine_id=${encodeURIComponent(machineId)}`;
 
       try {
         const ws = new WebSocket(wsUrl);
@@ -1592,47 +1849,162 @@
 
         ws.onopen = () => {
           badge.className = 'badge badge-success';
-          badge.innerText = 'Connected (PTY)';
-          output.innerText += `[+] Terminal session established. Ready for input.\n\n`;
-          document.getElementById('terminal-cmd-input').focus();
+          badge.innerText = `Connected (${osLabel === 'Windows' ? 'PowerShell' : 'PTY'})`;
+          appendTerminalBanner(`[+] Interactive shell session established. Ready for input.\n\n`);
+          updateTerminalPromptPrefix(machineObj);
+          const input = document.getElementById('terminal-cmd-input');
+          if (input) {
+            input.placeholder = `Enter command for ${hostLabel}...`;
+            input.focus();
+          }
         };
 
         ws.onmessage = (event) => {
-          output.innerText += event.data;
-          output.scrollTop = output.scrollHeight;
+          let raw = event.data;
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.data !== undefined) {
+              raw = parsed.data;
+            } else if (parsed && parsed.error) {
+              raw = `[!] Remote error: ${parsed.error}\n`;
+            }
+          } catch (_) {}
+          appendTerminalRaw(raw);
         };
 
         ws.onerror = () => {
           badge.className = 'badge badge-danger';
           badge.innerText = 'Relay Error';
-          output.innerText += `\n[!] WebSocket terminal connection error.\n`;
+          appendTerminalBanner(`\n[!] WebSocket terminal connection error to ${appConfig.serverUrl}.\n`);
         };
 
         ws.onclose = () => {
           badge.className = 'badge badge-subtle';
           badge.innerText = 'Disconnected';
-          output.innerText += `\n[-] Terminal session terminated.\n`;
+          appendTerminalBanner(`\n[-] Terminal session disconnected.\n`);
         };
       } catch (e) {
         badge.className = 'badge badge-danger';
         badge.innerText = 'Failed';
-        output.innerText += `\n[!] Could not establish WebSocket connection: ${e.message}\n`;
+        appendTerminalBanner(`\n[!] Could not establish WebSocket connection: ${e.message}\n`);
+      }
+    }
+
+    function sendTerminalCommand(cmd) {
+      if (typeof cmd !== 'string') return;
+      const trimmed = cmd.trim();
+
+      if (!appState.activeTerminalWs || appState.activeTerminalWs.readyState !== WebSocket.OPEN) {
+        showToast('Terminal not connected. Reconnecting...', 'warning');
+        initTerminalSession(false);
+        return;
+      }
+
+      if (cmd === 'clear') {
+        clearTerminalScreen();
+        return;
+      }
+
+      if (trimmed && (terminalHistory.length === 0 || terminalHistory[terminalHistory.length - 1] !== trimmed)) {
+        terminalHistory.push(trimmed);
+        if (terminalHistory.length > 50) terminalHistory.shift();
+      }
+      historyIndex = terminalHistory.length;
+
+      const payload = JSON.stringify({ type: 'input', data: cmd.endsWith('\n') ? cmd : cmd + '\n' });
+      appState.activeTerminalWs.send(payload);
+
+      const input = document.getElementById('terminal-cmd-input');
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+    }
+
+    function submitTerminalInput() {
+      const input = document.getElementById('terminal-cmd-input');
+      if (input) {
+        sendTerminalCommand(input.value);
       }
     }
 
     function handleTerminalKey(e) {
+      const input = document.getElementById('terminal-cmd-input');
+      if (!input) return;
+
       if (e.key === 'Enter') {
-        const input = document.getElementById('terminal-cmd-input');
-        const cmd = input.value;
+        sendTerminalCommand(input.value);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (terminalHistory.length > 0) {
+          if (historyIndex > 0) {
+            historyIndex--;
+          } else {
+            historyIndex = 0;
+          }
+          input.value = terminalHistory[historyIndex] || '';
+          setTimeout(() => { input.selectionStart = input.selectionEnd = input.value.length; }, 0);
+        }
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (terminalHistory.length > 0) {
+          if (historyIndex < terminalHistory.length - 1) {
+            historyIndex++;
+            input.value = terminalHistory[historyIndex] || '';
+          } else {
+            historyIndex = terminalHistory.length;
+            input.value = '';
+          }
+          setTimeout(() => { input.selectionStart = input.selectionEnd = input.value.length; }, 0);
+        }
+      } else if (e.key === 'c' && e.ctrlKey) {
+        e.preventDefault();
         if (appState.activeTerminalWs && appState.activeTerminalWs.readyState === WebSocket.OPEN) {
-          appState.activeTerminalWs.send(cmd + '\n');
+          appState.activeTerminalWs.send(JSON.stringify({ type: 'input', data: '\x03' }));
+          appendTerminalRaw('^C\n');
         }
         input.value = '';
+      } else if (e.key === 'l' && e.ctrlKey) {
+        e.preventDefault();
+        clearTerminalScreen();
       }
     }
 
     function clearTerminalScreen() {
-      document.getElementById('terminal-output').innerText = '';
+      const output = document.getElementById('terminal-output');
+      if (output) output.innerHTML = '';
+      showToast('Terminal screen cleared', 'info');
+    }
+
+    function copyTerminalOutput() {
+      const output = document.getElementById('terminal-output');
+      if (!output) return;
+      const text = output.innerText || output.textContent || '';
+      if (!text.trim()) {
+        showToast('Terminal buffer is empty', 'warning');
+        return;
+      }
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Terminal output copied to clipboard', 'success');
+      }).catch(() => {
+        showToast('Failed to copy to clipboard', 'error');
+      });
+    }
+
+    function toggleTerminalFullscreen() {
+      const container = document.querySelector('.terminal-container');
+      const btn = document.getElementById('btn-terminal-fullscreen');
+      if (!container) return;
+      const isExpanded = container.classList.toggle('expanded');
+      if (btn) btn.innerHTML = isExpanded ? '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M4 14h6v6m10-10h-6V4m0 6 7-7M3 21l7-7"/></svg>Collapse' : '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>Maximize';
+      const output = document.getElementById('terminal-output');
+      if (output) output.scrollTop = output.scrollHeight;
+    }
+
+    function focusTerminalInput() {
+      if (!window.getSelection().toString()) {
+        document.getElementById('terminal-cmd-input')?.focus();
+      }
     }
 
     function openTerminalForMachine(machineId) {
@@ -1640,7 +2012,7 @@
       const select = document.getElementById('terminal-machine-select');
       if (select) {
         select.value = machineId;
-        initTerminalSession();
+        initTerminalSession(true);
       }
     }
 
@@ -1795,6 +2167,23 @@
       // Close mobile drawer if open
       if (window.innerWidth <= 900) {
         toggleSidebar(false);
+      }
+
+      // Auto-connect terminal if navigating to terminal view
+      if (viewName === 'terminal') {
+        setTimeout(() => {
+          const select = document.getElementById('terminal-machine-select');
+          if (select) {
+            if (!select.value) {
+              const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
+              if (firstOnline) select.value = firstOnline.id;
+            }
+            if (select.value && (!appState.activeTerminalWs || appState.activeTerminalWs.readyState !== WebSocket.OPEN)) {
+              initTerminalSession(false);
+            }
+          }
+          focusTerminalInput();
+        }, 50);
       }
     }
 
