@@ -839,9 +839,11 @@ class CyberVPSAgent:
         return enriched
 
     def probe_http(self, port):
+        if port in [135, 137, 138, 139, 445, 5357]:
+            return False, None, None, False
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.6)
+            s.settimeout(0.2)
             s.connect(("127.0.0.1", port))
             probe = f"GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUser-Agent: CyberVPS-Probe/1.0\r\nConnection: close\r\n\r\n"
             s.sendall(probe.encode("utf-8"))
@@ -2188,10 +2190,7 @@ class CyberVPSAgent:
                 "profile": profile
             }
         }
-        self.send_agent_event(auth_payload)
-        self.send_discovery_report()
-
-        # Start persistent WebSocket relay client
+        # Start persistent WebSocket relay client FIRST for immediate fleet enrollment
         ws_url = self.server_url.replace("http://", "ws://").replace("https://", "wss://")
         if not ws_url.endswith("/api/v1/relay/connect"):
             ws_url = ws_url.rstrip("/") + "/api/v1/relay/connect"
@@ -2199,6 +2198,9 @@ class CyberVPSAgent:
         self.ws_relay = RelayWebSocket(self, ws_url)
         self.ws_relay.start()
         print("[*] WebSocket relay thread active.", flush=True)
+
+        self.send_agent_event(auth_payload)
+        self.send_discovery_report()
 
         last_hb = 0
         last_disc = 0
