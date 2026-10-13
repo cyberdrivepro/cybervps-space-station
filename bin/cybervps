@@ -63,7 +63,12 @@ function saveConfig(data) {
 }
 
 function isPidRunning(pid) {
+  if (!pid || isNaN(pid)) return false;
   try {
+    if (process.platform === 'win32') {
+      const out = execSync(`tasklist /FI "PID eq ${pid}" /NH`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      return out && out.includes(String(pid));
+    }
     process.kill(pid, 0);
     return true;
   } catch (e) {
@@ -207,6 +212,10 @@ async function handleStart() {
     }
   }
 
+  if (!/^https?:\/\//i.test(serverUrl)) {
+    serverUrl = 'https://' + serverUrl;
+  }
+
   console.log(`[*] Launching CyberVPS Host Agent connecting to ${serverUrl}...`);
 
   const agentScript = path.join(APP_DIR, 'agent', 'universal-agent.py');
@@ -215,27 +224,38 @@ async function handleStart() {
     process.exit(1);
   }
 
-  // Detect Python or fallback to Node
   let execCmd = 'python';
-  try {
-    execSync('python --version', { stdio: 'ignore' });
-  } catch (_) {
+  if (process.platform === 'win32') {
+    try {
+      const paths = execSync('where.exe python', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+        .split(/\r?\n/)
+        .map(p => p.trim())
+        .filter(p => p && !p.includes('WindowsApps') && fs.existsSync(p));
+      if (paths.length > 0) execCmd = paths[0];
+    } catch (_) {}
+  } else {
     try {
       execSync('python3 --version', { stdio: 'ignore' });
       execCmd = 'python3';
     } catch (_) {
-      execCmd = 'node';
+      try {
+        execSync('python --version', { stdio: 'ignore' });
+        execCmd = 'python';
+      } catch (_) {
+        execCmd = 'node';
+      }
     }
   }
 
   const agentEnv = {
     ...process.env,
+    PYTHONUNBUFFERED: '1',
     CYBERVPS_SERVER: serverUrl,
     CYBERVPS_TOKEN: token,
     CYBERVPS_CONFIG: CONFIG_FILE
   };
 
-  const pyArgs = [agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
+  const pyArgs = ['-u', agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
 
   // Open log file stream for daemon output
   const outLog = fs.openSync(AGENT_LOG_FILE, 'a');
@@ -411,6 +431,12 @@ function handleConfig() {
     if (!key || !value) {
       console.log('Usage: cybervps config set <key> <value>');
       return;
+    }
+    if (key === 'server' || key === 'server_url') {
+      let norm = value.trim().replace(/\/+$/, '');
+      if (!/^https?:\/\//i.test(norm)) norm = 'https://' + norm;
+      key = 'server_url';
+      value = norm;
     }
     cfg[key] = value;
     saveConfig(cfg);

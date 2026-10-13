@@ -47,7 +47,10 @@ PROTOCOL_VERSION = "1.0.0"
 
 class CyberVPSAgent:
     def __init__(self, server_url, token="cvps_enroll_master_token", machine_id=None):
-        self.server_url = server_url.rstrip("/")
+        raw = (server_url or "https://cybervps-space-station.up.railway.app").strip().rstrip("/")
+        if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("ws://") or raw.startswith("wss://")):
+            raw = "https://" + raw
+        self.server_url = raw
         self.http_base = self.server_url.replace("ws://", "http://").replace("wss://", "https://")
         self.token = token
         self.machine_id = machine_id or self.generate_machine_id()
