@@ -76,20 +76,31 @@ if (-not (Test-Path $PkgJson)) {
     exit 1
 }
 
-# 4. Install Dependencies
+# 4. Install Dependencies (Bypass PowerShell npm.ps1 execution policy restrictions)
 Write-Host "[*] Verifying production dependencies..." -ForegroundColor Cyan
 Push-Location $InstallDir
 try {
-    & npm install --omit=dev --no-audit --no-fund
+    $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($npmCmd) {
+        & npm.cmd install --omit=dev --no-audit --no-fund
+    } else {
+        & cmd.exe /c "npm install --omit=dev --no-audit --no-fund"
+    }
 } catch {
-    Write-Warning "npm install warning: $_"
+    Write-Warning "npm install note: $_"
 }
 Pop-Location
 
-# 5. Setup CLI Executable in User PATH
-$CybervpsCmdSrc = Join-Path $InstallDir "bin\cybervps.cmd"
-$CybervpsCmdDest = Join-Path $BinDir "cybervps.cmd"
-Copy-Item $CybervpsCmdSrc $CybervpsCmdDest -Force
+# 5. Setup CLI Executables in User PATH
+# Copy both 'cybervps' and 'cybervps.cmd' to ~/.cybervps/bin
+Copy-Item (Join-Path $InstallDir "bin\*") $BinDir -Force -Recurse
+
+# Also create cybervps.ps1 wrapper in BinDir for seamless PowerShell invocation
+$Ps1Wrapper = @"
+`$ErrorActionPreference = 'Stop'
+node "`$PSScriptRoot\cybervps" `$args
+"@
+Set-Content -Path (Join-Path $BinDir "cybervps.ps1") -Value $Ps1Wrapper -Force
 
 $UserPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
 if ($UserPath -notlike "*$BinDir*") {
@@ -103,16 +114,47 @@ Write-Host ""
 Write-Host "[*] Executing system health check..." -ForegroundColor Cyan
 & node (Join-Path $InstallDir "bin\cybervps") doctor
 
+# 7. AUTOMATICALLY LAUNCH SPACE STATION & BRIDGE IN BACKGROUND
+Write-Host ""
+Write-Host "================================================================" -ForegroundColor Cyan
+Write-Host "🚀 LAUNCHING CYBERVPS SPACE STATION IN BACKGROUND..." -ForegroundColor Cyan
+Write-Host "================================================================" -ForegroundColor Cyan
+
+& node (Join-Path $InstallDir "bin\cybervps") start --daemon
+
+# Poll for Control Plane readiness and tunnel URL
+$Port = if ($env:PORT) { $env:PORT } else { "8080" }
+$StatusUrl = "http://127.0.0.1:$Port/api/v1/access/status"
+$LiveDashboard = "http://localhost:$Port"
+
+for ($i = 0; $i -lt 14; $i++) {
+    Start-Sleep -Milliseconds 500
+    try {
+        $AccessRes = Invoke-RestMethod -Uri $StatusUrl -TimeoutSec 2 -ErrorAction SilentlyContinue
+        if ($AccessRes -and $AccessRes.public_url) {
+            $RemoteUrl = $AccessRes.public_url
+            if ($AccessRes.provider -ne "localhost") {
+                $LiveDashboard = "https://cyberdrivepro.github.io/cybervps-space-station/?backend=$RemoteUrl"
+                break
+            }
+        }
+    } catch {}
+}
+
+# Display Status & URLs
+& node (Join-Path $InstallDir "bin\cybervps") status
+
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Green
-Write-Host "🎉 CYBERVPS SPACE STATION INSTALLED SUCCESSFULLY!" -ForegroundColor Green
+Write-Host "🎉 CYBERVPS SPACE STATION IS FULLY OPERATIONAL IN BACKGROUND!" -ForegroundColor Green
 Write-Host "================================================================" -ForegroundColor Green
-Write-Host "👉 Start Space Station (Interactive):" -ForegroundColor White
-Write-Host "   cybervps start" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "👉 Start in Background (Daemon):" -ForegroundColor White
-Write-Host "   cybervps start --daemon" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "👉 Check Status & Live URLs:" -ForegroundColor White
-Write-Host "   cybervps status" -ForegroundColor Yellow
+Write-Host "👉 Dashboard URL: $LiveDashboard" -ForegroundColor Yellow
+Write-Host "   (Running 24/7 in background. You can close this terminal anytime!)" -ForegroundColor Gray
 Write-Host "================================================================" -ForegroundColor Green
+
+# Automatically open Dashboard in default browser!
+try {
+    Start-Process $LiveDashboard
+} catch {}
+
+

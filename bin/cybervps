@@ -11,11 +11,21 @@ const os = require('os');
 const http = require('http');
 
 const VERSION = '1.0.0';
-const APP_DIR = path.resolve(__dirname, '..');
+let APP_DIR = path.resolve(__dirname, '..');
+if (!fs.existsSync(path.join(APP_DIR, 'services', 'server.js'))) {
+  const candidate = path.join(APP_DIR, 'space-station');
+  if (fs.existsSync(path.join(candidate, 'services', 'server.js'))) {
+    APP_DIR = candidate;
+  }
+}
+
 const RUN_DIR = path.join(os.homedir(), '.cybervps', 'run');
 const LOG_DIR = path.join(os.homedir(), '.cybervps', 'logs');
 const PID_FILE = path.join(RUN_DIR, 'space-station.pid');
 const LOG_FILE = path.join(LOG_DIR, 'space-station.log');
+const BRIDGE_PID_FILE = path.join(RUN_DIR, 'bridge-daemon.pid');
+const BRIDGE_LOG_FILE = path.join(LOG_DIR, 'bridge-daemon.log');
+
 
 // Ensure system directories exist
 if (!fs.existsSync(RUN_DIR)) fs.mkdirSync(RUN_DIR, { recursive: true });
@@ -31,6 +41,9 @@ async function main() {
       break;
     case 'stop':
       await handleStop();
+      break;
+    case 'bridge':
+      await handleBridge();
       break;
     case 'restart':
       await handleStop();
@@ -137,35 +150,62 @@ async function handleStart() {
   if (!fs.existsSync(nodeModulesPath)) {
     console.log('[*] Installing required production dependencies (ws)...');
     try {
-      execSync('npm install --omit=dev', { cwd: APP_DIR, stdio: 'inherit' });
+      const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+      execSync(`${npmCmd} install --omit=dev --no-audit --no-fund`, { cwd: APP_DIR, stdio: 'inherit' });
     } catch (e) {
       console.warn(`[!] Note: npm install returned: ${e.message}`);
     }
   }
 
-  const env = { ...process.env, PORT: port };
+
+  const env = { ...process.env, PORT: port, CYBERVPS_LOG_FILE: LOG_FILE };
 
   if (isDaemon) {
     console.log(`[*] Launching CyberVPS Space Station in daemon mode on port ${port}...`);
-    const outLog = fs.openSync(LOG_FILE, 'a');
-    const errLog = fs.openSync(LOG_FILE, 'a');
 
     const child = spawn(process.execPath, [serverPath], {
       cwd: APP_DIR,
       env,
       detached: true,
-      stdio: ['ignore', outLog, errLog]
+      stdio: 'ignore'
     });
 
     child.unref();
     fs.writeFileSync(PID_FILE, String(child.pid), 'utf8');
 
-    console.log(`✅ Daemon started with PID: ${child.pid}`);
-    console.log(`📄 Logs available at: ${LOG_FILE}`);
+    console.log(`✅ Space Station daemon started with PID: ${child.pid}`);
+    console.log(`📄 Server logs: ${LOG_FILE}`);
 
-    // Wait 2.5s and check health
-    await new Promise(r => setTimeout(r, 2500));
+    // On Windows, also automatically launch native Windows Port Bridge in background
+    if (process.platform === 'win32') {
+      const bridgeScript = path.join(APP_DIR, 'apps', 'windows-client', 'bridge-daemon.js');
+      if (fs.existsSync(bridgeScript)) {
+        try {
+          const bridgeEnv = { ...process.env, CYBERVPS_LOG_FILE: BRIDGE_LOG_FILE };
+          const bridgeChild = spawn(process.execPath, [bridgeScript, `http://localhost:${port}`], {
+            cwd: APP_DIR,
+            env: bridgeEnv,
+            detached: true,
+            stdio: 'ignore'
+          });
+          bridgeChild.unref();
+          fs.writeFileSync(BRIDGE_PID_FILE, String(bridgeChild.pid), 'utf8');
+          console.log(`🪟 Windows Port Bridge Daemon started with PID: ${bridgeChild.pid}`);
+
+        } catch (bErr) {
+          console.warn(`[!] Note: Bridge auto-spawn warning: ${bErr.message}`);
+        }
+      }
+    }
+
+    // Poll for Control Plane & Tunnel readiness
+    for (let i = 0; i < 14; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      const h = await fetchJson(`http://127.0.0.1:${port}/api/v1/access/status`);
+      if (h && h.statusCode === 200 && h.data && h.data.public_url && h.data.provider !== 'none') break;
+    }
     await handleStatus();
+
   } else {
     // Foreground mode
     const child = spawn(process.execPath, [serverPath], {
@@ -191,40 +231,81 @@ async function handleStart() {
 }
 
 async function handleStop() {
-  if (!fs.existsSync(PID_FILE)) {
-    console.log('ℹ️  No Space Station daemon is currently running (PID file missing).');
-    return;
+  let anyStopped = false;
+
+  // Stop bridge daemon if running
+  if (fs.existsSync(BRIDGE_PID_FILE)) {
+    const bPid = parseInt(fs.readFileSync(BRIDGE_PID_FILE, 'utf8').trim(), 10);
+    if (isPidRunning(bPid)) {
+      console.log(`[*] Stopping Windows Port Bridge daemon (PID: ${bPid})...`);
+      try { process.kill(bPid, 'SIGTERM'); } catch (_) {}
+      anyStopped = true;
+    }
+    fs.unlinkSync(BRIDGE_PID_FILE);
   }
 
-  const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
-  if (!isPidRunning(pid)) {
-    console.log(`ℹ️  Stale PID file found (${pid}). Process already stopped. Cleaning up.`);
-    fs.unlinkSync(PID_FILE);
-    return;
-  }
-
-  console.log(`[*] Stopping Space Station process (PID: ${pid})...`);
-  try {
-    process.kill(pid, 'SIGTERM');
-    let stopped = false;
-    for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, 300));
-      if (!isPidRunning(pid)) {
-        stopped = true;
-        break;
+  // Stop server daemon
+  if (fs.existsSync(PID_FILE)) {
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    if (isPidRunning(pid)) {
+      console.log(`[*] Stopping Space Station process (PID: ${pid})...`);
+      try {
+        process.kill(pid, 'SIGTERM');
+        let stopped = false;
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 300));
+          if (!isPidRunning(pid)) {
+            stopped = true;
+            break;
+          }
+        }
+        if (!stopped) {
+          process.kill(pid, 'SIGKILL');
+        }
+        anyStopped = true;
+      } catch (e) {
+        console.error(`❌ Failed to stop process ${pid}: ${e.message}`);
       }
     }
-    if (!stopped) {
-      console.log('[*] Process did not stop gracefully. Forcing termination...');
-      process.kill(pid, 'SIGKILL');
-    }
-    console.log('✅ Space Station daemon stopped successfully.');
-  } catch (e) {
-    console.error(`❌ Failed to stop process ${pid}: ${e.message}`);
-  } finally {
-    if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
+    fs.unlinkSync(PID_FILE);
+  }
+
+  if (anyStopped) {
+    console.log('✅ Space Station and background services stopped successfully.');
+  } else {
+    console.log('ℹ️  No Space Station services were running.');
   }
 }
+
+async function handleBridge() {
+  const isDaemon = args.includes('--daemon');
+  const targetServer = args.find(a => a.startsWith('http://') || a.startsWith('https://')) || 'http://localhost:8080';
+  const bridgeScript = path.join(APP_DIR, 'apps', 'windows-client', 'bridge-daemon.js');
+
+  if (!fs.existsSync(bridgeScript)) {
+    console.error(`❌ Bridge script not found at ${bridgeScript}`);
+    process.exit(1);
+  }
+
+  if (isDaemon) {
+    console.log(`[*] Starting CyberVPS Port Bridge daemon connecting to ${targetServer}...`);
+    const bridgeEnv = { ...process.env, CYBERVPS_LOG_FILE: BRIDGE_LOG_FILE };
+    const child = spawn(process.execPath, [bridgeScript, targetServer], {
+      cwd: APP_DIR,
+      env: bridgeEnv,
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+    fs.writeFileSync(BRIDGE_PID_FILE, String(child.pid), 'utf8');
+    console.log(`✅ Port Bridge daemon active (PID: ${child.pid}).`);
+    console.log(`   Remote ports mapped on Space Station will now bind to 127.0.0.1 on this PC!`);
+  } else {
+    spawn(process.execPath, [bridgeScript, targetServer], { cwd: APP_DIR, stdio: 'inherit' });
+  }
+
+}
+
 
 function fetchJson(urlStr, timeoutMs = 2500) {
   return new Promise((resolve) => {
@@ -384,7 +465,8 @@ function handleInstall() {
   console.log('================================================================');
   try {
     console.log(`[*] Working directory: ${APP_DIR}`);
-    execSync('npm install --omit=dev', { cwd: APP_DIR, stdio: 'inherit' });
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    execSync(`${npmCmd} install --omit=dev --no-audit --no-fund`, { cwd: APP_DIR, stdio: 'inherit' });
     console.log('\n🎉 Space Station dependencies verified and installed successfully!');
     console.log('👉 Run "cybervps start" to launch.');
   } catch (e) {
@@ -401,13 +483,15 @@ function handleUpdate() {
     console.log('[*] Fetching latest changes from origin/main...');
     execSync('git pull origin main', { cwd: APP_DIR, stdio: 'inherit' });
     console.log('[*] Verifying dependencies...');
-    execSync('npm install --omit=dev', { cwd: APP_DIR, stdio: 'inherit' });
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    execSync(`${npmCmd} install --omit=dev --no-audit --no-fund`, { cwd: APP_DIR, stdio: 'inherit' });
     console.log('\n🎉 CyberVPS Space Station updated to latest version!');
   } catch (e) {
     console.error(`❌ Update failed: ${e.message}`);
     console.log('Please ensure git is installed and network access is available.');
   }
 }
+
 
 function handleUninstall() {
   console.log('================================================================');

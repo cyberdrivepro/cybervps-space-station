@@ -154,16 +154,23 @@ echo ""
 echo "[*] Executing system health check..."
 node "${INSTALL_DIR}/bin/cybervps" doctor || true
 
+# 9. AUTOMATICALLY LAUNCH SPACE STATION IN BACKGROUND (DAEMON)
 echo ""
 echo "================================================================"
-echo "🎉 CYBERVPS SPACE STATION INSTALLED SUCCESSFULLY!"
+echo "🚀 LAUNCHING CYBERVPS SPACE STATION IN BACKGROUND..."
 echo "================================================================"
-echo "👉 Start Space Station (Interactive):"
-echo "   cybervps start"
+node "${INSTALL_DIR}/bin/cybervps" start --daemon
+
+sleep 3
+
+node "${INSTALL_DIR}/bin/cybervps" status
+
 echo ""
-echo "👉 Start in Background (Daemon):"
-echo "   cybervps start --daemon"
-echo ""
-echo "👉 Check Status & Live URLs:"
-echo "   cybervps status"
 echo "================================================================"
+echo "🎉 CYBERVPS IS FULLY OPERATIONAL IN THE BACKGROUND (24/7)!"
+echo "================================================================"
+echo "👉 You can safely close this terminal/SSH session; the daemon will keep running!"
+echo "👉 To check status anytime: cybervps status"
+echo "👉 To stop daemon:          cybervps stop"
+echo "================================================================"
+

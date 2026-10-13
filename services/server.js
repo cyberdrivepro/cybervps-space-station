@@ -16,7 +16,27 @@ const PORT = process.env.PORT || 8080;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
 const tunnelManager = new TunnelManager({ port: PORT });
 
+// Daemon file logging support
+if (process.env.CYBERVPS_LOG_FILE) {
+  try {
+    const logDir = path.dirname(process.env.CYBERVPS_LOG_FILE);
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const logStream = fs.createWriteStream(process.env.CYBERVPS_LOG_FILE, { flags: 'a' });
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...a) => {
+      origLog(...a);
+      logStream.write(a.map(x => typeof x === 'object' ? JSON.stringify(x) : x).join(' ') + '\n');
+    };
+    console.error = (...a) => {
+      origErr(...a);
+      logStream.write('[ERR] ' + a.map(x => typeof x === 'object' ? JSON.stringify(x) : x).join(' ') + '\n');
+    };
+  } catch (_) {}
+}
+
 // Virtual IP Pool for Mode B (10.77.0.0/24)
+
 class VirtualIpPool {
   constructor() {
     this.allocated = new Map(); // machine_id -> '10.77.0.X'

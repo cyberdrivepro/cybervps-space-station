@@ -8,8 +8,29 @@ const net = require('net');
 const http = require('http');
 const { WebSocket } = require('ws');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
+if (process.env.CYBERVPS_LOG_FILE) {
+  try {
+    const logDir = path.dirname(process.env.CYBERVPS_LOG_FILE);
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const logStream = fs.createWriteStream(process.env.CYBERVPS_LOG_FILE, { flags: 'a' });
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...a) => {
+      origLog(...a);
+      logStream.write(a.map(x => typeof x === 'object' ? JSON.stringify(x) : x).join(' ') + '\n');
+    };
+    console.error = (...a) => {
+      origErr(...a);
+      logStream.write('[ERR] ' + a.map(x => typeof x === 'object' ? JSON.stringify(x) : x).join(' ') + '\n');
+    };
+  } catch (_) {}
+}
 
 class WindowsPortBridgeClient {
+
   constructor(options = {}) {
     this.serverUrl = options.serverUrl || 'http://localhost:8080';
     this.wsUrl = this.serverUrl.replace('http://', 'ws://').replace('https://', 'wss://');
