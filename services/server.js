@@ -362,6 +362,12 @@ const server = http.createServer(async (req, res) => {
 
   // 7. EMBEDDED DASHBOARD UI
   if (pathname === '/' || pathname === '/dashboard') {
+    const indexPath = path.join(__dirname, '../index.html');
+    if (fs.existsSync(indexPath)) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(fs.readFileSync(indexPath, 'utf8'));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(getUniversalBridgeDashboardHtml(req.headers.host || `localhost:${PORT}`));
     return;

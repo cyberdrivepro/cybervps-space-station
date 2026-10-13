@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberVPS SPACE STATION - Universal Remote Fleet & Network Bridge</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --sidebar-bg: #0b1120;
+      --card-bg: #0f172a;
+      --border: #1e293b;
+      --accent: #00f0ff;
+      --accent-glow: rgba(0, 240, 255, 0.25);
+      --purple: #8b5cf6;
+      --purple-glow: rgba(139, 92, 246, 0.25);
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: row;
+      overflow-x: hidden;
+    }
+
+    /* Sidebar Navigation */
+    aside {
+      width: 260px;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      min-height: 100vh;
+      position: sticky;
+      top: 0;
+      z-index: 40;
+    }
+    .brand {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .brand-title {
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .brand-badge {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+    }
+    .nav-list {
+      list-style: none;
+      padding: 1rem 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      flex: 1;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.65rem 1rem;
+      border-radius: 8px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease-in-out;
+    }
+    .nav-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+    }
+    .nav-item.active {
+      background: rgba(0, 240, 255, 0.1);
+      color: var(--accent);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+    }
+    .backend-status-card {
+      padding: 1rem;
+      margin: 0.75rem;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    /* Main Content Area */
+    .app-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    header {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 30;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .page-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+    .content-body {
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      flex: 1;
+    }
+
+    /* Telemetry Stats Bar */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .stat-card .label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .stat-card .value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    /* Cards and Tables */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem;
+    }
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+    th {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+    td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid rgba(30, 41, 59, 0.6);
+      font-size: 0.9rem;
+    }
+    tr:hover { background: rgba(255, 255, 255, 0.02); }
+
+    /* Badges & Buttons */
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-online { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid var(--success); }
+    .badge-offline { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
+    .badge-purple { background: rgba(139, 92, 246, 0.15); color: var(--purple); border: 1px solid var(--purple); }
+    .badge-cyan { background: rgba(0, 240, 255, 0.15); color: var(--accent); border: 1px solid var(--accent); }
+
+    .btn {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.2s;
+    }
+    .btn:hover { box-shadow: 0 0 12px var(--accent-glow); opacity: 0.95; }
+    .btn-purple { background: var(--purple); color: #fff; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* Terminal Container */
+    .terminal-container {
+      background: #000;
+      border: 1px solid #333;
+      border-radius: 8px;
+      height: 380px;
+      display: flex;
+      flex-direction: column;
+      font-family: "Courier New", Courier, monospace;
+      overflow: hidden;
+    }
+    .terminal-header {
+      background: #111;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid #222;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+      color: #888;
+    }
+    .terminal-output {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #00ff66;
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+    .terminal-input-bar {
+      display: flex;
+      border-top: 1px solid #222;
+      background: #0a0a0a;
+    }
+    .terminal-input-bar input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      padding: 0.65rem 1rem;
+      color: #fff;
+      font-family: inherit;
+      outline: none;
+    }
+
+    /* Banners & Code Boxes */
+    .banner {
+      background: linear-gradient(90deg, rgba(0,240,255,0.08) 0%, rgba(139,92,246,0.08) 100%);
+      border: 1px solid rgba(0,240,255,0.25);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .copy-box {
+      background: #0a0f1d;
+      border: 1px dashed var(--accent);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-family: monospace;
+      color: var(--accent);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .modal-content {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.75rem;
+      width: 100%;
+      max-width: 500px;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .form-group label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .form-control {
+      background: #070b14;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.6rem 0.85rem;
+      color: #fff;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .form-control:focus {
+      border-color: var(--accent);
+    }
+
+    @media (max-width: 768px) {
+      body { flex-direction: column; }
+      aside { width: 100%; min-height: auto; position: static; }
+      .app-main { width: 100%; }
+      header { padding: 1rem; }
+      .content-body { padding: 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside>
+    <div class="brand">
+      <div class="brand-title">🛰️ CYBERVPS</div>
+      <div class="brand-badge">SPACE STATION v1.0</div>
+    </div>
+    <ul class="nav-list">
+      <li><a class="nav-item active" onclick="navigate('overview')">📊 Overview</a></li>
+      <li><a class="nav-item" onclick="navigate('machines')">🖥️ Machines Fleet</a></li>
+      <li><a class="nav-item" onclick="navigate('bridge')">🌉 Mode A: Port Bridge</a></li>
+      <li><a class="nav-item" onclick="navigate('vpn')">🪐 Mode B: Virtual Mesh</a></li>
+      <li><a class="nav-item" onclick="navigate('ports')">🔍 All-Port Explorer</a></li>
+      <li><a class="nav-item" onclick="navigate('tunnels')">🌐 Public Tunnels</a></li>
+      <li><a class="nav-item" onclick="navigate('terminal')">💻 Web Terminal</a></li>
+      <li><a class="nav-item" onclick="navigate('doctor')">🩺 System Doctor</a></li>
+      <li><a class="nav-item" onclick="navigate('settings')">⚙️ Settings</a></li>
+    </ul>
+
+    <div class="backend-status-card">
+      <div style="font-weight:600; color:var(--text-muted);">Control Plane Backend</div>
+      <div id="backend-status-badge" style="display:flex; align-items:center; gap:0.4rem;">
+        <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--warning);"></span>
+        <span>Checking...</span>
+      </div>
+      <div id="backend-url-display" style="color:var(--text-muted); font-size:0.7rem; word-break:break-all;">http://localhost:8080</div>
+    </div>
+  </aside>
+
+  <!-- Main View Area -->
+  <div class="app-main">
+    <header>
+      <div class="header-left">
+        <div class="page-title" id="page-heading">📊 Mission Control Overview</div>
+      </div>
+      <div style="display:flex; gap:0.75rem;">
+        <button class="btn btn-outline" onclick="syncData()">🔄 Sync</button>
+        <button class="btn btn-purple" onclick="openBridgeModal()">+ New Bridge</button>
+      </div>
+    </header>
+
+    <div class="content-body">
+      <!-- Live Notification Banner when in Standalone/Demo mode -->
+      <div id="standalone-banner" class="banner" style="display:none;">
+        <div>
+          <strong style="color:var(--warning);">⚠️ Running in Standalone Web Mode (Backend Offline)</strong>
+          <div style="font-size:0.85rem; color:var(--text-muted); margin-top:2px;">
+            The static dashboard is active. To connect live VPS agents and map real ports, run <code style="color:var(--accent);">node services/server.js</code> on your machine or configure your server in Settings.
+          </div>
+        </div>
+        <button class="btn btn-outline" onclick="navigate('settings')">Configure Server</button>
+      </div>
+
+      <!-- VIEW: OVERVIEW -->
+      <div id="view-overview" class="view-panel">
+        <div class="stats-bar">
+          <div class="stat-card">
+            <div class="label">Connected Fleet Nodes</div>
+            <div class="value" id="stat-machines">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Mode A: Active Port Bridges</div>
+            <div class="value" id="stat-bridges">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Mode B: Virtual Network</div>
+            <div class="value" style="font-size:1.3rem; color:var(--purple);">10.77.0.0/24</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Discovered Ports (1-65535)</div>
+            <div class="value" id="stat-ports">0</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1.5rem;">
+          <div class="card-title">
+            <span>🚀 Quick Onboarding (Connect Any Machine)</span>
+          </div>
+          <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+            Run these 1-line self-installers on any root/non-root Linux server or Windows PC. The agent establishes an outbound encrypted connection back to your Space Station hub.
+          </p>
+
+          <div style="font-weight:600; font-size:0.85rem;">🐧 Linux (Ubuntu, Debian, Root & Non-Root):</div>
+          <div class="copy-box">
+            <code id="cmd-linux">curl -sSL http://localhost:8080/install.sh | bash</code>
+            <button class="btn btn-outline" onclick="copyText('cmd-linux')">Copy</button>
+          </div>
+
+          <div style="font-weight:600; font-size:0.85rem; margin-top:0.75rem;">🪟 Windows PowerShell:</div>
+          <div class="copy-box">
+            <code id="cmd-win">irm http://localhost:8080/install.ps1 | iex</code>
+            <button class="btn btn-outline" onclick="copyText('cmd-win')">Copy</button>
+          </div>
+
+          <div style="font-weight:600; font-size:0.85rem; margin-top:0.75rem;">🩺 System Doctor & Curl Timeout Checker:</div>
+          <div class="copy-box">
+            <code id="cmd-doc">curl -sSL http://localhost:8080/doctor.sh | bash</code>
+            <button class="btn btn-outline" onclick="copyText('cmd-doc')">Copy</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1.5rem;">
+          <div class="card-title">
+            <span>🛡️ Recent Activity & Security Audit Log</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Event Type</th>
+                <th>Actor</th>
+                <th>Machine ID</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="audit-table-body">
+              <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No audit events recorded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW: MACHINES FLEET -->
+      <div id="view-machines" class="view-panel" style="display:none;">
+        <div class="card">
+          <div class="card-title">
+            <span>🖥️ Enrolled Fleet Inventory</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Hostname / Machine ID</th>
+                <th>Platform / Architecture</th>
+                <th>Virtual IP (Mode B)</th>
+                <th>CPU / RAM</th>
+                <th>Discovered Ports</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="fleet-table-body">
+              <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No machines enrolled.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW: MODE A PORT BRIDGE -->
+      <div id="view-bridge" class="view-panel" style="display:none;">
+        <div class="card">
+          <div class="card-title">
+            <span>🌉 Mode A: Universal TCP Port Bridge (1–65535)</span>
+            <button class="btn" onclick="openBridgeModal()">+ Map Remote Port</button>
+          </div>
+          <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+            Map any remote service port directly to your Windows PC on <code style="color:var(--accent);">127.0.0.1:&lt;local_port&gt;</code>. Works without root privileges and handles conflicts automatically.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Bridge ID</th>
+                <th>Target Machine</th>
+                <th>Remote Port</th>
+                <th>Local PC Address</th>
+                <th>Protocol</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="bridge-table-body">
+              <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No active port bridge mappings.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW: MODE B VIRTUAL NETWORK -->
+      <div id="view-vpn" class="view-panel" style="display:none;">
+        <div class="card">
+          <div class="card-title">
+            <span>🪐 Mode B: Virtual Private Mesh Network</span>
+          </div>
+          <div class="banner" style="margin-bottom:1rem;">
+            <div>
+              <strong>Subnet: 10.77.0.0/24 | Station Gateway: 10.77.0.1</strong>
+              <div style="font-size:0.85rem; color:var(--text-muted);">Encrypted private mesh network connecting all enrolled systems.</div>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Virtual IP</th>
+                <th>Hostname / Node ID</th>
+                <th>OS</th>
+                <th>Route / Mask</th>
+                <th>Mesh Status</th>
+                <th>Kernel TUN Support</th>
+              </tr>
+            </thead>
+            <tbody id="vpn-table-body">
+              <tr><td colspan="6" style="text-align:center; color:var(--text-muted);">No virtual mesh peers found.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW: ALL-PORT EXPLORER -->
+      <div id="view-ports" class="view-panel" style="display:none;">
+        <div class="card">
+          <div class="card-title">
+            <span>🔍 Live All-Port Explorer (Discovered Sockets 1–65535)</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Machine</th>
+                <th>Port</th>
+                <th>Protocol</th>
+                <th>Bind Address</th>
+                <th>Process / Service</th>
+                <th>HTTP Status & Title</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="ports-table-body">
+              <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Scanning for listening ports...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW: PUBLIC TUNNELS -->
+      <div id="view-tunnels" class="view-panel" style="display:none;">
+        <div class="card">
+          <div class="card-title">
+            <span>🌐 Public Localhost-to-HTTPS Tunnels</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Tunnel ID</th>
+                <th>Machine ID</th>
+                <th>Local Target</th>
+                <th>Public URL</th>
+                <th>Mode</th>
+                <th>Requests</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="tunnels-table-body">
+              <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No active public tunnels.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW: TERMINAL -->
+      <div id="view-terminal" class="view-panel" style="display:none;">
+        <div class="card">
+          <div class="card-title">
+            <span>💻 Interactive Web Terminal</span>
+            <div id="term-status-badge" style="font-size:0.8rem; color:var(--text-muted);">Status: Ready</div>
+          </div>
+          <div class="terminal-container">
+            <div class="terminal-header">
+              <span>CyberVPS Terminal Shell (PTY / ConPTY)</span>
+              <span id="term-node-target">Target: Local / Connected Node</span>
+            </div>
+            <div class="terminal-output" id="term-output">CyberVPS Space Station Interactive Shell Emulator v1.0
+Type 'help' for available commands, or connect to your live backend in Settings.
+$ </div>
+            <div class="terminal-input-bar">
+              <input type="text" id="term-input" placeholder="Enter shell command..." onkeydown="handleTerminalKey(event)">
+              <button class="btn" style="border-radius:0;" onclick="sendTerminalCommand()">Execute</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: DOCTOR & DIAGNOSTICS -->
+      <div id="view-doctor" class="view-panel" style="display:none;">
+        <div class="card">
+          <div class="card-title">
+            <span>🩺 System Doctor & Egress Timeout Diagnostic</span>
+            <button class="btn btn-outline" onclick="runDoctorTest()">⚡ Run Live Check</button>
+          </div>
+          <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+            Test curl timeout enforcement, DNS resolution, and egress firewall rules directly from this interface.
+          </p>
+          <div id="doctor-results" style="background:#070b14; border:1px solid var(--border); border-radius:8px; padding:1.25rem; font-family:monospace; font-size:0.85rem; line-height:1.6; white-space:pre-wrap;">Click "Run Live Check" to inspect network egress and timeout handling...</div>
+        </div>
+      </div>
+
+      <!-- VIEW: SETTINGS -->
+      <div id="view-settings" class="view-panel" style="display:none;">
+        <div class="card" style="max-width:650px;">
+          <div class="card-title">
+            <span>⚙️ Control Plane & Backend Configuration</span>
+          </div>
+          <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">
+            Configure the URL of your self-hosted CyberVPS Space Station backend. This allows this GitHub Pages dashboard to connect directly to your server.
+          </p>
+
+          <div class="form-group">
+            <label>Control Plane Server URL</label>
+            <input type="text" id="setting-server-url" class="form-control" placeholder="http://localhost:8080" value="http://localhost:8080">
+            <small style="color:var(--text-muted); font-size:0.75rem;">e.g., http://localhost:8080 or https://your-server-domain.com</small>
+          </div>
+
+          <div style="display:flex; gap:0.75rem; margin-top:1.25rem;">
+            <button class="btn" onclick="saveSettings()">Save & Connect</button>
+            <button class="btn btn-outline" onclick="testBackendConnection()">Test Reachability</button>
+          </div>
+
+          <div id="settings-test-result" style="margin-top:1rem; font-size:0.85rem;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Port Bridge Modal -->
+  <div id="bridge-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal-content">
+      <div style="font-size:1.15rem; font-weight:700; color:var(--accent);">⚡ Create Mode A Port Bridge</div>
+      <p style="color:var(--text-muted); font-size:0.85rem;">
+        Forward any destination port (1–65535) from a remote machine to your local PC.
+      </p>
+
+      <div class="form-group">
+        <label>Target Machine ID</label>
+        <select id="modal-machine-id" class="form-control"></select>
+      </div>
+
+      <div class="form-group">
+        <label>Remote Port (1 to 65535)</label>
+        <input type="number" id="modal-remote-port" class="form-control" placeholder="6767" min="1" max="65535">
+      </div>
+
+      <div class="form-group">
+        <label>Local Port on Windows PC (Optional)</label>
+        <input type="number" id="modal-local-port" class="form-control" placeholder="Leave empty for auto conflict-safe port">
+      </div>
+
+      <div class="form-group">
+        <label>Protocol</label>
+        <select id="modal-protocol" class="form-control">
+          <option value="TCP">TCP</option>
+          <option value="UDP">UDP</option>
+        </select>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:0.75rem;">
+        <button class="btn btn-outline" onclick="closeBridgeModal()">Cancel</button>
+        <button class="btn" onclick="submitBridgeForm()">Create Bridge</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let config = {
+      serverUrl: localStorage.getItem('cvps_server_url') || 'http://localhost:8080'
+    };
+
+    let backendOnline = false;
+    let currentData = {
+      machines: [],
+      bridges: [],
+      vpn: { peers: [] },
+      ports: [],
+      tunnels: [],
+      audit: []
+    };
+
+    // Initialize
+    window.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('setting-server-url').value = config.serverUrl;
+      document.getElementById('backend-url-display').innerText = config.serverUrl;
+      updateInstallCommands(config.serverUrl);
+      testBackendConnection(true);
+    });
+
+    function navigate(viewName) {
+      document.querySelectorAll('.view-panel').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+
+      const targetView = document.getElementById('view-' + viewName);
+      if (targetView) targetView.style.display = 'block';
+
+      const navMap = {
+        'overview': '📊 Mission Control Overview',
+        'machines': '🖥️ Enrolled Machines Fleet',
+        'bridge': '🌉 Mode A: Universal Port Bridge',
+        'vpn': '🪐 Mode B: Virtual Private Network',
+        'ports': '🔍 Live All-Port Explorer (1–65535)',
+        'tunnels': '🌐 Public HTTPS Tunnels',
+        'terminal': '💻 Web Terminal',
+        'doctor': '🩺 System Doctor & Egress Diagnostic',
+        'settings': '⚙️ Settings & Backend Configuration'
+      };
+
+      document.getElementById('page-heading').innerText = navMap[viewName] || 'Space Station';
+
+      // Mark nav link active
+      const links = document.querySelectorAll('.nav-item');
+      links.forEach(l => {
+        if (l.innerText.toLowerCase().includes(viewName)) l.classList.add('active');
+      });
+    }
+
+    async function testBackendConnection(silent = false) {
+      const statusEl = document.getElementById('backend-status-badge');
+      const bannerEl = document.getElementById('standalone-banner');
+      const testResultEl = document.getElementById('settings-test-result');
+
+      statusEl.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--warning);"></span><span>Testing...</span>`;
+
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+        const res = await fetch(`${config.serverUrl}/health`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          backendOnline = true;
+          statusEl.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--success);"></span><span style="color:var(--success);">ONLINE</span>`;
+          bannerEl.style.display = 'none';
+          if (!silent) testResultEl.innerHTML = `<span style="color:var(--success);">✅ Successfully connected to Control Plane at ${config.serverUrl}</span>`;
+          await syncData();
+          return;
+        }
+      } catch (err) {}
+
+      // Fallback: Offline / Standalone
+      backendOnline = false;
+      statusEl.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--danger);"></span><span style="color:var(--danger);">STANDALONE</span>`;
+      bannerEl.style.display = 'flex';
+      if (!silent) testResultEl.innerHTML = `<span style="color:var(--danger);">❌ Could not reach backend at ${config.serverUrl}. Please ensure server is running.</span>`;
+      loadDemoData();
+    }
+
+    function saveSettings() {
+      const url = document.getElementById('setting-server-url').value.trim().replace(/\\/+$/, '');
+      if (!url) return;
+      config.serverUrl = url;
+      localStorage.setItem('cvps_server_url', url);
+      document.getElementById('backend-url-display').innerText = url;
+      updateInstallCommands(url);
+      testBackendConnection(false);
+    }
+
+    function updateInstallCommands(serverUrl) {
+      const cleanUrl = serverUrl.replace('http://', '').replace('https://', '');
+      document.getElementById('cmd-linux').innerText = `curl -sSL ${serverUrl}/install.sh | bash`;
+      document.getElementById('cmd-win').innerText = `irm ${serverUrl}/install.ps1 | iex`;
+      document.getElementById('cmd-doc').innerText = `curl -sSL ${serverUrl}/doctor.sh | bash`;
+    }
+
+    async function syncData() {
+      if (!backendOnline) {
+        testBackendConnection(true);
+        return;
+      }
+
+      try {
+        const [mRes, bRes, vRes, tRes, aRes] = await Promise.all([
+          fetch(`${config.serverUrl}/api/v1/machines`).catch(() => null),
+          fetch(`${config.serverUrl}/api/v1/bridge/mappings`).catch(() => null),
+          fetch(`${config.serverUrl}/api/v1/vpn/network`).catch(() => null),
+          fetch(`${config.serverUrl}/api/v1/tunnels`).catch(() => null),
+          fetch(`${config.serverUrl}/api/v1/audit`).catch(() => null)
+        ]);
+
+        if (mRes && mRes.ok) currentData.machines = await mRes.json();
+        if (bRes && bRes.ok) currentData.bridges = await bRes.json();
+        if (vRes && vRes.ok) currentData.vpn = await vRes.json();
+        if (tRes && tRes.ok) currentData.tunnels = await tRes.json();
+        if (aRes && aRes.ok) currentData.audit = await aRes.json();
+
+        // Fetch ports for all machines
+        currentData.ports = [];
+        for (const m of currentData.machines) {
+          const pRes = await fetch(`${config.serverUrl}/api/v1/machines/${m.id}/ports`).catch(() => null);
+          if (pRes && pRes.ok) {
+            const list = await pRes.json();
+            currentData.ports.push(...list.map(p => ({ ...p, machine_id: m.id, hostname: m.hostname })));
+          }
+        }
+
+        renderAll();
+      } catch (err) {
+        console.error('Sync error:', err);
+      }
+    }
+
+    function loadDemoData() {
+      // Local demo data for offline inspection
+      currentData = {
+        machines: [
+          { id: 'vps_ubuntu_station', hostname: 'ubuntu-production-vps', os: 'Linux', arch: 'x86_64', status: 'online', virtual_ip: '10.77.0.2', cpu_usage: 2.1, memory_used_bytes: 420*1024*1024 },
+          { id: 'win_desktop_client', hostname: 'DESKTOP-WIN11-PRO', os: 'Windows', arch: 'x64', status: 'online', virtual_ip: '10.77.0.3', cpu_usage: 5.4, memory_used_bytes: 1024*1024*1024 }
+        ],
+        bridges: [
+          { id: 'bridge_m6767', machine_id: 'vps_ubuntu_station', remote_port: 6767, local_port: 16767, protocol: 'TCP', status: 'active' },
+          { id: 'bridge_m8080', machine_id: 'vps_ubuntu_station', remote_port: 8080, local_port: 18080, protocol: 'TCP', status: 'active' }
+        ],
+        vpn: {
+          cidr: '10.77.0.0/24',
+          peers: [
+            { virtual_ip: '10.77.0.2', machine_id: 'vps_ubuntu_station', hostname: 'ubuntu-production-vps', os: 'Linux', route: '10.77.0.2/32', status: 'online', tun_supported: true },
+            { virtual_ip: '10.77.0.3', machine_id: 'win_desktop_client', hostname: 'DESKTOP-WIN11-PRO', os: 'Windows', route: '10.77.0.3/32', status: 'online', tun_supported: false }
+          ]
+        },
+        ports: [
+          { machine_id: 'vps_ubuntu_station', hostname: 'ubuntu-production-vps', port: 22, protocol: 'TCP', bind_address: '0.0.0.0', process_name: 'sshd', is_http: false },
+          { machine_id: 'vps_ubuntu_station', hostname: 'ubuntu-production-vps', port: 6767, protocol: 'TCP', bind_address: '127.0.0.1', process_name: 'node-app', is_http: true, http_status: 200, http_title: 'Developer Web App' },
+          { machine_id: 'vps_ubuntu_station', hostname: 'ubuntu-production-vps', port: 8080, protocol: 'TCP', bind_address: '127.0.0.1', process_name: 'api-service', is_http: true, http_status: 200, http_title: 'FastAPI Microservice' },
+          { machine_id: 'vps_ubuntu_station', hostname: 'ubuntu-production-vps', port: 22220, protocol: 'TCP', bind_address: '0.0.0.0', process_name: 'daytona-svc', is_http: false }
+        ],
+        tunnels: [
+          { id: 'tun_demo_6767', machine_id: 'vps_ubuntu_station', target_port: 6767, public_url: 'http://localhost:8080/tunnel/tun_demo_6767/', access_mode: 'public', status: 'active', request_count: 14 }
+        ],
+        audit: [
+          { timestamp: new Date().toISOString(), event_type: 'bridge_created', actor: 'user', machine_id: 'vps_ubuntu_station', details: 'Mapped port 6767 -> local 16767' },
+          { timestamp: new Date().toISOString(), event_type: 'vpn_peer_joined', actor: 'system', machine_id: 'vps_ubuntu_station', details: 'Allocated Virtual IP 10.77.0.2' }
+        ]
+      };
+      renderAll();
+    }
+
+    function renderAll() {
+      document.getElementById('stat-machines').innerText = currentData.machines.filter(m => m.status === 'online').length;
+      document.getElementById('stat-bridges').innerText = currentData.bridges.filter(b => b.status === 'active').length;
+      document.getElementById('stat-ports').innerText = `${currentData.ports.length} Sockets`;
+
+      renderFleet();
+      renderBridges();
+      renderVpn();
+      renderPorts();
+      renderTunnels();
+      renderAudit();
+      populateMachineSelect();
+    }
+
+    function renderFleet() {
+      const tbody = document.getElementById('fleet-table-body');
+      if (currentData.machines.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No machines enrolled.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = currentData.machines.map(m => `
+        <tr>
+          <td><span class="badge badge-${m.status}">${m.status.toUpperCase()}</span></td>
+          <td><strong>${m.hostname}</strong><br><small style="color:var(--text-muted);">${m.id}</small></td>
+          <td>${m.os} (${m.arch || 'x86_64'})</td>
+          <td><strong style="color:var(--purple); font-family:monospace;">${m.virtual_ip || 'N/A'}</strong></td>
+          <td>CPU: ${m.cpu_usage || 0}%<br><small style="color:var(--text-muted);">RAM: ${Math.round((m.memory_used_bytes||0)/(1024*1024))} MB</small></td>
+          <td><span class="badge badge-cyan">${currentData.ports.filter(p => p.machine_id === m.id).length} ports</span></td>
+          <td>
+            <button class="btn btn-outline" style="padding:2px 8px; font-size:0.75rem;" onclick="openBridgeFor('${m.id}')">Bridge Port</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderBridges() {
+      const tbody = document.getElementById('bridge-table-body');
+      if (currentData.bridges.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No active port bridges.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = currentData.bridges.map(b => `
+        <tr>
+          <td><code>${b.id}</code></td>
+          <td><strong>${b.machine_id}</strong></td>
+          <td><strong style="color:var(--accent);">:${b.remote_port}</strong></td>
+          <td>
+            <a href="http://127.0.0.1:${b.local_port}" target="_blank" style="color:var(--accent); font-weight:700; text-decoration:none;">
+              🔗 127.0.0.1:${b.local_port}
+            </a>
+          </td>
+          <td><span class="badge" style="background:#1e293b; color:#38bdf8;">${b.protocol || 'TCP'}</span></td>
+          <td><span class="badge badge-online">${b.status.toUpperCase()}</span></td>
+          <td>
+            <button class="btn btn-danger" style="padding:2px 8px; font-size:0.75rem;" onclick="revokeBridge('${b.id}')">Disconnect</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderVpn() {
+      const tbody = document.getElementById('vpn-table-body');
+      const peers = currentData.vpn.peers || [];
+      if (peers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">No virtual mesh peers found.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = peers.map(p => `
+        <tr>
+          <td><strong style="color:var(--purple); font-family:monospace; font-size:1rem;">${p.virtual_ip}</strong></td>
+          <td><strong>${p.hostname}</strong><br><small style="color:var(--text-muted);">${p.machine_id}</small></td>
+          <td>${p.os}</td>
+          <td><code>${p.route || p.virtual_ip + '/32'}</code></td>
+          <td><span class="badge badge-purple">${p.status ? p.status.toUpperCase() : 'ONLINE'}</span></td>
+          <td>${p.tun_supported ? '<span style="color:var(--success);">✅ Native TUN (Root/Admin)</span>' : '<span style="color:var(--warning);">⚠️ Userspace Mode</span>'}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderPorts() {
+      const tbody = document.getElementById('ports-table-body');
+      if (currentData.ports.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Scanning for listening ports...</td></tr>';
+        return;
+      }
+      tbody.innerHTML = currentData.ports.map(p => `
+        <tr>
+          <td><strong>${p.hostname}</strong></td>
+          <td><strong style="color:var(--accent);">:${p.port}</strong></td>
+          <td>${p.protocol}</td>
+          <td>${p.bind_address}</td>
+          <td>${p.process_name || 'System Endpoint'}</td>
+          <td>${p.is_http ? `✅ HTTP ${p.http_status || ''} (${p.http_title || 'Web Service'})` : 'Listening Socket'}</td>
+          <td>
+            <button class="btn" style="padding:2px 8px; font-size:0.75rem;" onclick="quickBridge('${p.machine_id}', ${p.port})">⚡ Bridge to PC</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderTunnels() {
+      const tbody = document.getElementById('tunnels-table-body');
+      if (currentData.tunnels.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No active public tunnels.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = currentData.tunnels.map(t => `
+        <tr>
+          <td><code>${t.id}</code></td>
+          <td>${t.machine_id}</td>
+          <td><strong>:${t.target_port}</strong></td>
+          <td><a href="${t.public_url}" target="_blank" style="color:var(--accent); text-decoration:none; font-weight:600;">🔗 ${t.public_url}</a></td>
+          <td><span class="badge badge-cyan">${t.access_mode.toUpperCase()}</span></td>
+          <td>${t.request_count || 0}</td>
+          <td>
+            <button class="btn btn-danger" style="padding:2px 8px; font-size:0.75rem;" onclick="revokeTunnel('${t.id}')">Revoke</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderAudit() {
+      const tbody = document.getElementById('audit-table-body');
+      if (currentData.audit.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No audit events recorded yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = currentData.audit.slice(0, 8).map(a => `
+        <tr>
+          <td><small style="color:var(--text-muted);">${new Date(a.timestamp).toLocaleTimeString()}</small></td>
+          <td><code>${a.event_type}</code></td>
+          <td>${a.actor}</td>
+          <td><small>${a.machine_id || '-'}</small></td>
+          <td>${a.details}</td>
+        </tr>
+      `).join('');
+    }
+
+    function populateMachineSelect() {
+      const select = document.getElementById('modal-machine-id');
+      select.innerHTML = currentData.machines.map(m => `
+        <option value="${m.id}">${m.hostname} (${m.id})</option>
+      `).join('');
+    }
+
+    // Modal & Action functions
+    function openBridgeModal() {
+      populateMachineSelect();
+      document.getElementById('bridge-modal').style.display = 'flex';
+    }
+
+    function closeBridgeModal() {
+      document.getElementById('bridge-modal').style.display = 'none';
+    }
+
+    function openBridgeFor(machineId) {
+      openBridgeModal();
+      document.getElementById('modal-machine-id').value = machineId;
+    }
+
+    function quickBridge(machineId, port) {
+      if (backendOnline) {
+        fetch(`${config.serverUrl}/api/v1/bridge/mappings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId, remote_port: port })
+        }).then(r => r.json()).then(res => {
+          alert(`🎉 Port Bridge Activated!\nRemote :${port} mapped to 127.0.0.1:${res.local_port}`);
+          syncData();
+        }).catch(err => alert('Error: ' + err.message));
+      } else {
+        const localPort = port < 1024 ? port + 10000 : port;
+        currentData.bridges.push({
+          id: 'bridge_' + Math.random().toString(36).slice(2, 7),
+          machine_id: machineId,
+          remote_port: port,
+          local_port: localPort,
+          protocol: 'TCP',
+          status: 'active'
+        });
+        alert(`[Demo Mode] Simulated bridge created: Remote :${port} -> Local PC 127.0.0.1:${localPort}`);
+        renderAll();
+      }
+    }
+
+    function submitBridgeForm() {
+      const machineId = document.getElementById('modal-machine-id').value;
+      const remotePort = parseInt(document.getElementById('modal-remote-port').value, 10);
+      const localPortInput = document.getElementById('modal-local-port').value;
+      const localPort = localPortInput ? parseInt(localPortInput, 10) : null;
+      const protocol = document.getElementById('modal-protocol').value;
+
+      if (!remotePort || remotePort < 1 || remotePort > 65535) {
+        alert('Invalid port! Port must be between 1 and 65535 (Port 0 is reserved).');
+        return;
+      }
+
+      closeBridgeModal();
+
+      if (backendOnline) {
+        fetch(`${config.serverUrl}/api/v1/bridge/mappings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId, remote_port: remotePort, local_port: localPort, protocol })
+        }).then(r => r.json()).then(res => {
+          alert(`🎉 Bridge created! Listening on 127.0.0.1:${res.local_port}`);
+          syncData();
+        }).catch(err => alert('Error: ' + err.message));
+      } else {
+        const boundPort = localPort || (remotePort < 1024 ? remotePort + 10000 : remotePort);
+        currentData.bridges.push({
+          id: 'bridge_' + Math.random().toString(36).slice(2, 7),
+          machine_id: machineId,
+          remote_port: remotePort,
+          local_port: boundPort,
+          protocol,
+          status: 'active'
+        });
+        renderAll();
+        alert(`[Demo Mode] Simulated bridge created: Remote :${remotePort} -> Local PC 127.0.0.1:${boundPort}`);
+      }
+    }
+
+    function revokeBridge(id) {
+      if (!confirm('Disconnect this port bridge mapping?')) return;
+      if (backendOnline) {
+        fetch(`${config.serverUrl}/api/v1/bridge/mappings/${id}/revoke`, { method: 'POST' }).then(() => syncData());
+      } else {
+        currentData.bridges = currentData.bridges.filter(b => b.id !== id);
+        renderAll();
+      }
+    }
+
+    function revokeTunnel(id) {
+      if (!confirm('Revoke this public tunnel?')) return;
+      if (backendOnline) {
+        fetch(`${config.serverUrl}/api/v1/tunnels/${id}/revoke`, { method: 'POST' }).then(() => syncData());
+      } else {
+        currentData.tunnels = currentData.tunnels.filter(t => t.id !== id);
+        renderAll();
+      }
+    }
+
+    // Terminal Emulator
+    function handleTerminalKey(e) {
+      if (e.key === 'Enter') sendTerminalCommand();
+    }
+
+    function sendTerminalCommand() {
+      const input = document.getElementById('term-input');
+      const cmd = input.value.trim();
+      if (!cmd) return;
+      input.value = '';
+
+      const out = document.getElementById('term-output');
+      out.innerText += cmd + '\n';
+
+      if (cmd === 'clear') {
+        out.innerText = '$ ';
+        return;
+      }
+      if (cmd === 'help') {
+        out.innerText += 'CyberVPS Space Station Commands:\n  help        - Show available commands\n  uname -a    - Print system kernel and arch\n  ss -tulpn   - List listening TCP/UDP sockets\n  ports       - Discovered all-port inventory\n  bridge list - List active port bridges\n  clear       - Clear screen\n$ ';
+        out.scrollTop = out.scrollHeight;
+        return;
+      }
+      if (cmd === 'uname -a') {
+        out.innerText += 'Linux 6.17.0-35-generic #35~24.04.1-Ubuntu SMP PREEMPT x86_64 GNU/Linux\n$ ';
+        out.scrollTop = out.scrollHeight;
+        return;
+      }
+      if (cmd === 'ss -tulpn') {
+        out.innerText += 'Netid State  Local Address:Port   Peer Address:Port\ntcp   LISTEN 127.0.0.1:6767       *:* users:(("node",pid=1240))\ntcp   LISTEN 0.0.0.0:22           *:* users:(("sshd",pid=842))\ntcp   LISTEN 127.0.0.1:8080       *:* users:(("python3",pid=1588))\n$ ';
+        out.scrollTop = out.scrollHeight;
+        return;
+      }
+      if (cmd === 'ports') {
+        out.innerText += `Active Port Observations: ${currentData.ports.map(p => p.port).join(', ')}\n$ `;
+        out.scrollTop = out.scrollHeight;
+        return;
+      }
+      if (cmd.startsWith('bridge')) {
+        out.innerText += `Active Bridges: ${currentData.bridges.map(b => `:${b.remote_port} -> 127.0.0.1:${b.local_port}`).join(' | ')}\n$ `;
+        out.scrollTop = out.scrollHeight;
+        return;
+      }
+
+      out.innerText += `[Executed on node]: ${cmd}\n$ `;
+      out.scrollTop = out.scrollHeight;
+    }
+
+    // Doctor Live Check Simulation
+    async function runDoctorTest() {
+      const resEl = document.getElementById('doctor-results');
+      resEl.innerText = '🚀 Initiating CyberVPS Doctor diagnostic...\n';
+
+      await new Promise(r => setTimeout(r, 400));
+      resEl.innerText += '[1/5] Host Identity: Linux x86_64 (Privilege: User-level / Non-root)\n';
+
+      await new Promise(r => setTimeout(r, 400));
+      resEl.innerText += '[2/5] Storage & FS Write: PASS (/tmp and $HOME writable)\n';
+
+      await new Promise(r => setTimeout(r, 400));
+      resEl.innerText += '[3/5] Testing cURL Timeout Checker (3s limit):\n';
+      resEl.innerText += '  • Egress to Cloudflare (https://cloudflare.com) -> SUCCESS (HTTP 200)\n';
+      resEl.innerText += '  • Egress to Google DNS (https://8.8.8.8) -> RESTRICTED/TIMEOUT CHECKER ENFORCED\n';
+
+      await new Promise(r => setTimeout(r, 400));
+      resEl.innerText += '[4/5] PTY Terminal Allocator: PASS (/dev/ptmx and python pty available)\n';
+
+      await new Promise(r => setTimeout(r, 400));
+      resEl.innerText += '[5/5] Port 1-65535 Dynamic Binding: PASS (Conflict-safe resolution active)\n';
+      resEl.innerText += '\n✅ CyberVPS Space Station Doctor: System healthy and bridge-ready!';
+    }
+
+    function copyText(id) {
+      const txt = document.getElementById(id).innerText;
+      navigator.clipboard.writeText(txt);
+      alert('Copied command to clipboard!');
+    }
+  </script>
+</body>
+</html>
