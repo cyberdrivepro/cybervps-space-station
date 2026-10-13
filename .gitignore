@@ -16,8 +16,12 @@ data/
 .env
 .env.local
 
-# OS / Editor artifacts
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+# Python cache
+__pycache__/
+*.py[cod]
+
+

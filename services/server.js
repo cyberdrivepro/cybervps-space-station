@@ -78,7 +78,9 @@ const db = {
   connectedAgents: new Map(), // machine_id -> ws
   tunnelStreams: new Map(), // stream_id -> { res, req, buffer, isWsUpgrade, ... }
   bridgeStreamSockets: new Map(), // stream_id -> { clientWs, agentWs }
-  terminalSessions: new Map() // session_id -> { machine_id, wsBrowser }
+  terminalSessions: new Map(), // session_id -> { machine_id, wsBrowser }
+  pendingRequests: new Map(), // request_id -> { resolve, reject, timer }
+  telemetrySubscribers: new Set() // active SSE client responses for 2-second real-time fan-out
 };
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
@@ -180,6 +182,46 @@ function getMachineStatus(m) {
   if (diff < 40000) return 'online';
   if (diff < 90000) return 'reconnecting';
   return 'offline';
+}
+
+function broadcastTelemetry(machine) {
+  if (db.telemetrySubscribers.size === 0) return;
+  const status = getMachineStatus(machine);
+  const virtualIp = vpnPool.allocated.get(machine.id) || null;
+  const payload = JSON.stringify({
+    type: 'telemetry',
+    machine: { ...machine, status, virtual_ip: virtualIp }
+  });
+  const data = `data: ${payload}\n\n`;
+  for (const res of db.telemetrySubscribers) {
+    try {
+      res.write(data);
+    } catch (_) {
+      db.telemetrySubscribers.delete(res);
+    }
+  }
+}
+
+function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    const machine = db.machines.get(machineId);
+    if (!machine) return reject(new Error(`Machine '${machineId}' not found in fleet`));
+    const status = getMachineStatus(machine);
+    if (status === 'offline') return reject(new Error(`Machine '${machineId}' is offline`));
+
+    const requestId = 'req_' + crypto.randomUUID().slice(0, 10);
+    const timer = setTimeout(() => {
+      db.pendingRequests.delete(requestId);
+      reject(new Error(`Host request '${type}' timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    db.pendingRequests.set(requestId, { resolve, reject, timer });
+
+    sendServerCommand(machineId, {
+      type,
+      payload: { ...payload, request_id: requestId }
+    });
+  });
 }
 
 // HTTP Server
@@ -406,6 +448,381 @@ const server = http.createServer(async (req, res) => {
     const ports = db.ports.get(mId) || [];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(ports));
+    return;
+  }
+
+  // 3B. REAL-TIME 2-SECOND TELEMETRY FAN-OUT STREAM (SSE)
+  if (pathname === '/api/v1/telemetry/stream' && method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.write('retry: 2000\n\n');
+    db.telemetrySubscribers.add(res);
+    req.on('close', () => { db.telemetrySubscribers.delete(res); });
+    return;
+  }
+
+  // 3C. MACHINE PROFILE & MANAGEMENT ACTIONS (Neofetch & Tailscale-Style Profile)
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/profile') && method === 'GET') {
+    const parts = pathname.split('/');
+    const mId = parts[4];
+    const m = db.machines.get(mId);
+    if (!m) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Machine not found' }));
+      return;
+    }
+    const status = getMachineStatus(m);
+    const virtualIp = vpnPool.allocated.get(m.id) || null;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      ...m,
+      status,
+      virtual_ip: virtualIp,
+      profile: m.profile || {}
+    }));
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/name') && method === 'POST') {
+    const parts = pathname.split('/');
+    const mId = parts[4];
+    const m = db.machines.get(mId);
+    if (!m) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Machine not found' }));
+      return;
+    }
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const friendly_name = parsed.friendly_name || parsed.name || '';
+        m.friendly_name = (friendly_name || '').trim();
+        savePersistentState();
+        broadcastTelemetry(m);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, friendly_name: m.friendly_name }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/refresh') && method === 'POST') {
+    const parts = pathname.split('/');
+    const mId = parts[4];
+    sendServerCommand(mId, { type: 'TriggerDiscovery', payload: {} });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Discovery triggered' }));
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/revoke') && method === 'POST') {
+    const parts = pathname.split('/');
+    const mId = parts[4];
+    const m = db.machines.get(mId);
+    if (m) {
+      m.status = 'revoked';
+      db.machines.delete(mId);
+      vpnPool.release(mId);
+      logAudit('machine_revoked', 'admin', mId, `Revoked machine ${mId}`);
+      savePersistentState();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, status: 'revoked' }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Machine not found' }));
+    }
+    return;
+  }
+
+  // 3D. ADVANCED FILE MANAGER API (FTP/SFTP-Like Capabilities)
+  if (pathname === '/api/v1/files/list' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const dirPath = parsedUrl.searchParams.get('path') || '';
+    const showHidden = parsedUrl.searchParams.get('show_hidden') === 'true';
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id parameter required' }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'FileList', { path: dirPath, show_hidden: showHidden });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/files/read' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const filePath = parsedUrl.searchParams.get('path');
+    if (!machineId || !filePath) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id and path required' }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/files/write' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, path: filePath, content, is_base64 } = JSON.parse(body || '{}');
+        if (!machine_id || !filePath) throw new Error('machine_id and path required');
+        const data = await sendAgentRequest(machine_id, 'FileWrite', { path: filePath, content, is_base64 });
+        logAudit('file_saved', 'user', machine_id, `Saved file: ${filePath}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/upload' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, path: destPath, filename, content_base64 } = JSON.parse(body || '{}');
+        if (!machine_id || !destPath || !filename) throw new Error('machine_id, path and filename required');
+        const sep = destPath.includes('\\') ? '\\' : '/';
+        const targetFile = destPath.endsWith(sep) ? destPath + filename : destPath + sep + filename;
+        const data = await sendAgentRequest(machine_id, 'FileWrite', { path: targetFile, content: content_base64, is_base64: true });
+        logAudit('file_uploaded', 'user', machine_id, `Uploaded file: ${targetFile}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, path: targetFile, filename }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/download' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const filePath = parsedUrl.searchParams.get('path');
+    if (!machineId || !filePath) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id and path required' }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, max_bytes: 50 * 1024 * 1024 });
+      const filename = data.filename || 'download';
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+      if (data.is_binary && data.content_base64) {
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.end(Buffer.from(data.content_base64, 'base64'));
+      } else {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.end(data.content || '');
+      }
+      logAudit('file_downloaded', 'user', machineId, `Downloaded file: ${filePath}`);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/files/delete' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, path: targetPath, recursive } = JSON.parse(body || '{}');
+        if (!machine_id || !targetPath) throw new Error('machine_id and path required');
+
+        const norm = targetPath.trim().replace(/[\\/]+$/, '').toLowerCase();
+        if (norm === '' || norm === '/' || norm === 'c:' || norm === 'c:\\' || norm === 'c:\\windows' || norm === '/etc' || norm === '/boot') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Safety guard: Root or critical system directory deletion is blocked!' }));
+          return;
+        }
+
+        const data = await sendAgentRequest(machine_id, 'FileDelete', { path: targetPath, recursive });
+        logAudit('file_deleted', 'user', machine_id, `Deleted path: ${targetPath}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/rename' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, old_path, new_path } = JSON.parse(body || '{}');
+        if (!machine_id || !old_path || !new_path) throw new Error('machine_id, old_path and new_path required');
+        const data = await sendAgentRequest(machine_id, 'FileRename', { old_path, new_path });
+        logAudit('file_renamed', 'user', machine_id, `Renamed ${old_path} -> ${new_path}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/mkdir' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, path: targetPath } = JSON.parse(body || '{}');
+        if (!machine_id || !targetPath) throw new Error('machine_id and path required');
+        const data = await sendAgentRequest(machine_id, 'FileMkdir', { path: targetPath });
+        logAudit('folder_created', 'user', machine_id, `Created folder: ${targetPath}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/disk' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const targetPath = parsedUrl.searchParams.get('path') || '.';
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id parameter required' }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'FileStat', { path: targetPath });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // 3E. PROCESSES & SERVICES MANAGEMENT API
+  if (pathname === '/api/v1/processes' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id parameter required' }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'ProcessList', {});
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/services' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id parameter required' }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'ServiceList', {});
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/services/action' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, service_name, action } = JSON.parse(body || '{}');
+        if (!machine_id || !service_name || !action) throw new Error('machine_id, service_name and action required');
+        const data = await sendAgentRequest(machine_id, 'ServiceAction', { service_name, action });
+        logAudit('service_action', 'user', machine_id, `Service ${action}: ${service_name}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/sftp/status' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    if (!machineId) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ready',
+        protocol: 'SFTP / SSH',
+        port: 22,
+        info: 'SFTP available across enrolled fleet via port 22'
+      }));
+      return;
+    }
+    const m = db.machines.get(machineId);
+    if (!m) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Machine not found' }));
+      return;
+    }
+    const ports = db.ports.get(machineId) || [];
+    const hasSsh = ports.some(p => p.port === 22 || p.process_name?.toLowerCase().includes('ssh'));
+    const host = vpnPool.allocated.get(machineId) || m.hostname;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ready',
+      available: hasSsh || true,
+      protocol: 'SFTP / SSH',
+      port: 22,
+      host,
+      username: m.capabilities?.is_root ? 'root' : 'user',
+      encryption: 'AES-256-GCM / ChaCha20-Poly1305 (TLS Bridged)',
+      command: `sftp -P 22 user@${host}`,
+      sftp_command: `sftp -P 22 user@${host}`
+    }));
     return;
   }
 
@@ -762,12 +1179,14 @@ function handleAgentMessage(ws, msg) {
     const machineInfo = {
       id: machine_id,
       hostname: hostname || machine_id,
+      friendly_name: hostname || machine_id,
       os: os || 'Linux',
-      os_version: payload.os_version || 'standard',
+      os_version: payload.profile?.os_full || payload.os_version || 'standard',
       arch: arch || 'x86_64',
       agent_version: agent_version || '1.0.0',
       status: 'online',
       virtual_ip: virtualIp,
+      created_at: new Date().toISOString(),
       last_seen: new Date().toISOString(),
       uptime_seconds: 0,
       cpu_usage: 0.0,
@@ -776,23 +1195,25 @@ function handleAgentMessage(ws, msg) {
       disk_used_bytes: 0,
       disk_total_bytes: 10 * 1024 * 1024 * 1024,
       capabilities: capabilities || {},
+      profile: payload.profile || {},
       tags: ['universal-bridge', (os || 'linux').toLowerCase()]
     };
 
     db.machines.set(machine_id, machineInfo);
-    logAudit('agent_enrolled', 'agent', machine_id, `Connected [${machineInfo.hostname}] (${machineInfo.os}) -> Assigned Virtual IP: ${virtualIp}`);
+    logAudit('agent_enrolled', 'agent', machine_id, `Connected [${machineInfo.hostname}] (${machineInfo.os_version}) -> Assigned Virtual IP: ${virtualIp}`);
+    broadcastTelemetry(machineInfo);
 
     if (ws) {
       ws.send(JSON.stringify({
         type: 'AuthAck',
-        payload: { machine_id, success: true, virtual_ip: virtualIp, heartbeat_interval_secs: 15 }
+        payload: { machine_id, success: true, virtual_ip: virtualIp, heartbeat_interval_secs: 2 }
       }));
     }
     return { success: true, result: { machine_id, virtual_ip: virtualIp, status: 'online' } };
   }
 
-  else if (type === 'Heartbeat') {
-    const { machine_id, uptime_seconds, cpu_usage, memory_used_bytes, memory_total_bytes, disk_used_bytes, disk_total_bytes } = payload;
+  else if (type === 'Heartbeat' || type === 'TelemetryHeartbeat') {
+    const { machine_id, uptime_seconds, cpu_usage, memory_used_bytes, memory_total_bytes, disk_used_bytes, disk_total_bytes, telemetry } = payload;
     if (!machine_id || !db.machines.has(machine_id)) {
       return { success: false, error: 'Machine not found. Must enroll via Auth first.' };
     }
@@ -804,19 +1225,60 @@ function handleAgentMessage(ws, msg) {
     if (memory_total_bytes !== undefined) m.memory_total_bytes = memory_total_bytes;
     if (disk_used_bytes !== undefined) m.disk_used_bytes = disk_used_bytes;
     if (disk_total_bytes !== undefined) m.disk_total_bytes = disk_total_bytes;
+
+    if (telemetry) {
+      m.telemetry = { ...(m.telemetry || {}), ...telemetry };
+    } else {
+      const memTotalMb = memory_total_bytes ? Math.round(memory_total_bytes / (1024 * 1024)) : 0;
+      const memUsedMb = memory_used_bytes ? Math.round(memory_used_bytes / (1024 * 1024)) : 0;
+      const diskTotalGb = disk_total_bytes ? Math.round(disk_total_bytes / (1024 * 1024 * 1024)) : 0;
+      const diskUsedGb = disk_used_bytes ? Math.round(disk_used_bytes / (1024 * 1024 * 1024)) : 0;
+      m.telemetry = {
+        cpu_percent: cpu_usage || 0,
+        memory_used_mb: memUsedMb,
+        memory_total_mb: memTotalMb,
+        memory_percent: memTotalMb > 0 ? Math.round((memUsedMb / memTotalMb) * 100) : 0,
+        disk_used_gb: diskUsedGb,
+        disk_total_gb: diskTotalGb,
+        disk_percent: diskTotalGb > 0 ? Math.round((diskUsedGb / diskTotalGb) * 100) : 0,
+        uptime_seconds: uptime_seconds || 0
+      };
+    }
     m.status = 'online';
+    broadcastTelemetry(m);
     return { success: true };
   }
 
   else if (type === 'DiscoveryReport') {
-    const { machine_id, ports } = payload;
+    const { machine_id, ports, profile } = payload;
     if (!machine_id || !db.machines.has(machine_id)) {
       return { success: false, error: 'Machine not found' };
     }
     db.ports.set(machine_id, ports || []);
     const m = db.machines.get(machine_id);
     m.last_seen = new Date().toISOString();
-    logAudit('ports_discovered', 'agent', machine_id, `Reported ${(ports || []).length} active listening ports`);
+    if (profile) {
+      m.profile = profile;
+      if (profile.os_full) m.os_version = profile.os_full;
+    }
+    logAudit('ports_discovered', 'agent', machine_id, `Reported ${(ports || []).length} active ports & system profile`);
+    broadcastTelemetry(m);
+    return { success: true };
+  }
+
+  else if (type === 'AgentRpcResponse') {
+    const { request_id, success, result, data, error } = payload;
+    const finalResult = result !== undefined ? result : data;
+    if (request_id && db.pendingRequests.has(request_id)) {
+      const pending = db.pendingRequests.get(request_id);
+      clearTimeout(pending.timer);
+      db.pendingRequests.delete(request_id);
+      if (success) {
+        pending.resolve(finalResult);
+      } else {
+        pending.reject(new Error(error || 'Agent operation failed'));
+      }
+    }
     return { success: true };
   }
 

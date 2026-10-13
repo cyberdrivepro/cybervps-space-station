@@ -600,6 +600,159 @@
       to { transform: translateY(0); opacity: 1; }
     }
 
+    /* Neofetch & Tailscale Detail Cards */
+    .neofetch-card {
+      background: #020408;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: var(--radius-md);
+      padding: 1.5rem;
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 2rem;
+      align-items: center;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    }
+    @media (max-width: 768px) {
+      .neofetch-card { grid-template-columns: 1fr; gap: 1rem; }
+    }
+    .neofetch-logo {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+    .neofetch-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+    }
+    .neofetch-row {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 0.5rem;
+    }
+    .neofetch-key {
+      color: var(--accent-cyan);
+      font-weight: 600;
+    }
+    .neofetch-val {
+      color: #f1f5f9;
+      word-break: break-all;
+    }
+    .meter-bar-container {
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      height: 8px;
+      overflow: hidden;
+      margin-top: 4px;
+      width: 100%;
+    }
+    .meter-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-violet));
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+
+    /* Tailscale Admin Grid */
+    .ts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.25rem;
+      margin-top: 1.25rem;
+    }
+    .ts-attr-table td {
+      padding: 0.4rem 0.6rem;
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+    }
+
+    /* File Manager */
+    .fm-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+    .fm-breadcrumbs {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex: 1;
+      min-width: 280px;
+      background: var(--bg-base);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 0.35rem 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+    }
+    .fm-path-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      outline: none;
+    }
+    .fm-storage-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+    .fm-editor-modal {
+      max-width: 900px;
+      width: 95%;
+      height: 80vh;
+    }
+    .fm-editor-textarea {
+      width: 100%;
+      height: 55vh;
+      background: #020408;
+      color: #f8fafc;
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      font-size: 0.84rem;
+      line-height: 1.5;
+      padding: 1rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-sm);
+      resize: none;
+      outline: none;
+      white-space: pre;
+    }
+
+    /* Tabs */
+    .tab-bar {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--border-subtle);
+      margin-bottom: 1.25rem;
+    }
+    .tab-btn {
+      padding: 0.6rem 1.1rem;
+      font-weight: 600;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      color: var(--accent-cyan);
+      border-bottom-color: var(--accent-cyan);
+    }
+
     /* Responsive */
     @media (max-width: 900px) {
       aside {
@@ -637,11 +790,14 @@
     <ul class="nav-list">
       <li><a class="nav-item active" onclick="navigate('overview')"><svg viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>Overview</a></li>
       <li><a class="nav-item" onclick="navigate('machines')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Instances Fleet</a></li>
+      <li><a class="nav-item" onclick="navigate('details')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>Device Intel (Neofetch)</a></li>
+      <li><a class="nav-item" onclick="navigate('files')"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager (SFTP)</a></li>
+      <li><a class="nav-item" onclick="navigate('terminal')"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Web Terminal</a></li>
+      <li><a class="nav-item" onclick="navigate('services')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Processes & Services</a></li>
       <li><a class="nav-item" onclick="navigate('bridge')"><svg viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>TCP Port Bridge</a></li>
       <li><a class="nav-item" onclick="navigate('vpn')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20M2 12h20"/></svg>Virtual Mesh</a></li>
       <li><a class="nav-item" onclick="navigate('ports')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>All-Port Explorer</a></li>
       <li><a class="nav-item" onclick="navigate('tunnels')"><svg viewBox="0 0 24 24"><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Public Tunnels</a></li>
-      <li><a class="nav-item" onclick="navigate('terminal')"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Web Terminal</a></li>
       <li><a class="nav-item" onclick="navigate('doctor')"><svg viewBox="0 0 24 24"><path d="m22 12-4-4v3H3v2h15v3l4-4z"/><circle cx="12" cy="12" r="10"/></svg>System Doctor</a></li>
       <li><a class="nav-item" onclick="navigate('logs')"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>Activity Logs</a></li>
       <li><a class="nav-item" onclick="navigate('settings')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</a></li>
@@ -831,7 +987,260 @@
         </div>
       </div>
 
-      <!-- VIEW: TCP PORT BRIDGE -->
+      <!-- VIEW: DEVICE INTEL & TAILSCALE-STYLE ADMIN CONSOLE (NEOFETCH) -->
+      <div id="view-details" class="view-panel" style="display:none;">
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem;">
+              <select id="details-machine-select" class="form-control" style="min-width:240px; font-weight:600;" onchange="loadDeviceDetails(this.value)">
+                <option value="">Select Target Machine...</option>
+              </select>
+              <button class="btn btn-secondary" onclick="triggerDeviceRefresh()" title="Trigger immediate hardware rediscovery">🔄 Refresh Hardware</button>
+            </div>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+              <button class="btn btn-secondary" onclick="copyNeofetchReport()">📋 Copy Neofetch Report</button>
+              <button class="btn btn-secondary" onclick="copyTailscaleSpec()">📋 Copy Tailscale Spec</button>
+              <button class="btn btn-secondary" onclick="exportDeviceJson()">📥 Export JSON</button>
+              <button class="btn btn-primary" onclick="openFileManagerForCurrent()">📁 Files</button>
+              <button class="btn btn-primary" onclick="openTerminalForCurrent()">💻 Terminal</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1. Neofetch Visual System Overview -->
+        <div class="neofetch-card" id="neofetch-container">
+          <div class="neofetch-logo" id="neofetch-logo">
+            <svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <div style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono); margin-top:0.5rem;" id="neofetch-os-badge">Scanning host...</div>
+          </div>
+          <div class="neofetch-info" id="neofetch-info">
+            <div style="color:var(--text-muted); padding:1rem 0;">Select a machine to display Neofetch telemetry.</div>
+          </div>
+        </div>
+
+        <!-- 2. Tailscale-Style Machine Admin Sections -->
+        <div class="ts-grid">
+          <!-- Identity Section -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Device Identity & Enrollment</div>
+            </div>
+            <div class="card-body" style="display:flex; flex-direction:column; gap:0.8rem; font-size:0.82rem;">
+              <div>
+                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">Machine Name (Editable)</span>
+                <div style="display:flex; gap:0.5rem; margin-top:4px;">
+                  <input type="text" id="ts-friendly-name" class="form-control" style="padding:0.35rem 0.6rem; font-size:0.82rem;" placeholder="Friendly Name">
+                  <button class="btn btn-secondary" onclick="saveFriendlyName()" style="padding:0.35rem 0.65rem;">Save</button>
+                </div>
+              </div>
+              <div>
+                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">OS Hostname</span>
+                <div class="copy-block" style="margin-top:2px; padding:0.4rem 0.6rem;"><code id="ts-hostname">—</code><button class="btn btn-secondary" onclick="copyText('ts-hostname')" style="padding:0.2rem 0.5rem; font-size:0.7rem;">Copy</button></div>
+              </div>
+              <div>
+                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">Machine ID</span>
+                <div class="copy-block" style="margin-top:2px; padding:0.4rem 0.6rem;"><code id="ts-machine-id">—</code><button class="btn btn-secondary" onclick="copyText('ts-machine-id')" style="padding:0.2rem 0.5rem; font-size:0.7rem;">Copy</button></div>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem;">
+                <div><span style="color:var(--text-muted); font-size:0.75rem;">CREATED</span><div id="ts-created" style="font-weight:600;">—</div></div>
+                <div><span style="color:var(--text-muted); font-size:0.75rem;">LAST SEEN</span><div id="ts-last-seen" style="font-weight:600; color:var(--status-success);">—</div></div>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem;">
+                <div><span style="color:var(--text-muted); font-size:0.75rem;">AGENT CHANNEL</span><div style="color:var(--accent-cyan); font-weight:600;">v1.0.0 Stable</div></div>
+                <div><span style="color:var(--text-muted); font-size:0.75rem;">KEY EXPIRY</span><div style="color:var(--text-muted);">Persistent (Durable)</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Addresses & Connectivity -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Addresses & Network Mesh</div>
+            </div>
+            <div class="card-body" style="display:flex; flex-direction:column; gap:0.8rem; font-size:0.82rem;">
+              <div>
+                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">Virtual Mesh IPv4 (10.77.0.0/24)</span>
+                <div class="copy-block" style="margin-top:2px; padding:0.4rem 0.6rem;"><code id="ts-vpn-ip">—</code><button class="btn btn-secondary" onclick="copyText('ts-vpn-ip')" style="padding:0.2rem 0.5rem; font-size:0.7rem;">Copy</button></div>
+              </div>
+              <div>
+                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">Mesh IPv6 Endpoint</span>
+                <div class="copy-block" style="margin-top:2px; padding:0.4rem 0.6rem;"><code id="ts-vpn-ipv6">—</code><button class="btn btn-secondary" onclick="copyText('ts-vpn-ipv6')" style="padding:0.2rem 0.5rem; font-size:0.7rem;">Copy</button></div>
+              </div>
+              <div>
+                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">Local LAN IPv4</span>
+                <div class="copy-block" style="margin-top:2px; padding:0.4rem 0.6rem;"><code id="ts-local-ip">—</code><button class="btn btn-secondary" onclick="copyText('ts-local-ip')" style="padding:0.2rem 0.5rem; font-size:0.7rem;">Copy</button></div>
+              </div>
+              <div>
+                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">Public IP (Verified Gateway)</span>
+                <div class="copy-block" style="margin-top:2px; padding:0.4rem 0.6rem;"><code id="ts-public-ip">—</code><button class="btn btn-secondary" onclick="copyText('ts-public-ip')" style="padding:0.2rem 0.5rem; font-size:0.7rem;">Copy</button></div>
+              </div>
+              <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:0.5rem; padding-top:0.25rem;">
+                <div><span style="color:var(--text-muted); font-size:0.75rem;">IPv4</span><div style="color:var(--status-success); font-weight:600;">Yes ✅</div></div>
+                <div><span style="color:var(--text-muted); font-size:0.75rem;">UDP</span><div style="color:var(--status-success); font-weight:600;">Yes ✅</div></div>
+                <div><span style="color:var(--text-muted); font-size:0.75rem;">CONTROL LATENCY</span><div id="ts-latency" style="color:var(--accent-cyan); font-weight:600;">—</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Searchable Attributes Table -->
+        <div class="card" style="margin-top:1.25rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Discovered Node Attributes</div>
+              <div class="card-desc">Filterable telemetry metadata reported natively by the host operating system</div>
+            </div>
+            <input type="text" id="attr-filter-input" class="form-control" placeholder="Filter attribute..." style="max-width:240px; font-size:0.8rem;" oninput="filterAttributesTable()">
+          </div>
+          <div class="table-container">
+            <table class="ts-attr-table">
+              <thead>
+                <tr>
+                  <th style="width:35%;">Attribute Key</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody id="ts-attributes-table-body">
+                <tr><td colspan="2" style="text-align:center; color:var(--text-muted); padding:1.5rem;">Select a machine to view attributes.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: ADVANCED FILE MANAGER (FTP/SFTP-LIKE) -->
+      <div id="view-files" class="view-panel" style="display:none;">
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:0.75rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem; flex:1; min-width:300px;">
+              <select id="fm-machine-select" class="form-control" style="min-width:220px;" onchange="initFileManager(this.value)">
+                <option value="">Select Target Machine...</option>
+              </select>
+              <div id="fm-sftp-pill" class="badge badge-subtle" style="font-family:var(--font-mono); font-size:0.72rem; cursor:pointer;" onclick="copySftpCommand()" title="Click to copy SFTP connection command">
+                SFTP: Ready (Port 22)
+              </div>
+            </div>
+            <div class="fm-storage-bar">
+              <span id="fm-storage-label">Disk: Scanning...</span>
+              <div class="meter-bar-container" style="width:120px;">
+                <div class="meter-bar-fill" id="fm-storage-fill" style="width:0%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header" style="padding:0.75rem 1.25rem;">
+            <!-- Breadcrumbs navigation & quick actions -->
+            <div class="fm-breadcrumbs">
+              <button class="btn btn-secondary btn-icon" onclick="fmGoHome()" title="Go to User Home"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+              <button class="btn btn-secondary btn-icon" onclick="fmGoUp()" title="Go to Parent Folder"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg></button>
+              <input type="text" id="fm-path-input" class="fm-path-input" placeholder="Path (e.g. C:\Users or /home/user)" onkeydown="if(event.key==='Enter') fmNavigateTo(this.value)">
+              <button class="btn btn-secondary" onclick="fmNavigateTo(document.getElementById('fm-path-input').value)" style="padding:0.25rem 0.65rem; font-size:0.75rem;">Jump</button>
+              <button class="btn btn-secondary btn-icon" onclick="fmRefresh()" title="Refresh directory"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></button>
+            </div>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="openFmUploadModal()">⬆️ Upload</button>
+              <button class="btn btn-secondary" onclick="openFmNewFolderModal()">+ New Folder</button>
+              <button class="btn btn-secondary" onclick="openFmNewFileModal()">+ New File</button>
+              <button class="btn btn-secondary" id="btn-show-hidden" onclick="fmToggleHidden()" title="Toggle Hidden Files">👁️ Hidden</button>
+              <input type="text" id="fm-filter-input" class="form-control" placeholder="Search files..." style="max-width:160px; font-size:0.75rem; padding:0.35rem 0.6rem;" oninput="fmFilterTable()">
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:40%;">Name</th>
+                  <th style="width:12%;">Size</th>
+                  <th style="width:10%;">Mode</th>
+                  <th style="width:18%;">Modified</th>
+                  <th style="width:20%; text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="fm-table-body">
+                <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:3rem;">Select an enrolled machine to browse files.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: PROCESSES & SERVICES MANAGEMENT -->
+      <div id="view-services" class="view-panel" style="display:none;">
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem;">
+              <select id="services-machine-select" class="form-control" style="min-width:240px; font-weight:600;" onchange="loadProcessesAndServices(this.value)">
+                <option value="">Select Target Machine...</option>
+              </select>
+              <button class="btn btn-secondary" onclick="refreshProcessesAndServices()">🔄 Refresh</button>
+            </div>
+          </div>
+          <div class="card-body" style="padding-bottom:0;">
+            <div class="tab-bar">
+              <button class="tab-btn active" id="tab-btn-processes" onclick="switchServicesTab('processes')">Active Processes (<span id="proc-count-badge">0</span>)</button>
+              <button class="tab-btn" id="tab-btn-services" onclick="switchServicesTab('services')">System Services (<span id="svc-count-badge">0</span>)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 1: Running Processes -->
+        <div id="tab-content-processes" class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Top Host Processes</div>
+              <div class="card-desc">Processes sorted by memory consumption on the remote system</div>
+            </div>
+            <input type="text" id="proc-filter-input" class="form-control" placeholder="Search process name or PID..." style="max-width:240px; font-size:0.8rem;" oninput="filterProcessesTable()">
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>PID</th>
+                  <th>Name</th>
+                  <th>User / Session</th>
+                  <th>CPU %</th>
+                  <th>Memory</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="proc-table-body">
+                <tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;">Select a machine to inspect processes.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 2: System Services -->
+        <div id="tab-content-services" class="card" style="display:none;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Operating System Services</div>
+              <div class="card-desc">Windows Services / Linux systemd units with live state and management controls</div>
+            </div>
+            <input type="text" id="svc-filter-input" class="form-control" placeholder="Search service name..." style="max-width:240px; font-size:0.8rem;" oninput="filterServicesTable()">
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Service Name</th>
+                  <th>Display Name</th>
+                  <th>Status</th>
+                  <th>Startup Type</th>
+                  <th style="text-align:right;">Control Actions</th>
+                </tr>
+              </thead>
+              <tbody id="svc-table-body">
+                <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;">Select a machine to inspect services.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <div id="view-bridge" class="view-panel" style="display:none;">
         <div class="card">
           <div class="card-header">
@@ -1166,6 +1575,99 @@
     </div>
   </div>
 
+  <!-- MODAL: IN-BROWSER CODE/TEXT EDITOR -->
+  <div id="modal-fm-editor" class="modal-backdrop">
+    <div class="modal fm-editor-modal">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>
+          <strong id="fm-editor-filename" style="color:var(--text-primary); font-family:var(--font-mono); font-size:0.95rem;">File Editor</strong>
+        </div>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <span id="fm-editor-size-badge" class="badge badge-subtle">0 KB</span>
+          <button class="btn-icon" onclick="closeFmEditor()">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body" style="padding:1rem;">
+        <textarea id="fm-editor-content" class="fm-editor-textarea" placeholder="File content..." spellcheck="false"></textarea>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between;">
+        <div id="fm-editor-status" style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono);">Ready</div>
+        <div style="display:flex; gap:0.5rem;">
+          <button class="btn btn-secondary" onclick="closeFmEditor()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveFmEditor()">💾 Save File</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: UPLOAD FILE -->
+  <div id="modal-fm-upload" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Upload File to Remote Machine</strong>
+        <button class="btn-icon" onclick="closeFmUploadModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Destination Folder on Host</label>
+          <input type="text" id="fm-upload-dest" class="form-control" readonly>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Select File to Upload</label>
+          <input type="file" id="fm-upload-file-input" class="form-control" onchange="handleFmFileSelect(this)">
+        </div>
+        <div id="fm-upload-preview" style="display:none; font-size:0.8rem; color:var(--text-secondary); margin-top:0.5rem;">
+          Selected: <strong id="fm-upload-preview-name" style="color:var(--accent-cyan);"></strong> (<span id="fm-upload-preview-size"></span>)
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeFmUploadModal()">Cancel</button>
+        <button class="btn btn-primary" id="btn-submit-upload" onclick="submitFmUpload()">⬆️ Start Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: NEW FOLDER -->
+  <div id="modal-fm-newfolder" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Create New Folder</strong>
+        <button class="btn-icon" onclick="closeFmNewFolderModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Folder Name</label>
+          <input type="text" id="fm-newfolder-name" class="form-control" placeholder="e.g. logs, my_project, www" onkeydown="if(event.key==='Enter') submitFmNewFolder()">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeFmNewFolderModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitFmNewFolder()">Create Folder</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: NEW FILE -->
+  <div id="modal-fm-newfile" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Create New Text File</strong>
+        <button class="btn-icon" onclick="closeFmNewFileModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">File Name (with extension)</label>
+          <input type="text" id="fm-newfile-name" class="form-control" placeholder="e.g. config.json, test.py, index.html" onkeydown="if(event.key==='Enter') submitFmNewFile()">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeFmNewFileModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitFmNewFile()">Create File</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container"></div>
 
@@ -1218,7 +1720,18 @@
       tunnels: [],
       audit: [],
       access: null,
-      activeTerminalWs: null
+      activeTerminalWs: null,
+      selectedMachineId: null,
+      selectedDeviceProfile: null,
+      currentFmPath: '',
+      currentFmItems: [],
+      showHiddenFiles: false,
+      editingFilePath: '',
+      selectedUploadFile: null,
+      activeServicesTab: 'processes',
+      activeProcesses: [],
+      activeServices: [],
+      telemetrySource: null
     };
 
     let syncTimer = null;
@@ -1396,29 +1909,50 @@
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No instances connected. Run the 1-line installer on a machine to connect.</td></tr>';
         return;
       }
-      tbody.innerHTML = appState.machines.map(m => `
+      tbody.innerHTML = appState.machines.map(m => {
+        const isDaytona = m.attributes?.['node:daytona'] === 'true';
+        const cpuPct = m.telemetry?.cpu_percent !== undefined ? m.telemetry.cpu_percent : null;
+        const memPct = m.telemetry?.memory_percent !== undefined ? m.telemetry.memory_percent : null;
+        const osLabel = m.os_full_version || m.os || 'Linux';
+
+        let teleMetrics = '';
+        if (cpuPct !== null && memPct !== null) {
+          teleMetrics = `
+            <div style="margin-top:3px; font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted);">
+              CPU: <span style="color:var(--accent-cyan); font-weight:600;">${cpuPct}%</span> | RAM: <span style="color:var(--accent-violet); font-weight:600;">${memPct}%</span>
+            </div>
+          `;
+        }
+
+        return `
         <tr>
           <td>
-            <div style="font-weight:600; color:var(--text-primary);">${escapeHtml(m.hostname || m.id)}</div>
+            <div style="font-weight:600; color:var(--text-primary); cursor:pointer;" onclick="openDeviceDetails('${m.id}')" title="Click to inspect Device Intel">${escapeHtml(m.friendly_name || m.hostname || m.id)}</div>
             <div style="font-family:var(--font-mono); font-size:0.72rem; color:var(--text-muted);">${escapeHtml(m.id)}</div>
+            ${teleMetrics}
           </td>
           <td>
-            <span class="badge badge-subtle">${escapeHtml(m.os || 'Linux')}</span>
+            <span class="badge badge-subtle">${escapeHtml(osLabel)}</span>
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:4px;">${escapeHtml(m.arch || '')}</span>
           </td>
           <td><code style="color:var(--accent-violet);">${escapeHtml(m.virtual_ip || '10.77.0.?')}</code></td>
           <td>
             ${m.capabilities?.is_root ? '<span class="badge badge-success">ROOT</span>' : '<span class="badge badge-subtle">USER</span>'}
             ${m.capabilities?.pty_supported ? '<span class="badge badge-cyan">PTY</span>' : ''}
+            ${isDaytona ? '<span class="badge badge-violet">DAYTONA</span>' : ''}
           </td>
           <td>${m.status === 'online' ? '<span class="badge badge-success">ONLINE</span>' : '<span class="badge badge-danger">OFFLINE</span>'}</td>
           <td style="font-size:0.75rem; color:var(--text-muted);">${formatTime(m.last_seen)}</td>
-          <td>
-            <button class="btn btn-secondary" style="padding:0.35rem 0.6rem; font-size:0.75rem;" onclick="openTerminalForMachine('${m.id}')">Terminal</button>
-            <button class="btn btn-secondary" style="padding:0.35rem 0.6rem; font-size:0.75rem; margin-left:4px;" onclick="promptBridgeCustom('${m.id}')">+ Bridge</button>
+          <td style="white-space:nowrap;">
+            <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem;" onclick="openDeviceDetails('${m.id}')" title="Neofetch & Tailscale Specs">Intel</button>
+            <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="openFileManagerForMachine('${m.id}')" title="FTP/SFTP File Manager">Files</button>
+            <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="openTerminalForMachine('${m.id}')" title="Browser Web Terminal">Terminal</button>
+            <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="openServicesForMachine('${m.id}')" title="Processes & OS Services">Services</button>
+            <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="promptBridgeCustom('${m.id}')" title="Bridge TCP Port">+ Bridge</button>
           </td>
         </tr>
-      `).join('');
+      `;
+      }).join('');
     }
 
     function renderBridgeTable() {
@@ -1594,40 +2128,36 @@
     function updateMachineSelectors() {
       const selectModal = document.getElementById('modal-bridge-machine');
       const selectTerm = document.getElementById('terminal-machine-select');
-      if (!selectModal || !selectTerm) return;
+      const selectDetails = document.getElementById('details-machine-select');
+      const selectFm = document.getElementById('fm-machine-select');
+      const selectSvc = document.getElementById('services-machine-select');
 
-      const currentModalVal = selectModal.value;
-      const currentTermVal = selectTerm.value;
-
-      const modalOpts = appState.machines.map(m => `<option value="${m.id}">${escapeHtml(m.hostname || m.id)} (${m.os || 'Linux'})</option>`).join('');
-      selectModal.innerHTML = modalOpts || '<option value="">No machines available</option>';
-      if (currentModalVal && appState.machines.some(m => m.id === currentModalVal)) {
-        selectModal.value = currentModalVal;
+      const modalOpts = appState.machines.map(m => `<option value="${m.id}">${escapeHtml(m.friendly_name || m.hostname || m.id)} (${m.os || 'Linux'})</option>`).join('');
+      if (selectModal) {
+        const cur = selectModal.value;
+        selectModal.innerHTML = modalOpts || '<option value="">No machines available</option>';
+        if (cur && appState.machines.some(m => m.id === cur)) selectModal.value = cur;
       }
 
-      const termOpts = appState.machines.map(m => {
+      const standardOpts = appState.machines.map(m => {
         const isOnline = m.status === 'online';
         const icon = isOnline ? '🟢' : '⚪';
         const statusText = isOnline ? 'ONLINE' : 'OFFLINE';
-        return `<option value="${m.id}">${icon} ${escapeHtml(m.hostname || m.id)} [${statusText} - ${m.os || 'Linux'}]</option>`;
+        return `<option value="${m.id}">${icon} ${escapeHtml(m.friendly_name || m.hostname || m.id)} [${statusText} - ${m.os || 'Linux'}]</option>`;
       }).join('');
 
-      selectTerm.innerHTML = '<option value="">Select Target Machine...</option>' + termOpts;
-
-      // Preserve existing selection if valid
-      if (currentTermVal && appState.machines.some(m => m.id === currentTermVal)) {
-        selectTerm.value = currentTermVal;
-      } else {
-        // Auto-select first online machine
-        const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
-        if (firstOnline) {
-          selectTerm.value = firstOnline.id;
-          const termView = document.getElementById('view-terminal');
-          if (termView && termView.style.display !== 'none' && (!appState.activeTerminalWs || appState.activeTerminalWs.readyState !== WebSocket.OPEN)) {
-            initTerminalSession(false);
-          }
+      [selectTerm, selectDetails, selectFm, selectSvc].forEach(sel => {
+        if (!sel) return;
+        const cur = sel.value || appState.selectedMachineId;
+        sel.innerHTML = '<option value="">Select Target Machine...</option>' + standardOpts;
+        if (cur && appState.machines.some(m => m.id === cur)) {
+          sel.value = cur;
+        } else if (appState.machines.length > 0) {
+          const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
+          sel.value = firstOnline.id;
+          if (!appState.selectedMachineId) appState.selectedMachineId = firstOnline.id;
         }
-      }
+      });
     }
 
     // 6. MUTATIONS (CREATE BRIDGE & REVOKE)
@@ -2155,6 +2685,9 @@
       const navTitles = {
         'overview': 'Mission Control Overview',
         'machines': 'Instances Fleet',
+        'details': 'Device Intelligence & Neofetch',
+        'files': 'Advanced File Manager (FTP/SFTP)',
+        'services': 'Processes & Operating System Services',
         'bridge': 'Mode A: TCP Port Bridge',
         'vpn': 'Mode B: Virtual Network Mesh',
         'ports': 'Live All-Port Explorer (1–65535)',
@@ -2192,6 +2725,18 @@
           }
           focusTerminalInput();
         }, 50);
+      } else if (viewName === 'details') {
+        const select = document.getElementById('details-machine-select');
+        const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
+        if (mId) loadDeviceDetails(mId);
+      } else if (viewName === 'files') {
+        const select = document.getElementById('fm-machine-select');
+        const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
+        if (mId) initFileManager(mId, appState.currentFmPath || '');
+      } else if (viewName === 'services') {
+        const select = document.getElementById('services-machine-select');
+        const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
+        if (mId) loadProcessesAndServices(mId);
       }
     }
 
@@ -2226,6 +2771,1008 @@
 
     function closeBridgeModal() {
       document.getElementById('modal-bridge').style.display = 'none';
+    }
+
+    // 11. REAL-TIME 2-SECOND TELEMETRY STREAM (SSE)
+    function initTelemetryStream() {
+      if (appState.telemetrySource) {
+        try { appState.telemetrySource.close(); } catch (_) {}
+      }
+      try {
+        const streamUrl = `${appConfig.serverUrl}/api/v1/telemetry/stream`;
+        const es = new EventSource(streamUrl);
+        appState.telemetrySource = es;
+
+        es.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.type === 'telemetry_batch' && Array.isArray(data.machines)) {
+              data.machines.forEach(incoming => {
+                const idx = appState.machines.findIndex(m => m.id === incoming.id);
+                if (idx !== -1) {
+                  appState.machines[idx] = { ...appState.machines[idx], ...incoming };
+                } else {
+                  appState.machines.push(incoming);
+                }
+              });
+              updateLiveTelemetryViews();
+            } else if (data.type === 'telemetry_update' && data.machine) {
+              const incoming = data.machine;
+              const idx = appState.machines.findIndex(m => m.id === incoming.id);
+              if (idx !== -1) {
+                appState.machines[idx] = { ...appState.machines[idx], ...incoming };
+              } else {
+                appState.machines.push(incoming);
+              }
+              updateLiveTelemetryViews();
+            }
+          } catch (_) {}
+        };
+
+        es.onerror = () => {
+          // EventSource will auto-reconnect
+        };
+      } catch (err) {
+        console.warn('Telemetry SSE connection failed:', err);
+      }
+    }
+
+    function updateLiveTelemetryViews() {
+      if (document.getElementById('view-details').style.display !== 'none' && appState.selectedMachineId) {
+        const m = appState.machines.find(x => x.id === appState.selectedMachineId);
+        if (m && m.telemetry) {
+          updateNeofetchTelemetryLive(m);
+        }
+      }
+      if (document.getElementById('view-machines').style.display !== 'none') {
+        renderMachinesTable();
+      }
+    }
+
+    function updateNeofetchTelemetryLive(m) {
+      const t = m.telemetry || {};
+      const cpuVal = document.getElementById('nf-live-cpu-val');
+      const memVal = document.getElementById('nf-live-mem-val');
+      const diskVal = document.getElementById('nf-live-disk-val');
+      const uptimeVal = document.getElementById('nf-live-uptime-val');
+      const cpuFill = document.getElementById('nf-cpu-fill');
+      const memFill = document.getElementById('nf-mem-fill');
+      const diskFill = document.getElementById('nf-disk-fill');
+
+      if (cpuVal && t.cpu_percent !== undefined) cpuVal.innerText = `${t.cpu_percent}%`;
+      if (cpuFill && t.cpu_percent !== undefined) cpuFill.style.width = `${Math.min(100, t.cpu_percent)}%`;
+
+      if (memVal && t.memory_used_mb !== undefined) {
+        memVal.innerText = `${t.memory_used_mb} MB / ${t.memory_total_mb} MB (${t.memory_percent}%)`;
+      }
+      if (memFill && t.memory_percent !== undefined) memFill.style.width = `${Math.min(100, t.memory_percent)}%`;
+
+      if (diskVal && t.disk_used_gb !== undefined) {
+        diskVal.innerText = `${t.disk_used_gb} GB / ${t.disk_total_gb} GB (${t.disk_percent}%)`;
+      }
+      if (diskFill && t.disk_percent !== undefined) diskFill.style.width = `${Math.min(100, t.disk_percent)}%`;
+
+      if (uptimeVal && t.uptime_seconds !== undefined) {
+        uptimeVal.innerText = formatUptime(t.uptime_seconds);
+      }
+
+      const tsLastSeen = document.getElementById('ts-last-seen');
+      if (tsLastSeen && m.last_seen) {
+        tsLastSeen.innerText = formatTime(m.last_seen);
+      }
+    }
+
+    // 12. DEVICE INTEL & NEOFETCH SYSTEM INFORMATION
+    function openDeviceDetails(machineId) {
+      appState.selectedMachineId = machineId;
+      navigate('details');
+      const sel = document.getElementById('details-machine-select');
+      if (sel) sel.value = machineId;
+      loadDeviceDetails(machineId);
+    }
+
+    function openFileManagerForCurrent() {
+      if (appState.selectedMachineId) openFileManagerForMachine(appState.selectedMachineId);
+      else showToast('Please select a machine first', 'warning');
+    }
+
+    function openTerminalForCurrent() {
+      if (appState.selectedMachineId) openTerminalForMachine(appState.selectedMachineId);
+      else showToast('Please select a machine first', 'warning');
+    }
+
+    async function loadDeviceDetails(machineId) {
+      if (!machineId) {
+        machineId = appState.selectedMachineId || (appState.machines[0] ? appState.machines[0].id : null);
+      }
+      if (!machineId) {
+        document.getElementById('neofetch-info').innerHTML = '<div style="color:var(--text-muted); padding:1rem 0;">No machines connected. Enrol a system to view Neofetch telemetry.</div>';
+        return;
+      }
+
+      appState.selectedMachineId = machineId;
+      const sel = document.getElementById('details-machine-select');
+      if (sel) sel.value = machineId;
+
+      const res = await apiRequest(`/api/v1/machines/${encodeURIComponent(machineId)}/profile`);
+      if (!res.ok) {
+        showToast('Could not load profile: ' + res.error, 'error');
+        return;
+      }
+
+      const p = res.data;
+      appState.selectedDeviceProfile = p;
+      renderNeofetchCard(p);
+      renderTailscaleIdentity(p);
+      renderAttributesTable(p.attributes || {});
+    }
+
+    function renderNeofetchCard(p) {
+      const isWindows = (p.os || '').toLowerCase().includes('windows');
+      const isUbuntu = (p.os || '').toLowerCase().includes('ubuntu');
+      const isDaytona = p.attributes?.['node:daytona'] === 'true' || (p.hostname || '').toLowerCase().includes('daytona');
+
+      const logoContainer = document.getElementById('neofetch-logo');
+      const badgeEl = document.getElementById('neofetch-os-badge');
+      const infoEl = document.getElementById('neofetch-info');
+
+      let svgLogo = '';
+      if (isWindows) {
+        svgLogo = `
+          <svg width="84" height="84" viewBox="0 0 24 24" fill="none">
+            <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.551H10.949M0 12.6h9.75V22.05L0 20.7m10.949-8.1H24V24l-13.051-1.801" fill="var(--accent-cyan)"/>
+          </svg>
+        `;
+        badgeEl.innerText = p.os_full_version || p.os || 'Windows 11';
+      } else if (isDaytona) {
+        svgLogo = `
+          <svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+            <polyline points="2 17 12 22 22 17"/>
+            <polyline points="2 12 12 17 22 12"/>
+          </svg>
+        `;
+        badgeEl.innerText = 'Daytona Linux VPS';
+      } else if (isUbuntu) {
+        svgLogo = `
+          <svg width="84" height="84" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="#e95420" stroke-width="2"/>
+            <circle cx="12" cy="6" r="2" fill="#e95420"/>
+            <circle cx="7" cy="15" r="2" fill="#e95420"/>
+            <circle cx="17" cy="15" r="2" fill="#e95420"/>
+          </svg>
+        `;
+        badgeEl.innerText = p.os_full_version || p.os || 'Ubuntu Linux';
+      } else {
+        svgLogo = `
+          <svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="var(--status-warning)" stroke-width="2">
+            <ellipse cx="12" cy="13" rx="6" ry="8"/>
+            <circle cx="12" cy="6" r="4"/>
+            <circle cx="10" cy="5.5" r="1" fill="#fff"/>
+            <circle cx="14" cy="5.5" r="1" fill="#fff"/>
+            <polygon points="12,7 10.5,9 13.5,9" fill="#f59e0b"/>
+          </svg>
+        `;
+        badgeEl.innerText = p.os_full_version || p.os || 'Linux System';
+      }
+
+      logoContainer.innerHTML = svgLogo + `<div style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono); margin-top:0.5rem;" id="neofetch-os-badge">${escapeHtml(badgeEl.innerText)}</div>`;
+
+      const t = p.telemetry || {};
+      const cpuPct = t.cpu_percent !== undefined ? t.cpu_percent : 0;
+      const memTotal = t.memory_total_mb || p.hardware?.ram_total_mb || 0;
+      const memUsed = t.memory_used_mb || 0;
+      const memPct = t.memory_percent || (memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0);
+      const diskTotal = t.disk_total_gb || p.hardware?.disk_total_gb || 0;
+      const diskUsed = t.disk_used_gb || 0;
+      const diskPct = t.disk_percent || (diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0);
+      const uptimeSec = t.uptime_seconds || 0;
+
+      const user = p.user || (isDaytona ? 'daytona' : (isWindows ? 'Suraj' : 'root'));
+      const host = p.hostname || p.id;
+      const cpuModel = p.hardware?.cpu_model || p.cpu_model || 'Standard CPU';
+      const cpuCores = p.hardware?.cpu_cores || p.cpu_cores || 1;
+      const hostModel = p.hardware?.motherboard || p.hardware?.bios_vendor || (isDaytona ? 'Daytona Cloud Sandbox' : 'Universal Host');
+
+      infoEl.innerHTML = `
+        <div style="font-family:var(--font-mono); font-size:0.95rem; line-height:1.4;">
+          <span style="color:var(--accent-cyan); font-weight:700;">${escapeHtml(user)}</span><span style="color:var(--text-muted);">@</span><span style="color:var(--accent-cyan); font-weight:700;">${escapeHtml(host)}</span>
+          <div style="color:var(--text-muted); margin:2px 0 6px 0;">---------------------------------------------</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:0.4rem; font-family:var(--font-mono); font-size:0.82rem;">
+          <div class="neofetch-row"><span class="neofetch-key">OS</span><span class="neofetch-val">${escapeHtml(p.os_full_version || p.os_version || p.os)}</span></div>
+          <div class="neofetch-row"><span class="neofetch-key">Host</span><span class="neofetch-val">${escapeHtml(hostModel)}</span></div>
+          <div class="neofetch-row"><span class="neofetch-key">Kernel</span><span class="neofetch-val">${escapeHtml(p.kernel || p.attributes?.['node:osVersion'] || 'N/A')}</span></div>
+          <div class="neofetch-row"><span class="neofetch-key">Uptime</span><span class="neofetch-val" id="nf-live-uptime-val">${formatUptime(uptimeSec)}</span></div>
+          <div class="neofetch-row"><span class="neofetch-key">Shell</span><span class="neofetch-val">${isWindows ? 'PowerShell 7.5 / cmd.exe' : '/bin/bash'}</span></div>
+          <div class="neofetch-row"><span class="neofetch-key">Terminal</span><span class="neofetch-val">CyberVPS Web PTY (xterm-256color)</span></div>
+          <div class="neofetch-row"><span class="neofetch-key">CPU</span><span class="neofetch-val">${escapeHtml(cpuModel)} (${cpuCores})</span></div>
+          <div class="neofetch-row">
+            <span class="neofetch-key">CPU Usage</span>
+            <span class="neofetch-val" style="display:flex; align-items:center; gap:0.75rem; width:65%;">
+              <span id="nf-live-cpu-val" style="min-width:38px;">${cpuPct}%</span>
+              <div class="meter-bar-container" style="flex:1; margin:0;"><div id="nf-cpu-fill" class="meter-bar-fill" style="width:${Math.min(100, cpuPct)}%;"></div></div>
+            </span>
+          </div>
+          <div class="neofetch-row">
+            <span class="neofetch-key">Memory</span>
+            <span class="neofetch-val" style="display:flex; align-items:center; gap:0.75rem; width:65%;">
+              <span id="nf-live-mem-val" style="min-width:140px;">${memUsed} MB / ${memTotal} MB (${memPct}%)</span>
+              <div class="meter-bar-container" style="flex:1; margin:0;"><div id="nf-mem-fill" class="meter-bar-fill" style="width:${Math.min(100, memPct)}%;"></div></div>
+            </span>
+          </div>
+          <div class="neofetch-row">
+            <span class="neofetch-key">Disk</span>
+            <span class="neofetch-val" style="display:flex; align-items:center; gap:0.75rem; width:65%;">
+              <span id="nf-live-disk-val" style="min-width:140px;">${diskUsed} GB / ${diskTotal} GB (${diskPct}%)</span>
+              <div class="meter-bar-container" style="flex:1; margin:0;"><div id="nf-disk-fill" class="meter-bar-fill" style="width:${Math.min(100, diskPct)}%;"></div></div>
+            </span>
+          </div>
+          <div class="neofetch-row"><span class="neofetch-key">Mesh IP</span><span class="neofetch-val" style="color:var(--accent-violet);">${escapeHtml(p.virtual_ip || '10.77.0.x')}</span></div>
+          <div class="neofetch-row"><span class="neofetch-key">Public IP</span><span class="neofetch-val" style="color:var(--accent-cyan);">${escapeHtml(p.network?.public_ip || p.public_ip || 'Verified')}</span></div>
+          <div class="neofetch-colors" style="margin-top:0.6rem; display:flex; gap:6px;">
+            <span style="display:inline-block; width:16px; height:16px; border-radius:3px; background:#1e293b;"></span>
+            <span style="display:inline-block; width:16px; height:16px; border-radius:3px; background:#ef4444;"></span>
+            <span style="display:inline-block; width:16px; height:16px; border-radius:3px; background:#10b981;"></span>
+            <span style="display:inline-block; width:16px; height:16px; border-radius:3px; background:#f59e0b;"></span>
+            <span style="display:inline-block; width:16px; height:16px; border-radius:3px; background:#3b82f6;"></span>
+            <span style="display:inline-block; width:16px; height:16px; border-radius:3px; background:#8b5cf6;"></span>
+            <span style="display:inline-block; width:16px; height:16px; border-radius:3px; background:#00f0ff;"></span>
+            <span style="display:inline-block; width:16px; height:16px; border-radius:3px; background:#f8fafc;"></span>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTailscaleIdentity(p) {
+      document.getElementById('ts-friendly-name').value = p.friendly_name || p.hostname || '';
+      document.getElementById('ts-hostname').innerText = p.hostname || p.id;
+      document.getElementById('ts-machine-id').innerText = p.id;
+      document.getElementById('ts-created').innerText = formatTime(p.first_seen || p.created_at || new Date());
+      document.getElementById('ts-last-seen').innerText = formatTime(p.last_seen);
+
+      document.getElementById('ts-vpn-ip').innerText = p.virtual_ip || '10.77.0.x';
+      document.getElementById('ts-vpn-ipv6').innerText = p.virtual_ipv6 || 'fd7a:115c:a1e0::8101:9013';
+      document.getElementById('ts-local-ip').innerText = (p.network?.local_ips || []).join(', ') || '127.0.0.1';
+      document.getElementById('ts-public-ip').innerText = p.network?.public_ip || p.public_ip || '—';
+      document.getElementById('ts-latency').innerText = appState.latencyMs ? `${appState.latencyMs}ms` : 'Healthy (Direct)';
+    }
+
+    function renderAttributesTable(attrs) {
+      const tbody = document.getElementById('ts-attributes-table-body');
+      const filter = (document.getElementById('attr-filter-input')?.value || '').toLowerCase();
+      const keys = Object.keys(attrs || {}).sort();
+
+      const filtered = keys.filter(k => k.toLowerCase().includes(filter) || String(attrs[k]).toLowerCase().includes(filter));
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="2" style="text-align:center; color:var(--text-muted); padding:1.5rem;">No matching attributes found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(k => `
+        <tr>
+          <td><code style="color:var(--accent-cyan); font-weight:600;">${escapeHtml(k)}</code></td>
+          <td><span style="color:var(--text-primary); word-break:break-all;">${escapeHtml(String(attrs[k]))}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    function filterAttributesTable() {
+      if (appState.selectedDeviceProfile) {
+        renderAttributesTable(appState.selectedDeviceProfile.attributes || {});
+      }
+    }
+
+    async function saveFriendlyName() {
+      if (!appState.selectedMachineId) return;
+      const name = document.getElementById('ts-friendly-name').value.trim();
+      const res = await apiRequest(`/api/v1/machines/${encodeURIComponent(appState.selectedMachineId)}/name`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      if (res.ok) {
+        showToast('Machine friendly name saved', 'success');
+        syncData();
+      } else {
+        showToast('Failed to save name: ' + res.error, 'error');
+      }
+    }
+
+    async function triggerDeviceRefresh() {
+      if (!appState.selectedMachineId) return;
+      showToast('Triggering hardware discovery scan...', 'info');
+      const res = await apiRequest(`/api/v1/machines/${encodeURIComponent(appState.selectedMachineId)}/refresh`, { method: 'POST' });
+      if (res.ok) {
+        showToast('Hardware profile refreshed!', 'success');
+        setTimeout(() => loadDeviceDetails(appState.selectedMachineId), 800);
+      } else {
+        showToast('Failed to refresh: ' + res.error, 'error');
+      }
+    }
+
+    function copyNeofetchReport() {
+      const p = appState.selectedDeviceProfile;
+      if (!p) return showToast('No profile loaded to copy', 'warning');
+      const report = [
+        `${p.user || 'user'}@${p.hostname || p.id}`,
+        '-------------------------------------------',
+        `OS:       ${p.os_full_version || p.os_version || p.os}`,
+        `Host:     ${p.hardware?.motherboard || (p.attributes?.['node:daytona'] === 'true' ? 'Daytona Cloud Sandbox' : 'Hardware PC / Host')}`,
+        `Kernel:   ${p.kernel || p.attributes?.['node:osVersion'] || 'N/A'}`,
+        `Uptime:   ${formatUptime(p.telemetry?.uptime_seconds)}`,
+        `CPU:      ${p.hardware?.cpu_model || p.cpu_model || 'N/A'} (${p.hardware?.cpu_cores || p.cpu_cores || 1} Cores)`,
+        `CPU %:    ${p.telemetry?.cpu_percent || 0}%`,
+        `Memory:   ${p.telemetry?.memory_used_mb || 0} MB / ${p.telemetry?.memory_total_mb || 0} MB (${p.telemetry?.memory_percent || 0}%)`,
+        `Disk:     ${p.telemetry?.disk_used_gb || 0} GB / ${p.telemetry?.disk_total_gb || 0} GB (${p.telemetry?.disk_percent || 0}%)`,
+        `Virtual:  ${p.virtual_ip || '10.77.0.x'}`,
+        `Public:   ${p.network?.public_ip || p.public_ip || 'N/A'}`,
+        `Local:    ${(p.network?.local_ips || []).join(', ') || '127.0.0.1'}`
+      ].join('\n');
+
+      navigator.clipboard.writeText(report).then(() => {
+        showToast('Neofetch system report copied!', 'success');
+      }).catch(() => showToast('Failed to copy report', 'error'));
+    }
+
+    function copyTailscaleSpec() {
+      const p = appState.selectedDeviceProfile;
+      if (!p) return showToast('No profile loaded to copy', 'warning');
+      const spec = {
+        machine_name: p.friendly_name || p.hostname,
+        os_hostname: p.hostname,
+        os: p.os_full_version || p.os,
+        tailscale_ipv4: p.virtual_ip || '10.77.0.x',
+        tailscale_ipv6: p.virtual_ipv6 || 'fd7a:115c:...',
+        public_ip: p.network?.public_ip || p.public_ip,
+        local_ips: p.network?.local_ips || [],
+        attributes: p.attributes || {},
+        status: p.status,
+        last_seen: p.last_seen
+      };
+      navigator.clipboard.writeText(JSON.stringify(spec, null, 2)).then(() => {
+        showToast('Tailscale node specification copied!', 'success');
+      }).catch(() => showToast('Failed to copy spec', 'error'));
+    }
+
+    function exportDeviceJson() {
+      const p = appState.selectedDeviceProfile;
+      if (!p) return showToast('No profile loaded to export', 'warning');
+      const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `device-profile-${p.hostname || p.id}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Device profile JSON exported!', 'success');
+    }
+
+    // 13. ADVANCED FILE MANAGER (FTP/SFTP-LIKE)
+    function openFileManagerForMachine(machineId, path = '') {
+      appState.selectedMachineId = machineId;
+      navigate('files');
+      const sel = document.getElementById('fm-machine-select');
+      if (sel) sel.value = machineId;
+      initFileManager(machineId, path);
+    }
+
+    async function initFileManager(machineId, targetPath = '') {
+      if (!machineId) {
+        machineId = appState.selectedMachineId || (appState.machines[0] ? appState.machines[0].id : null);
+      }
+      if (!machineId) {
+        document.getElementById('fm-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:3rem;">No machines enrolled. Connect an agent to browse files.</td></tr>';
+        return;
+      }
+      appState.selectedMachineId = machineId;
+      const sel = document.getElementById('fm-machine-select');
+      if (sel) sel.value = machineId;
+
+      document.getElementById('fm-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:3rem;"><span class="badge badge-subtle">Listing directory contents...</span></td></tr>';
+
+      const res = await apiRequest(`/api/v1/files/list?machine_id=${encodeURIComponent(machineId)}&path=${encodeURIComponent(targetPath || '')}&show_hidden=${appState.showHiddenFiles}`);
+      if (!res.ok) {
+        document.getElementById('fm-table-body').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--status-danger); padding:3rem;">Error loading path: ${escapeHtml(res.error || 'Server error')}</td></tr>`;
+        showToast('File manager error: ' + res.error, 'error');
+        return;
+      }
+
+      const data = res.data;
+      appState.currentFmPath = data.current_path;
+      appState.currentFmItems = data.items || [];
+      document.getElementById('fm-path-input').value = data.current_path;
+
+      if (data.disk) {
+        const total = data.disk.total_gb || 0;
+        const free = data.disk.free_gb || 0;
+        const used = (total - free).toFixed(1);
+        const pct = total > 0 ? Math.round(((total - free) / total) * 100) : 0;
+        document.getElementById('fm-storage-label').innerText = `Disk: ${used} / ${total} GB (${pct}% used)`;
+        document.getElementById('fm-storage-fill').style.width = `${pct}%`;
+      }
+
+      renderFileManagerTable();
+    }
+
+    function renderFileManagerTable() {
+      const tbody = document.getElementById('fm-table-body');
+      const filter = (document.getElementById('fm-filter-input')?.value || '').toLowerCase();
+      let items = appState.currentFmItems || [];
+
+      if (filter) {
+        items = items.filter(it => it.name.toLowerCase().includes(filter));
+      }
+
+      if (items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;">Empty folder or no matching files.</td></tr>';
+        return;
+      }
+
+      const sorted = [...items].sort((a, b) => {
+        if (a.is_directory !== b.is_directory) return a.is_directory ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      tbody.innerHTML = sorted.map(it => {
+        const icon = it.is_directory
+          ? '<span style="color:var(--accent-cyan); margin-right:8px; font-size:1.1rem;">📁</span>'
+          : getFileIcon(it.name);
+        const sizeStr = it.is_directory ? '<span style="color:var(--text-muted);">—</span>' : formatBytes(it.size);
+        const modStr = formatTime(it.modified);
+        const modeStr = it.permissions ? `<code style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(it.permissions)}</code>` : '<span style="color:var(--text-muted);">—</span>';
+
+        const safePath = escapeHtml(it.path).replace(/'/g, "\\'");
+        const safeName = escapeHtml(it.name).replace(/'/g, "\\'");
+
+        let nameHtml = '';
+        if (it.is_directory) {
+          nameHtml = `<a href="javascript:void(0)" onclick="initFileManager('${appState.selectedMachineId}', '${safePath}')" style="color:var(--text-primary); font-weight:600; text-decoration:none; display:flex; align-items:center;">${icon}<span>${escapeHtml(it.name)}</span></a>`;
+        } else {
+          nameHtml = `<span style="display:flex; align-items:center; color:var(--text-secondary);">${icon}<span style="font-family:var(--font-mono); font-size:0.83rem;">${escapeHtml(it.name)}</span></span>`;
+        }
+
+        let actionsHtml = '';
+        if (it.is_directory) {
+          actionsHtml = `
+            <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="initFileManager('${appState.selectedMachineId}', '${safePath}')">Open</button>
+            <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptRenameFile('${safePath}', '${safeName}')">Rename</button>
+            <button class="btn btn-danger" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptDeleteFile('${safePath}', '${safeName}', true)">Delete</button>
+          `;
+        } else {
+          actionsHtml = `
+            <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="openFileInEditor('${safePath}', '${safeName}', ${it.size || 0})">Edit</button>
+            <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem; margin-left:3px;" onclick="downloadFile('${safePath}', '${safeName}')">Download</button>
+            <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptRenameFile('${safePath}', '${safeName}')">Rename</button>
+            <button class="btn btn-danger" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptDeleteFile('${safePath}', '${safeName}', false)">Delete</button>
+          `;
+        }
+
+        return `
+          <tr>
+            <td>${nameHtml}</td>
+            <td style="font-family:var(--font-mono); font-size:0.78rem;">${sizeStr}</td>
+            <td>${modeStr}</td>
+            <td style="font-size:0.75rem; color:var(--text-muted);">${modStr}</td>
+            <td style="text-align:right;">${actionsHtml}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function getFileIcon(name) {
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      if (['js', 'ts', 'jsx', 'tsx', 'py', 'sh', 'bash', 'ps1', 'bat', 'cmd', 'c', 'cpp', 'rs', 'go'].includes(ext)) {
+        return '<span style="color:var(--accent-violet); margin-right:8px; font-size:1.1rem;">📄</span>';
+      }
+      if (['json', 'yaml', 'yml', 'env', 'ini', 'toml', 'xml', 'conf'].includes(ext)) {
+        return '<span style="color:var(--status-warning); margin-right:8px; font-size:1.1rem;">⚙️</span>';
+      }
+      if (['html', 'css', 'md', 'txt', 'log'].includes(ext)) {
+        return '<span style="color:var(--accent-cyan); margin-right:8px; font-size:1.1rem;">📝</span>';
+      }
+      if (['zip', 'tar', 'gz', 'bz2', '7z', 'rar'].includes(ext)) {
+        return '<span style="color:#ef4444; margin-right:8px; font-size:1.1rem;">📦</span>';
+      }
+      return '<span style="color:var(--text-muted); margin-right:8px; font-size:1.1rem;">📄</span>';
+    }
+
+    function fmGoUp() {
+      if (!appState.currentFmPath) return;
+      let p = appState.currentFmPath.replace(/[\\/]+$/, '');
+      const lastSlash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+      if (lastSlash > 0) {
+        p = p.substring(0, lastSlash);
+      } else if (lastSlash === 0) {
+        p = '/';
+      } else if (p.length === 2 && p[1] === ':') {
+        p = p + '\\';
+      } else {
+        p = '';
+      }
+      initFileManager(appState.selectedMachineId, p);
+    }
+
+    function fmGoHome() {
+      initFileManager(appState.selectedMachineId, '');
+    }
+
+    function fmRefresh() {
+      initFileManager(appState.selectedMachineId, appState.currentFmPath);
+    }
+
+    function fmNavigateTo(path) {
+      initFileManager(appState.selectedMachineId, path.trim());
+    }
+
+    function fmToggleHidden() {
+      appState.showHiddenFiles = !appState.showHiddenFiles;
+      const btn = document.getElementById('btn-show-hidden');
+      if (btn) {
+        btn.className = appState.showHiddenFiles ? 'btn btn-primary' : 'btn btn-secondary';
+      }
+      fmRefresh();
+    }
+
+    function fmFilterTable() {
+      renderFileManagerTable();
+    }
+
+    function copySftpCommand() {
+      const m = appState.machines.find(x => x.id === appState.selectedMachineId);
+      const host = m?.virtual_ip || m?.network?.public_ip || '127.0.0.1';
+      const cmd = `sftp -P 22 user@${host}`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast(`SFTP command copied: ${cmd}`, 'success');
+      }).catch(() => showToast('Failed to copy SFTP command', 'error'));
+    }
+
+    async function openFileInEditor(path, name, size) {
+      if (size > 5 * 1024 * 1024) {
+        if (!confirm(`This file is ${formatBytes(size)}. Loading large files in the browser editor may be slow. Continue?`)) return;
+      }
+      appState.editingFilePath = path;
+      document.getElementById('fm-editor-filename').innerText = `${name} (${path})`;
+      document.getElementById('fm-editor-size-badge').innerText = formatBytes(size);
+      document.getElementById('fm-editor-content').value = 'Loading file contents...';
+      document.getElementById('fm-editor-status').innerText = 'Loading...';
+      document.getElementById('modal-fm-editor').style.display = 'flex';
+
+      const res = await apiRequest(`/api/v1/files/read?machine_id=${encodeURIComponent(appState.selectedMachineId)}&path=${encodeURIComponent(path)}`);
+      if (!res.ok) {
+        document.getElementById('fm-editor-content').value = `Error loading file: ${res.error}`;
+        document.getElementById('fm-editor-status').innerText = 'Read Error';
+        showToast('Failed to read file: ' + res.error, 'error');
+        return;
+      }
+
+      document.getElementById('fm-editor-content').value = res.data.content;
+      document.getElementById('fm-editor-status').innerText = `Ready • ${res.data.encoding || 'UTF-8'} • ${res.data.lines || 0} lines`;
+      document.getElementById('fm-editor-content').focus();
+    }
+
+    function closeFmEditor() {
+      document.getElementById('modal-fm-editor').style.display = 'none';
+      appState.editingFilePath = '';
+    }
+
+    async function saveFmEditor() {
+      if (!appState.editingFilePath || !appState.selectedMachineId) return;
+      const content = document.getElementById('fm-editor-content').value;
+      document.getElementById('fm-editor-status').innerText = 'Saving...';
+
+      const res = await apiRequest('/api/v1/files/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          machine_id: appState.selectedMachineId,
+          path: appState.editingFilePath,
+          content
+        })
+      });
+
+      if (!res.ok) {
+        document.getElementById('fm-editor-status').innerText = 'Save Failed';
+        showToast('Save failed: ' + res.error, 'error');
+        return;
+      }
+
+      document.getElementById('fm-editor-status').innerText = `Saved successfully at ${new Date().toLocaleTimeString()}!`;
+      showToast('File saved successfully!', 'success');
+      fmRefresh();
+    }
+
+    function openFmUploadModal() {
+      if (!appState.selectedMachineId) return showToast('Select a machine first', 'warning');
+      document.getElementById('fm-upload-dest').value = appState.currentFmPath || 'Current Directory';
+      document.getElementById('fm-upload-file-input').value = '';
+      document.getElementById('fm-upload-preview').style.display = 'none';
+      appState.selectedUploadFile = null;
+      document.getElementById('modal-fm-upload').style.display = 'flex';
+    }
+
+    function closeFmUploadModal() {
+      document.getElementById('modal-fm-upload').style.display = 'none';
+      appState.selectedUploadFile = null;
+    }
+
+    function handleFmFileSelect(input) {
+      if (input.files && input.files[0]) {
+        const file = input.files[0];
+        appState.selectedUploadFile = file;
+        document.getElementById('fm-upload-preview-name').innerText = file.name;
+        document.getElementById('fm-upload-preview-size').innerText = formatBytes(file.size);
+        document.getElementById('fm-upload-preview').style.display = 'block';
+      }
+    }
+
+    async function submitFmUpload() {
+      if (!appState.selectedUploadFile || !appState.selectedMachineId) {
+        return showToast('Please select a file to upload', 'warning');
+      }
+      const file = appState.selectedUploadFile;
+      const btn = document.getElementById('btn-submit-upload');
+      btn.disabled = true;
+      btn.innerText = 'Uploading...';
+
+      try {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const dataUrl = e.target.result;
+          const base64Index = dataUrl.indexOf(';base64,');
+          const base64Data = base64Index !== -1 ? dataUrl.substring(base64Index + 8) : btoa(dataUrl);
+
+          let destPath = appState.currentFmPath;
+          if (destPath.endsWith('/') || destPath.endsWith('\\')) {
+            destPath += file.name;
+          } else {
+            const sep = destPath.includes('\\') ? '\\' : '/';
+            destPath = destPath ? `${destPath}${sep}${file.name}` : file.name;
+          }
+
+          const res = await apiRequest('/api/v1/files/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              machine_id: appState.selectedMachineId,
+              path: destPath,
+              data_base64: base64Data
+            })
+          });
+
+          btn.disabled = false;
+          btn.innerText = '⬆️ Start Upload';
+
+          if (!res.ok) {
+            showToast('Upload failed: ' + res.error, 'error');
+            return;
+          }
+
+          closeFmUploadModal();
+          showToast(`File "${file.name}" uploaded successfully!`, 'success');
+          fmRefresh();
+        };
+        reader.readAsDataURL(file);
+      } catch (err) {
+        btn.disabled = false;
+        btn.innerText = '⬆️ Start Upload';
+        showToast('Upload error: ' + err.message, 'error');
+      }
+    }
+
+    function openFmNewFolderModal() {
+      if (!appState.selectedMachineId) return showToast('Select a machine first', 'warning');
+      document.getElementById('fm-newfolder-name').value = '';
+      document.getElementById('modal-fm-newfolder').style.display = 'flex';
+      document.getElementById('fm-newfolder-name').focus();
+    }
+
+    function closeFmNewFolderModal() {
+      document.getElementById('modal-fm-newfolder').style.display = 'none';
+    }
+
+    async function submitFmNewFolder() {
+      const name = document.getElementById('fm-newfolder-name').value.trim();
+      if (!name) return showToast('Please enter a folder name', 'warning');
+
+      let targetPath = appState.currentFmPath;
+      const sep = targetPath.includes('\\') ? '\\' : '/';
+      if (targetPath.endsWith('/') || targetPath.endsWith('\\')) targetPath += name;
+      else targetPath = targetPath ? `${targetPath}${sep}${name}` : name;
+
+      const res = await apiRequest('/api/v1/files/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machine_id: appState.selectedMachineId, path: targetPath })
+      });
+
+      if (!res.ok) {
+        showToast('Failed to create folder: ' + res.error, 'error');
+        return;
+      }
+
+      closeFmNewFolderModal();
+      showToast(`Folder "${name}" created!`, 'success');
+      fmRefresh();
+    }
+
+    function openFmNewFileModal() {
+      if (!appState.selectedMachineId) return showToast('Select a machine first', 'warning');
+      document.getElementById('fm-newfile-name').value = '';
+      document.getElementById('modal-fm-newfile').style.display = 'flex';
+      document.getElementById('fm-newfile-name').focus();
+    }
+
+    function closeFmNewFileModal() {
+      document.getElementById('modal-fm-newfile').style.display = 'none';
+    }
+
+    async function submitFmNewFile() {
+      const name = document.getElementById('fm-newfile-name').value.trim();
+      if (!name) return showToast('Please enter a file name', 'warning');
+
+      let targetPath = appState.currentFmPath;
+      const sep = targetPath.includes('\\') ? '\\' : '/';
+      if (targetPath.endsWith('/') || targetPath.endsWith('\\')) targetPath += name;
+      else targetPath = targetPath ? `${targetPath}${sep}${name}` : name;
+
+      const res = await apiRequest('/api/v1/files/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machine_id: appState.selectedMachineId, path: targetPath, content: '' })
+      });
+
+      if (!res.ok) {
+        showToast('Failed to create file: ' + res.error, 'error');
+        return;
+      }
+
+      closeFmNewFileModal();
+      showToast(`File "${name}" created!`, 'success');
+      fmRefresh();
+      openFileInEditor(targetPath, name, 0);
+    }
+
+    async function promptRenameFile(path, oldName) {
+      const newName = prompt(`Rename "${oldName}" to:`, oldName);
+      if (!newName || newName === oldName) return;
+
+      const res = await apiRequest('/api/v1/files/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machine_id: appState.selectedMachineId, old_path: path, new_name: newName.trim() })
+      });
+
+      if (!res.ok) {
+        showToast('Failed to rename: ' + res.error, 'error');
+        return;
+      }
+
+      showToast('Renamed successfully!', 'success');
+      fmRefresh();
+    }
+
+    async function promptDeleteFile(path, name, isDir) {
+      const norm = path.replace(/[\\/]+$/, '').toLowerCase();
+      if (norm === '' || norm === '/' || norm === 'c:' || norm === 'c:\\' || norm === 'c:\\windows' || norm === '/etc' || norm === '/boot') {
+        alert(`SECURITY GUARD: Deletion of root or critical system directory (${path}) is blocked!`);
+        return;
+      }
+
+      const promptMsg = isDir
+        ? `Are you sure you want to PERMANENTLY delete folder "${name}" and all its contents?`
+        : `Are you sure you want to PERMANENTLY delete file "${name}"?`;
+
+      if (!confirm(promptMsg)) return;
+
+      const res = await apiRequest('/api/v1/files/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machine_id: appState.selectedMachineId, path, recursive: isDir })
+      });
+
+      if (!res.ok) {
+        showToast('Delete failed: ' + res.error, 'error');
+        return;
+      }
+
+      showToast(`Deleted "${name}"`, 'success');
+      fmRefresh();
+    }
+
+    function downloadFile(path, name) {
+      const url = `${appConfig.serverUrl}/api/v1/files/download?machine_id=${encodeURIComponent(appState.selectedMachineId)}&path=${encodeURIComponent(path)}`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast(`Downloading "${name}"...`, 'info');
+    }
+
+    // 14. PROCESSES & SYSTEM SERVICES MANAGEMENT
+    function openServicesForMachine(machineId) {
+      appState.selectedMachineId = machineId;
+      navigate('services');
+      const sel = document.getElementById('services-machine-select');
+      if (sel) sel.value = machineId;
+      loadProcessesAndServices(machineId);
+    }
+
+    async function loadProcessesAndServices(machineId) {
+      if (!machineId) {
+        machineId = appState.selectedMachineId || (appState.machines[0] ? appState.machines[0].id : null);
+      }
+      if (!machineId) {
+        document.getElementById('proc-table-body').innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No machines enrolled.</td></tr>';
+        document.getElementById('svc-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No machines enrolled.</td></tr>';
+        return;
+      }
+      appState.selectedMachineId = machineId;
+      const sel = document.getElementById('services-machine-select');
+      if (sel) sel.value = machineId;
+
+      document.getElementById('proc-table-body').innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;"><span class="badge badge-subtle">Querying active processes...</span></td></tr>';
+      document.getElementById('svc-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;"><span class="badge badge-subtle">Querying system services...</span></td></tr>';
+
+      const [pRes, sRes] = await Promise.all([
+        apiRequest(`/api/v1/processes?machine_id=${encodeURIComponent(machineId)}`),
+        apiRequest(`/api/v1/services?machine_id=${encodeURIComponent(machineId)}`)
+      ]);
+
+      if (pRes.ok) {
+        appState.activeProcesses = pRes.data || [];
+        document.getElementById('proc-count-badge').innerText = appState.activeProcesses.length;
+        renderProcessesTable();
+      } else {
+        document.getElementById('proc-table-body').innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--status-danger); padding:2.5rem;">Error querying processes: ${escapeHtml(pRes.error)}</td></tr>`;
+      }
+
+      if (sRes.ok) {
+        appState.activeServices = sRes.data || [];
+        document.getElementById('svc-count-badge').innerText = appState.activeServices.length;
+        renderServicesTable();
+      } else {
+        document.getElementById('svc-table-body').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--status-danger); padding:2.5rem;">Error querying services: ${escapeHtml(sRes.error)}</td></tr>`;
+      }
+    }
+
+    function refreshProcessesAndServices() {
+      loadProcessesAndServices(appState.selectedMachineId);
+    }
+
+    function switchServicesTab(tab) {
+      appState.activeServicesTab = tab;
+      const btnProc = document.getElementById('tab-btn-processes');
+      const btnSvc = document.getElementById('tab-btn-services');
+      const contentProc = document.getElementById('tab-content-processes');
+      const contentSvc = document.getElementById('tab-content-services');
+
+      if (tab === 'processes') {
+        btnProc.classList.add('active');
+        btnSvc.classList.remove('active');
+        contentProc.style.display = 'block';
+        contentSvc.style.display = 'none';
+      } else {
+        btnProc.classList.remove('active');
+        btnSvc.classList.add('active');
+        contentProc.style.display = 'none';
+        contentSvc.style.display = 'block';
+      }
+    }
+
+    function renderProcessesTable() {
+      const tbody = document.getElementById('proc-table-body');
+      const filter = (document.getElementById('proc-filter-input')?.value || '').toLowerCase();
+      let list = appState.activeProcesses || [];
+
+      if (filter) {
+        list = list.filter(p => (p.name || '').toLowerCase().includes(filter) || String(p.pid).includes(filter));
+      }
+
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No matching processes found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(p => `
+        <tr>
+          <td><code style="font-size:0.8rem; color:var(--accent-cyan);">${p.pid}</code></td>
+          <td><strong>${escapeHtml(p.name)}</strong></td>
+          <td style="color:var(--text-secondary); font-size:0.78rem;">${escapeHtml(p.user || p.session_name || 'System')}</td>
+          <td><code style="color:var(--status-success);">${p.cpu_percent !== undefined ? p.cpu_percent + '%' : '—'}</code></td>
+          <td style="font-family:var(--font-mono); font-weight:600;">${p.memory_mb ? p.memory_mb + ' MB' : (p.mem_kb ? Math.round(p.mem_kb/1024) + ' MB' : '—')}</td>
+          <td><span class="badge badge-success">${escapeHtml(p.status || 'Running')}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    function renderServicesTable() {
+      const tbody = document.getElementById('svc-table-body');
+      const filter = (document.getElementById('svc-filter-input')?.value || '').toLowerCase();
+      let list = appState.activeServices || [];
+
+      if (filter) {
+        list = list.filter(s => (s.name || '').toLowerCase().includes(filter) || (s.display_name || '').toLowerCase().includes(filter));
+      }
+
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No matching services found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(s => {
+        const isRunning = (s.status || '').toLowerCase() === 'running';
+        const statusBadge = isRunning
+          ? '<span class="badge badge-success">RUNNING</span>'
+          : '<span class="badge badge-subtle">STOPPED</span>';
+
+        const safeName = escapeHtml(s.name).replace(/'/g, "\\'");
+
+        let actions = '';
+        if (isRunning) {
+          actions = `
+            <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="executeServiceAction('${safeName}', 'restart')">Restart</button>
+            <button class="btn btn-danger" style="padding:0.25rem 0.55rem; font-size:0.72rem; margin-left:3px;" onclick="executeServiceAction('${safeName}', 'stop')">Stop</button>
+          `;
+        } else {
+          actions = `
+            <button class="btn btn-primary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="executeServiceAction('${safeName}', 'start')">Start</button>
+          `;
+        }
+
+        return `
+          <tr>
+            <td><code style="font-weight:600; font-size:0.82rem; color:var(--text-primary);">${escapeHtml(s.name)}</code></td>
+            <td style="color:var(--text-secondary); font-size:0.8rem;">${escapeHtml(s.display_name || s.name)}</td>
+            <td>${statusBadge}</td>
+            <td style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(s.startup_type || 'Manual')}</td>
+            <td style="text-align:right;">${actions}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function filterProcessesTable() { renderProcessesTable(); }
+    function filterServicesTable() { renderServicesTable(); }
+
+    async function executeServiceAction(serviceName, action) {
+      if (!confirm(`Are you sure you want to ${action.toUpperCase()} service "${serviceName}"?`)) return;
+
+      showToast(`Sending ${action} command for ${serviceName}...`, 'info');
+      const res = await apiRequest('/api/v1/services/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          machine_id: appState.selectedMachineId,
+          service_name: serviceName,
+          action
+        })
+      });
+
+      if (!res.ok) {
+        showToast(`Service action failed: ${res.error}`, 'error');
+        return;
+      }
+
+      showToast(`Service ${serviceName} ${action} succeeded!`, 'success');
+      setTimeout(() => loadProcessesAndServices(appState.selectedMachineId), 1500);
+    }
+
+    function formatUptime(sec) {
+      if (!sec || isNaN(sec)) return 'Just started';
+      sec = Math.floor(sec);
+      const d = Math.floor(sec / 86400);
+      const h = Math.floor((sec % 86400) / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const parts = [];
+      if (d > 0) parts.push(`${d}d`);
+      if (h > 0) parts.push(`${h}h`);
+      if (m > 0) parts.push(`${m}m`);
+      if (parts.length === 0) parts.push(`${sec}s`);
+      return parts.join(' ');
     }
 
     // 11. UTILITIES (TOASTS, FORMATTING, CLIPBOARD)
@@ -2303,12 +3850,19 @@
       document.getElementById('setting-pairing-key').value = appConfig.pairingKey;
       document.getElementById('setting-refresh-interval').value = String(appConfig.refreshInterval);
 
-      // Escape key closes modal
+      // Escape key closes modals
       window.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeBridgeModal();
+        if (e.key === 'Escape') {
+          closeBridgeModal();
+          closeFmEditor();
+          closeFmUploadModal();
+          closeFmNewFolderModal();
+          closeFmNewFileModal();
+        }
       });
 
       setupSyncInterval();
+      initTelemetryStream();
       syncData(false);
     });
   </script>

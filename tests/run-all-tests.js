@@ -192,6 +192,48 @@ async function runTests() {
     } else if (msg.type === 'TunnelData') {
       const sock = agentSockets.get(msg.payload.stream_id);
       if (sock) sock.write(Buffer.from(msg.payload.data_base64, 'base64'));
+    } else if (['FileList', 'FileRead', 'FileWrite', 'FileDelete', 'ProcessList', 'ServiceList', 'ServiceAction'].includes(msg.type)) {
+      const payload = msg.payload || {};
+      const request_id = payload.request_id;
+      let result = {};
+      if (msg.type === 'FileList') {
+        result = {
+          current_path: payload.path || '/home/daytona',
+          parent: '/home',
+          items: [
+            { name: 'projects', path: '/home/daytona/projects', is_directory: true, size: 0, permissions: 'drwxr-xr-x', modified: new Date().toISOString() },
+            { name: 'config.json', path: '/home/daytona/config.json', is_directory: false, size: 128, permissions: '-rw-r--r--', modified: new Date().toISOString() }
+          ],
+          disk: { total_gb: 100.0, free_gb: 75.5 }
+        };
+      } else if (msg.type === 'FileRead') {
+        result = { content: '{"station": "CyberVPS Space Station", "port": 8080}', encoding: 'utf-8', size: 45, lines: 1 };
+      } else if (msg.type === 'FileWrite') {
+        result = { path: payload.path, bytes_written: payload.content ? payload.content.length : 0 };
+      } else if (msg.type === 'FileDelete') {
+        result = { deleted: payload.path };
+      } else if (msg.type === 'ProcessList') {
+        result = [
+          { pid: 101, name: 'systemd', user: 'root', cpu_percent: 0.1, memory_mb: 18, status: 'Running' },
+          { pid: 9408, name: 'node', user: 'daytona', cpu_percent: 1.2, memory_mb: 48, status: 'Running' }
+        ];
+      } else if (msg.type === 'ServiceList') {
+        result = [
+          { name: 'sshd', display_name: 'OpenSSH Daemon', status: 'Running', startup_type: 'Automatic' },
+          { name: 'cron', display_name: 'Cron Daemon', status: 'Running', startup_type: 'Automatic' }
+        ];
+      } else if (msg.type === 'ServiceAction') {
+        result = { service: payload.service_name, action: payload.action, status: 'Active' };
+      }
+
+      agentWs.send(JSON.stringify({
+        type: 'AgentRpcResponse',
+        payload: {
+          request_id,
+          success: true,
+          result
+        }
+      }));
     }
   });
 
@@ -330,6 +372,124 @@ async function runTests() {
   assert(Array.isArray(pollData.commands), 'Poll response must contain commands array');
   console.log(`  ✅ Command polling active and authenticated (Received ${pollData.commands.length} pending commands)`);
 
+  // TEST 16: Device Profile & Tailscale Attributes Endpoint
+  console.log('\n[TEST 16] Testing Device Profile & Tailscale Attributes endpoints...');
+  const profRes = await request(`${SERVER_URL}/api/v1/machines/${remoteNodeId}/profile`);
+  assert.strictEqual(profRes.statusCode, 200);
+  const profData = JSON.parse(profRes.body);
+  assert.strictEqual(profData.id, remoteNodeId);
+  assert(profData.virtual_ip.startsWith('10.77.0.'));
+  console.log(`  ✅ Profile retrieved. OS: ${profData.os}, Arch: ${profData.arch}, Virtual IP: ${profData.virtual_ip}`);
+
+  // Test updating friendly name
+  const nameRes = await request(`${SERVER_URL}/api/v1/machines/${remoteNodeId}/name`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Daytona Master Fleet Node' })
+  });
+  assert.strictEqual(nameRes.statusCode, 200);
+  const nameData = JSON.parse(nameRes.body);
+  assert.strictEqual(nameData.friendly_name, 'Daytona Master Fleet Node');
+  console.log('  ✅ Machine friendly name updated to "Daytona Master Fleet Node".');
+
+  // TEST 17: Real-Time Telemetry Heartbeat & SSE Stream Verification
+  console.log('\n[TEST 17] Testing 2-Second Telemetry Heartbeat & SSE Stream...');
+  agentWs.send(JSON.stringify({
+    type: 'TelemetryHeartbeat',
+    payload: {
+      machine_id: remoteNodeId,
+      telemetry: {
+        cpu_percent: 18.5,
+        memory_used_mb: 1024,
+        memory_total_mb: 4096,
+        memory_percent: 25.0,
+        disk_used_gb: 15.2,
+        disk_total_gb: 80.0,
+        disk_percent: 19.0,
+        uptime_seconds: 7200
+      }
+    }
+  }));
+  await wait(300);
+
+  // Check updated telemetry in machine profile
+  const postTeleProf = await request(`${SERVER_URL}/api/v1/machines/${remoteNodeId}/profile`);
+  const postTeleData = JSON.parse(postTeleProf.body);
+  assert.strictEqual(postTeleData.telemetry?.cpu_percent, 18.5);
+  console.log(`  ✅ Telemetry received: CPU ${postTeleData.telemetry.cpu_percent}%, RAM ${postTeleData.telemetry.memory_used_mb}MB / ${postTeleData.telemetry.memory_total_mb}MB`);
+
+  // Verify Telemetry Stream connection
+  const sseReq = http.get(`${SERVER_URL}/api/v1/telemetry/stream`, (res) => {
+    assert.strictEqual(res.statusCode, 200);
+    assert(res.headers['content-type'].includes('text/event-stream'));
+    res.destroy();
+  });
+  await wait(300);
+  console.log('  ✅ Telemetry SSE Stream (/api/v1/telemetry/stream) operational.');
+
+  // TEST 18: Advanced File Manager APIs & Root Directory Safety Guard
+  console.log('\n[TEST 18] Testing File Manager APIs (FileList, FileRead, FileWrite, Root Deletion Guard)...');
+  const flistRes = await request(`${SERVER_URL}/api/v1/files/list?machine_id=${remoteNodeId}&path=/home/daytona`);
+  assert.strictEqual(flistRes.statusCode, 200);
+  const flistData = JSON.parse(flistRes.body);
+  assert.strictEqual(flistData.items.length, 2);
+  console.log(`  ✅ FileList RPC succeeded: ${flistData.items.length} items found in ${flistData.current_path}`);
+
+  const freadRes = await request(`${SERVER_URL}/api/v1/files/read?machine_id=${remoteNodeId}&path=/home/daytona/config.json`);
+  assert.strictEqual(freadRes.statusCode, 200);
+  const freadData = JSON.parse(freadRes.body);
+  assert(freadData.content.includes('CyberVPS'));
+  console.log('  ✅ FileRead RPC succeeded: content verified.');
+
+  const fwriteRes = await request(`${SERVER_URL}/api/v1/files/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, path: '/home/daytona/notes.txt', content: 'Testing FileWrite' })
+  });
+  assert.strictEqual(fwriteRes.statusCode, 200);
+  console.log('  ✅ FileWrite RPC succeeded.');
+
+  // Root directory safety guard test (Crucial!)
+  const delRootRes = await request(`${SERVER_URL}/api/v1/files/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, path: '/' })
+  });
+  assert.strictEqual(delRootRes.statusCode, 400);
+  const delErr = JSON.parse(delRootRes.body);
+  assert(delErr.error.includes('Safety guard'));
+  console.log('  ✅ Security Guard verified: Root directory ("/") deletion prevented with 400 Bad Request.');
+
+  // TEST 19: Process & OS Services APIs
+  console.log('\n[TEST 19] Testing Host Processes & System Services management APIs...');
+  const procRes = await request(`${SERVER_URL}/api/v1/processes?machine_id=${remoteNodeId}`);
+  assert.strictEqual(procRes.statusCode, 200);
+  const procData = JSON.parse(procRes.body);
+  assert.strictEqual(procData.length, 2);
+  console.log(`  ✅ Processes retrieved: ${procData.map(p => p.name).join(', ')}`);
+
+  const svcRes = await request(`${SERVER_URL}/api/v1/services?machine_id=${remoteNodeId}`);
+  assert.strictEqual(svcRes.statusCode, 200);
+  const svcData = JSON.parse(svcRes.body);
+  assert.strictEqual(svcData.length, 2);
+  console.log(`  ✅ Services retrieved: ${svcData.map(s => s.name).join(', ')}`);
+
+  const svcActRes = await request(`${SERVER_URL}/api/v1/services/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, service_name: 'sshd', action: 'restart' })
+  });
+  assert.strictEqual(svcActRes.statusCode, 200);
+  console.log('  ✅ Service action (restart sshd) executed successfully.');
+
+  // TEST 20: SFTP Gateway Status Endpoint
+  console.log('\n[TEST 20] Testing SFTP Status Gateway endpoint...');
+  const sftpRes = await request(`${SERVER_URL}/api/v1/sftp/status`);
+  assert.strictEqual(sftpRes.statusCode, 200);
+  const sftpData = JSON.parse(sftpRes.body);
+  assert.strictEqual(sftpData.port, 22);
+  console.log(`  ✅ SFTP gateway status: ${sftpData.status} on port ${sftpData.port}`);
+
   // TEST 15: Durable State Persistence Across Server Restarts
   console.log('\n[TEST 15] Testing Durable State Persistence Across Process Restarts...');
   // Wait for debounced write
@@ -360,7 +520,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 15 ADVANCED UNIVERSAL BRIDGE, AGENT ENROLLMENT, PERSISTENCE & HTTP TESTS PASSED!');
+  console.log('🎉 ALL 20 ADVANCED UNIVERSAL BRIDGE, DEVICE INTEL, FILE MANAGER, SERVICES & PERSISTENCE TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }
