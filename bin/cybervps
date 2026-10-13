@@ -182,6 +182,42 @@ Examples:
 `);
 }
 
+function findPythonRuntime() {
+  if (process.platform === 'win32') {
+    try {
+      const raw = execSync('where.exe python', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const paths = raw.split(/\r?\n/)
+        .map(p => p.trim())
+        .filter(p => p && !p.toLowerCase().includes('windowsapps') && fs.existsSync(p));
+      for (const p of paths) {
+        try {
+          const ver = execSync(`"${p}" --version`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+          if (ver.includes('Python 3')) return { cmd: p, argsPrefix: [], version: ver.trim() };
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    try {
+      const pyVer = execSync('py -3 --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      if (pyVer.includes('Python 3')) {
+        return { cmd: 'py', argsPrefix: ['-3'], version: pyVer.trim() };
+      }
+    } catch (_) {}
+
+    return null;
+  } else {
+    for (const bin of ['python3', 'python']) {
+      try {
+        const ver = execSync(`${bin} --version`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        if (ver.includes('Python 3') || ver.includes('Python')) {
+          return { cmd: bin, argsPrefix: [], version: ver.trim() };
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+}
+
 async function handleStart() {
   const config = loadConfig();
   let serverUrl = config.server_url;
@@ -224,26 +260,18 @@ async function handleStart() {
     process.exit(1);
   }
 
-  let execCmd = 'python';
-  if (process.platform === 'win32') {
-    try {
-      const paths = execSync('where.exe python', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-        .split(/\r?\n/)
-        .map(p => p.trim())
-        .filter(p => p && !p.includes('WindowsApps') && fs.existsSync(p));
-      if (paths.length > 0) execCmd = paths[0];
-    } catch (_) {}
-  } else {
-    try {
-      execSync('python3 --version', { stdio: 'ignore' });
-      execCmd = 'python3';
-    } catch (_) {
-      try {
-        execSync('python --version', { stdio: 'ignore' });
-        execCmd = 'python';
-      } catch (_) {
-        execCmd = 'node';
-      }
+  const pyRuntime = findPythonRuntime();
+  if (!pyRuntime) {
+    console.error('❌ Error: Python 3 runtime is required to run the CyberVPS Host Agent.');
+    console.error("👉 Please install Python 3 and ensure 'Add Python to PATH' is checked: https://www.python.org/downloads/");
+    process.exit(1);
+  }
+
+  let execBinary = pyRuntime.cmd;
+  if (process.platform === 'win32' && pyRuntime.cmd !== 'py') {
+    const pythonwCandidate = path.join(path.dirname(pyRuntime.cmd), 'pythonw.exe');
+    if (fs.existsSync(pythonwCandidate)) {
+      execBinary = pythonwCandidate;
     }
   }
 
@@ -256,15 +284,7 @@ async function handleStart() {
     CYBERVPS_LOG_FILE: AGENT_LOG_FILE
   };
 
-  const pyArgs = ['-u', agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
-
-  let execBinary = execCmd;
-  if (process.platform === 'win32') {
-    const pythonwCandidate = path.join(path.dirname(execCmd), 'pythonw.exe');
-    if (fs.existsSync(pythonwCandidate)) {
-      execBinary = pythonwCandidate;
-    }
-  }
+  const pyArgs = [...pyRuntime.argsPrefix, '-u', agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
 
   let logFd = null;
   try {
@@ -481,16 +501,11 @@ async function handleDoctor() {
   console.log(`[Node] Version: ${process.version}, Executable: ${process.execPath}`);
 
   // Check Python
-  try {
-    const pyVer = execSync('python --version', { encoding: 'utf8' }).trim();
-    console.log(`[Python] ${pyVer} ✅`);
-  } catch (_) {
-    try {
-      const py3Ver = execSync('python3 --version', { encoding: 'utf8' }).trim();
-      console.log(`[Python] ${py3Ver} ✅`);
-    } catch (_) {
-      console.log(`[Python] Python not found in PATH (Node agent fallback active) ℹ️`);
-    }
+  const pyRuntime = findPythonRuntime();
+  if (pyRuntime) {
+    console.log(`[Python]      ${pyRuntime.version || pyRuntime.cmd} ✅`);
+  } else {
+    console.log(`[Python]      Python 3 NOT detected (Excluding WindowsApps placeholder) ❌`);
   }
 
   // Outbound Egress Checks

@@ -1166,18 +1166,24 @@ wssRelay.on('connection', (ws, request) => {
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data.toString());
-      if (msg.type === 'Auth' && msg.payload) {
-        machineId = msg.payload.machine_id;
-        db.connectedAgents.set(machineId, ws);
+      const res = handleAgentMessage(ws, msg);
+      if (msg.type === 'Auth') {
+        if (res && res.success && msg.payload && msg.payload.machine_id) {
+          machineId = msg.payload.machine_id;
+          db.connectedAgents.set(machineId, ws);
+        } else {
+          setTimeout(() => {
+            try { ws.close(4001, 'Unauthorized'); } catch (_) {}
+          }, 100);
+        }
       }
-      handleAgentMessage(ws, msg);
     } catch (e) {
       console.error('Error handling agent message:', e);
     }
   });
 
   ws.on('close', () => {
-    if (machineId) {
+    if (machineId && db.connectedAgents.get(machineId) === ws) {
       db.connectedAgents.delete(machineId);
       const m = db.machines.get(machineId);
       if (m) m.status = 'offline';

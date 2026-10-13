@@ -264,8 +264,10 @@ class RelayWebSocket:
         self.target_url = target_url
         self.sock = None
         self.connected = False
+        self.authenticated = False
         self.running = True
         self._lock = threading.Lock()
+        self._backoff = 2.0
 
     def start(self):
         t = threading.Thread(target=self._run_loop, daemon=True)
@@ -275,11 +277,23 @@ class RelayWebSocket:
         while self.running and self.agent.running:
             try:
                 self._connect_and_read()
-            except Exception:
-                pass
-            self.connected = False
-            self.agent.ws_connected = False
-            time.sleep(2.0)
+            except Exception as e:
+                err_msg = str(e)
+                if "timed out" in err_msg or "Connection refused" in err_msg or "getaddrinfo" in err_msg:
+                    print(f"[*] Relay transport waiting for control plane ({err_msg}). Reconnecting in {int(self._backoff)}s...")
+                else:
+                    print(f"[*] Relay transport reconnecting in {int(self._backoff)}s: {err_msg}")
+            finally:
+                with self._lock:
+                    if self.sock:
+                        try: self.sock.close()
+                        except Exception: pass
+                        self.sock = None
+                    self.connected = False
+                    self.authenticated = False
+                    self.agent.ws_connected = False
+            time.sleep(self._backoff)
+            self._backoff = min(self._backoff * 1.5, 15.0)
 
     def _connect_and_read(self):
         raw = self.target_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -290,7 +304,7 @@ class RelayWebSocket:
         if parsed.query:
             path += "?" + parsed.query
 
-        raw_s = socket.create_connection((host, port), timeout=6.0)
+        raw_s = socket.create_connection((host, port), timeout=8.0)
         if parsed.scheme == "wss":
             ctx = ssl.create_default_context()
             s = ctx.wrap_socket(raw_s, server_hostname=host)
@@ -326,7 +340,8 @@ class RelayWebSocket:
         with self._lock:
             self.sock = s
             self.connected = True
-            self.agent.ws_connected = True
+            self.authenticated = False
+            self.agent.ws_connected = False
             self.agent.ws_relay = self
 
         # Send Auth message
@@ -345,19 +360,6 @@ class RelayWebSocket:
             }
         }
         self.send_text(json.dumps(auth_msg))
-
-        # Send Discovery report
-        ports = self.agent.discover_listening_ports()
-        self.send_text(json.dumps({
-            "type": "DiscoveryReport",
-            "payload": {
-                "machine_id": self.agent.machine_id,
-                "token": self.agent.token,
-                "ports": ports,
-                "profile": self.agent.device_profile,
-                "processes": []
-            }
-        }))
 
         while self.running and self.agent.running:
             head = self._recv_exact(s, 2)
@@ -397,7 +399,33 @@ class RelayWebSocket:
                 try:
                     text_data = payload.decode("utf-8")
                     msg = json.loads(text_data)
-                    self.agent.dispatch_server_command(msg)
+                    m_type = msg.get("type")
+                    if m_type == "AuthAck":
+                        p_ack = msg.get("payload", {})
+                        if p_ack.get("success"):
+                            self.authenticated = True
+                            self.agent.ws_connected = True
+                            self._backoff = 2.0
+                            print(f"[*] Relay WebSocket verified & authenticated for [{self.agent.machine_id}]. Link ACTIVE.")
+                            ports = self.agent.discover_listening_ports()
+                            self.send_text(json.dumps({
+                                "type": "DiscoveryReport",
+                                "payload": {
+                                    "machine_id": self.agent.machine_id,
+                                    "token": self.agent.token,
+                                    "ports": ports,
+                                    "profile": self.agent.device_profile,
+                                    "processes": []
+                                }
+                            }))
+                        else:
+                            err_msg = p_ack.get("error", "Authentication rejected by server")
+                            print(f"[!] Authentication rejected by control plane: {err_msg}")
+                            self.authenticated = False
+                            self.agent.ws_connected = False
+                            break
+                    else:
+                        self.agent.dispatch_server_command(msg)
                 except Exception:
                     pass
 
@@ -2006,7 +2034,7 @@ class CyberVPSAgent:
                 event_data["payload"]["machine_id"] = self.machine_id
 
         # First attempt WebSocket transmission for zero-latency streaming
-        if self.ws_relay and self.ws_connected:
+        if self.ws_relay and self.ws_connected and getattr(self.ws_relay, "authenticated", False):
             try:
                 if self.ws_relay.send_text(json.dumps(event_data)):
                     return
@@ -2029,6 +2057,9 @@ class CyberVPSAgent:
             )
             with urllib.request.urlopen(req, timeout=4) as resp:
                 pass
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                print(f"[!] HTTP Relay event unauthorized (401). Invalid token.")
         except Exception:
             pass
 
@@ -2047,6 +2078,9 @@ class CyberVPSAgent:
                 data = json.loads(resp.read().decode("utf-8"))
                 for cmd in data.get("commands", []):
                     self.dispatch_server_command(cmd)
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                print(f"[!] HTTP Command Poll unauthorized (401). Check enrollment token.")
         except Exception:
             pass
 

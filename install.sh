@@ -209,21 +209,35 @@ else
 fi
 
 # 9. Verify Enrollment with Central Backend
-echo "[*] Waiting for fleet enrollment confirmation..."
-sleep 2
+echo "[*] Waiting for fleet enrollment confirmation (up to 20s)..."
 
-if [ "$DOWNLOAD_TOOL" = "curl" ]; then
-  ENROLL_CHECK="$(curl --connect-timeout 3 --max-time 8 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
-else
-  ENROLL_CHECK="$(wget -T 8 -t 1 -qO- "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
-fi
+ENROLLED=0
+for i in $(seq 1 10); do
+  sleep 2
+  if [ "$DOWNLOAD_TOOL" = "curl" ]; then
+    ENROLL_CHECK="$(curl --connect-timeout 3 --max-time 6 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
+  else
+    ENROLL_CHECK="$(wget -T 6 -t 1 -qO- "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
+  fi
 
-BACKEND_STATUS="Enrolling (Auto-reconnecting)"
-if echo "${ENROLL_CHECK}" | grep -q "${MACHINE_ID}"; then
-  echo "  ✅ Fleet enrollment verified online!"
+  if echo "${ENROLL_CHECK}" | grep -q "${MACHINE_ID}"; then
+    ENROLLED=1
+    break
+  fi
+  printf "."
+done
+echo ""
+
+if [ "$ENROLLED" -eq 1 ]; then
+  echo "  ✅ Fleet enrollment verified: Machine [${MACHINE_ID}] is ONLINE!"
   BACKEND_STATUS="Connected & Verified ✅"
 else
-  echo "  ⚠️ Fleet enrollment pending (agent initializing in background)"
+  echo "  ⚠️ Fleet enrollment NOT verified within 20s."
+  echo "  👉 Recent agent logs:"
+  tail -n 15 "${LOG_DIR}/agent.log" 2>/dev/null || true
+  echo "  👉 To inspect logs manually: tail -f ~/.cybervps/logs/agent.log"
+  echo "  👉 To restart agent: cybervps restart"
+  BACKEND_STATUS="Enrollment Pending / Check Logs ⚠️"
 fi
 
 echo ""
@@ -237,9 +251,13 @@ echo "Startup:     Automatic on Reboot"
 echo "Machine ID:  ${MACHINE_ID}"
 echo "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/"
 echo "================================================================"
-echo "🎉 Setup complete! You can safely close this terminal/SSH session."
-echo "👉 The Host Agent will run silently in the background 24/7."
-echo "👉 Check status anytime: cybervps status"
+if [ "$ENROLLED" -eq 1 ]; then
+  echo "🎉 Setup complete! You can safely close this terminal/SSH session."
+  echo "👉 The Host Agent is running silently in the background 24/7."
+else
+  echo "⚠️ Installation completed, but agent is still completing first heartbeat."
+  echo "👉 Check status in a few seconds: cybervps status"
+fi
 echo "👉 Monitor and control this machine at:"
 echo "   https://cyberdrivepro.github.io/cybervps-space-station/"
 echo "================================================================"

@@ -68,21 +68,23 @@ CyberVPS Space Station creates an **encrypted outbound virtual bridge** between 
 
 ## 🚀 Quick Start & Universal Zero-Friction Installers
 
-### ⚡ Option 1: 1-Line Universal Bootstrap Installers (No Git/Manual NPM Required)
+### ⚡ Universal 1-Line Bootstrap Installers (No Git/Manual NPM Required)
 
-#### 🐧 Linux (Ubuntu, Debian, Non-Root VPS, Termux, Daytona):
+#### 🐧 Linux & Remote VPS (Ubuntu, Debian, CentOS, Termux, Daytona):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.sh -o install.sh && sh install.sh
 ```
 
-#### 🪟 Windows PowerShell (10 / 11, PowerShell 5.1 & 7+):
+#### 🪟 Windows PowerShell (PowerShell 5.1 & PowerShell 7+):
+> *Works out-of-the-box in standard Windows PowerShell 5.1 and modern PowerShell 7+ (no `&&` operator syntax errors):*
 ```powershell
-& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1')))
+$ProgressPreference = 'SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $installer = Join-Path $env:TEMP 'cybervps-install.ps1'; Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1' -OutFile $installer; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer; Remove-Item $installer -Force -ErrorAction SilentlyContinue
 ```
 
 #### 💻 Windows Command Prompt (CMD):
+> *Safe from any working directory, including `C:\Windows\system32` Administrator prompts (downloads cleanly to `%TEMP%` without curl error 23):*
 ```cmd
-curl -sSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.cmd -o install.cmd && install.cmd
+curl.exe -fSL --retry 3 "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.cmd" -o "%TEMP%\cybervps-install.cmd" && call "%TEMP%\cybervps-install.cmd"
 ```
 
 ---

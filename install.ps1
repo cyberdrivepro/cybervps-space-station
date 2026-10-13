@@ -26,24 +26,79 @@ Write-Host "================================================================" -F
 Write-Host "🛰️  CYBERVPS SPACE STATION - WINDOWS HOST AGENT INSTALLER" -ForegroundColor Cyan
 Write-Host "================================================================" -ForegroundColor Cyan
 
-# 1. Detect Runtimes (Node.js or Python)
-$NodeCmd = Get-Command node -ErrorAction SilentlyContinue
-$PythonCmd = Get-Command python -ErrorAction SilentlyContinue
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
 
-if (-not $NodeCmd -and -not $PythonCmd) {
-    Write-Host "❌ Error: Node.js (v18+) or Python 3 is required to run the CyberVPS Agent." -ForegroundColor Red
-    Write-Host "👉 Install Node.js via winget: winget install OpenJS.NodeJS.LTS" -ForegroundColor Yellow
+# 1. Detect Runtimes (Node.js LTS and Python 3)
+function Refresh-EnvPath {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
+}
+
+# 1a. Detect Node.js
+$NodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if (-not $NodeCmd) {
+    $WingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($WingetCmd) {
+        Write-Host "[*] Node.js not detected. Auto-installing Node.js LTS via WinGet..." -ForegroundColor Cyan
+        try {
+            & winget install -e --id OpenJS.NodeJS.LTS --scope currentuser --silent --accept-source-agreements --accept-package-agreements | Out-Null
+            Refresh-EnvPath
+            $NodeCmd = Get-Command node -ErrorAction SilentlyContinue
+        } catch {}
+    }
+}
+
+if (-not $NodeCmd) {
+    Write-Host "❌ Error: Node.js (v18+) is required to run CyberVPS Space Station CLI." -ForegroundColor Red
+    Write-Host "👉 Install Node.js LTS from: https://nodejs.org/en/download" -ForegroundColor Yellow
     exit 1
 }
+$NodeVer = & node -v
+Write-Host "[*] Active Node.js runtime: $NodeVer" -ForegroundColor Green
 
-if ($NodeCmd) {
-    $NodeVer = & node -v
-    Write-Host "[*] Active Node.js runtime: $NodeVer" -ForegroundColor Green
+# 1b. Detect Python 3 (Excluding WindowsApps placeholder)
+function Find-RealPython {
+    try {
+        $raw = where.exe python 2>$null
+        if ($raw) {
+            foreach ($line in ($raw -split "`r?`n")) {
+                $trimmed = $line.Trim()
+                if ($trimmed -and ($trimmed -notlike "*WindowsApps*") -and (Test-Path $trimmed)) {
+                    $ver = & $trimmed --version 2>&1
+                    if ($ver -like "*Python 3*") { return $trimmed }
+                }
+            }
+        }
+    } catch {}
+    try {
+        $pyVer = & py -3 --version 2>&1
+        if ($pyVer -like "*Python 3*") { return "py" }
+    } catch {}
+    return $null
 }
-if ($PythonCmd) {
-    $PyVer = & python --version 2>&1
-    Write-Host "[*] Active Python runtime: $PyVer" -ForegroundColor Green
+
+$PythonExe = Find-RealPython
+if (-not $PythonExe) {
+    $WingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($WingetCmd) {
+        Write-Host "[*] Python 3 not detected. Auto-installing Python 3.12 via WinGet..." -ForegroundColor Cyan
+        try {
+            & winget install -e --id Python.Python.3.12 --scope currentuser --silent --accept-source-agreements --accept-package-agreements | Out-Null
+            Refresh-EnvPath
+            $PythonExe = Find-RealPython
+        } catch {}
+    }
 }
+
+if (-not $PythonExe) {
+    Write-Host "❌ Error: Python 3 runtime is required to run the CyberVPS Host Agent." -ForegroundColor Red
+    Write-Host "👉 Download and install Python 3 (check 'Add to PATH'): https://www.python.org/downloads/windows/" -ForegroundColor Yellow
+    exit 1
+}
+$PyVer = & $PythonExe --version 2>&1
+Write-Host "[*] Active Python runtime: $PyVer" -ForegroundColor Green
 
 # 2. Prepare Directories
 New-Item -ItemType Directory -Path $InstallBase -Force | Out-Null
@@ -178,38 +233,57 @@ Write-Host "[*] Starting CyberVPS Host Agent in background..." -ForegroundColor 
 & node (Join-Path $InstallDir "bin\cybervps") start
 
 # 9. Verify Machine Enrollment with Central Backend
-Write-Host "[*] Waiting for fleet enrollment confirmation..." -ForegroundColor Cyan
+Write-Host "[*] Waiting for fleet enrollment confirmation (up to 20s)..." -ForegroundColor Cyan
+$Enrolled = $false
 $AssignedVip = "10.77.0.x"
-for ($i = 0; $i -lt 8; $i++) {
-    Start-Sleep -Seconds 1
+for ($i = 0; $i -lt 10; $i++) {
+    Start-Sleep -Seconds 2
     try {
         $MachinesUrl = "$($Server.TrimEnd('/'))/api/v1/machines"
-        $MachinesList = Invoke-RestMethod -Uri $MachinesUrl -TimeoutSec 3 -ErrorAction SilentlyContinue
+        $MachinesList = Invoke-RestMethod -Uri $MachinesUrl -TimeoutSec 4 -ErrorAction SilentlyContinue
         if ($MachinesList) {
-            $MyMachine = $MachinesList | Where-Object { $_.id -eq $MachineId -or $_.hostname -eq $env:COMPUTERNAME }
+            $MyMachine = $MachinesList | Where-Object { $_.id -eq $MachineId }
             if ($MyMachine -and $MyMachine.status -eq 'online') {
                 $AssignedVip = $MyMachine.virtual_ip
+                $Enrolled = $true
                 break
             }
         }
     } catch {}
+    Write-Host -NoNewline "."
 }
-
-# 10. Clean Completion Summary (NO Browser Popup!)
 Write-Host ""
-Write-Host "================================================================" -ForegroundColor Green
-Write-Host "🛰️  CYBERVPS HOST AGENT - SETUP COMPLETE" -ForegroundColor Green
-Write-Host "================================================================" -ForegroundColor Green
-Write-Host "Host:        $env:COMPUTERNAME (Windows)" -ForegroundColor White
-Write-Host "Backend:     $Server (Connected ✅)" -ForegroundColor White
-Write-Host "Status:      ONLINE (Virtual IP: $AssignedVip)" -ForegroundColor Green
-Write-Host "Service:     Running 24/7 in Background (CyberVPS-Space-Station-Agent)" -ForegroundColor Green
-Write-Host "Startup:     Automatic on Reboot & Logon" -ForegroundColor Green
-Write-Host "Machine ID:  $MachineId" -ForegroundColor White
-Write-Host "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Yellow
-Write-Host "================================================================" -ForegroundColor Green
-Write-Host "🎉 Setup complete! You can safely close this PowerShell window." -ForegroundColor White
-Write-Host "👉 The Host Agent will run silently in the background 24/7." -ForegroundColor Gray
+
+# 10. Clean Completion Summary
+Write-Host ""
+if ($Enrolled) {
+    Write-Host "================================================================" -ForegroundColor Green
+    Write-Host "🛰️  CYBERVPS HOST AGENT - SETUP COMPLETE" -ForegroundColor Green
+    Write-Host "================================================================" -ForegroundColor Green
+    Write-Host "Host:        $env:COMPUTERNAME (Windows)" -ForegroundColor White
+    Write-Host "Backend:     $Server (Connected & Verified ✅)" -ForegroundColor White
+    Write-Host "Status:      ONLINE (Virtual IP: $AssignedVip)" -ForegroundColor Green
+    Write-Host "Service:     Running 24/7 in Background (CyberVPS-Space-Station-Agent)" -ForegroundColor Green
+    Write-Host "Startup:     Automatic on Reboot & Logon" -ForegroundColor Green
+    Write-Host "Machine ID:  $MachineId" -ForegroundColor White
+    Write-Host "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Yellow
+    Write-Host "================================================================" -ForegroundColor Green
+    Write-Host "🎉 Setup complete! You can safely close this PowerShell window." -ForegroundColor White
+    Write-Host "👉 The Host Agent will run silently in the background 24/7." -ForegroundColor Gray
+} else {
+    Write-Host "================================================================" -ForegroundColor Yellow
+    Write-Host "⚠️  CYBERVPS HOST AGENT - ENROLLMENT PENDING" -ForegroundColor Yellow
+    Write-Host "================================================================" -ForegroundColor Yellow
+    Write-Host "Host:        $env:COMPUTERNAME (Windows)" -ForegroundColor White
+    Write-Host "Backend:     $Server (Enrollment Pending / Check Logs ⚠️)" -ForegroundColor Yellow
+    Write-Host "Status:      Awaiting initial heartbeat confirmation" -ForegroundColor Yellow
+    Write-Host "Service:     Running 24/7 in Background (CyberVPS-Space-Station-Agent)" -ForegroundColor White
+    Write-Host "Machine ID:  $MachineId" -ForegroundColor White
+    Write-Host "Agent Logs:  $LogsDir\agent.log" -ForegroundColor Cyan
+    Write-Host "Check State: cybervps status" -ForegroundColor Cyan
+    Write-Host "================================================================" -ForegroundColor Yellow
+    Write-Host "👉 If enrollment takes more than a minute, run: cybervps restart" -ForegroundColor Gray
+}
 Write-Host "👉 Monitor and control this machine anytime at:" -ForegroundColor Cyan
 Write-Host "   https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Cyan
-Write-Host "================================================================" -ForegroundColor Green
+Write-Host "================================================================" -ForegroundColor $(if ($Enrolled) { "Green" } else { "Yellow" })
