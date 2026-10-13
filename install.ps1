@@ -214,18 +214,30 @@ WshShell.Run "node """ & CreateObject("Scripting.FileSystemObject").GetParentFol
 "@
 Set-Content -Path $VbsScript -Value $VbsContent -Force
 
-$TaskName = "CyberVPS-Space-Station-Agent"
+$oldEap = $ErrorActionPreference
+$ErrorActionPreference = 'SilentlyContinue'
 try {
     # Check if task already exists
-    $ExistingTask = schtasks.exe /Query /TN $TaskName 2>$null
-    if ($ExistingTask) {
-        schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
+    & schtasks.exe /Query /TN $TaskName 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
     }
     # Create task running at user logon, completely hidden
-    schtasks.exe /Create /TN $TaskName /TR "wscript.exe //B //Nologo `"$VbsScript`"" /SC ONLOGON /RL LIMITED /F | Out-Null
-    Write-Host "  ✅ Windows Scheduled Task '$TaskName' registered (Autostart on Logon)." -ForegroundColor Green
+    $TaskRun = "`"wscript.exe`" //B //Nologo `"$VbsScript`""
+    & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  ✅ Windows Scheduled Task '$TaskName' registered (Autostart on Logon)." -ForegroundColor Green
+    } else {
+        # Fallback to direct wscript path
+        & schtasks.exe /Create /TN $TaskName /TR "wscript.exe `"$VbsScript`"" /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  ✅ Windows Scheduled Task '$TaskName' registered (Autostart on Logon)." -ForegroundColor Green
+        }
+    }
 } catch {
     Write-Warning "Could not register scheduled task: $_"
+} finally {
+    $ErrorActionPreference = $oldEap
 }
 
 # 8. Start Agent in Background Now

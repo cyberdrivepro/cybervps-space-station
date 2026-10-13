@@ -268,12 +268,6 @@ async function handleStart() {
   }
 
   let execBinary = pyRuntime.cmd;
-  if (process.platform === 'win32' && pyRuntime.cmd !== 'py') {
-    const pythonwCandidate = path.join(path.dirname(pyRuntime.cmd), 'pythonw.exe');
-    if (fs.existsSync(pythonwCandidate)) {
-      execBinary = pythonwCandidate;
-    }
-  }
 
   const agentEnv = {
     ...process.env,
@@ -286,21 +280,13 @@ async function handleStart() {
 
   const pyArgs = [...pyRuntime.argsPrefix, '-u', agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
 
-  let logFd = null;
-  try {
-    logFd = fs.openSync(AGENT_LOG_FILE, 'a');
-  } catch (_) {}
-
   const child = spawn(execBinary, pyArgs, {
     detached: true,
-    stdio: ['ignore', logFd || 'ignore', logFd || 'ignore'],
+    stdio: 'ignore',
     windowsHide: true,
     env: agentEnv
   });
   child.unref();
-  if (logFd !== null) {
-    try { fs.closeSync(logFd); } catch (_) {}
-  }
   const childPid = child.pid;
 
   fs.writeFileSync(AGENT_PID_FILE, String(childPid), 'utf8');

@@ -27,6 +27,18 @@ import ssl
 import struct
 import urllib.parse
 
+# Guard against None stdio streams on Windows (e.g. under pythonw or windowless subsystems)
+if sys.stdout is None:
+    try:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    except Exception:
+        pass
+if sys.stderr is None:
+    try:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    except Exception:
+        pass
+
 try:
     import msvcrt
 except ImportError:
@@ -2304,5 +2316,10 @@ if __name__ == "__main__":
         else:
             i += 1
 
-    agent = CyberVPSAgent(target, token, mid)
-    agent.run()
+    try:
+        agent = CyberVPSAgent(target, token, mid)
+        agent.run()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
