@@ -96,6 +96,19 @@ function logAudit(eventType, actor, machineId, details, severity = 'info') {
   console.log(`[AUDIT] [${event.severity.toUpperCase()}] ${eventType}: ${details}`);
 }
 
+function getMachineStatus(m) {
+  if (!m) return 'offline';
+  if (db.connectedAgents.has(m.id)) {
+    const ws = db.connectedAgents.get(m.id);
+    if (ws && ws.readyState === WebSocket.OPEN) return 'online';
+  }
+  const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
+  const diff = Date.now() - lastSeenMs;
+  if (diff < 35000) return 'online';
+  if (diff < 75000) return 'reconnecting';
+  return 'offline';
+}
+
 // HTTP Server
 const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
@@ -105,7 +118,7 @@ const server = http.createServer(async (req, res) => {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Machine-ID');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Machine-ID, X-Enrollment-Token');
 
   if (method === 'OPTIONS') {
     res.writeHead(204);
@@ -139,7 +152,12 @@ const server = http.createServer(async (req, res) => {
     const installScriptPath = path.join(__dirname, '../scripts/install-agent.sh');
     fs.readFile(installScriptPath, 'utf8', (err, data) => {
       res.writeHead(200, { 'Content-Type': 'text/x-shellscript' });
-      res.end(data || '# Error loading script');
+      const hostProto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
+      const targetHost = (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost')
+        ? tunnelManager.publicUrl
+        : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
+      const customized = (data || '').replace('SERVER_URL="${1:-http://localhost:8080}"', `SERVER_URL="\${1:-${targetHost}}"`);
+      res.end(customized);
     });
     return;
   }
@@ -148,7 +166,30 @@ const server = http.createServer(async (req, res) => {
     const scriptPath = path.join(__dirname, '../scripts/install-agent.ps1');
     fs.readFile(scriptPath, 'utf8', (err, data) => {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end(data || '# Error loading script');
+      const hostProto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
+      const targetHost = (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost')
+        ? tunnelManager.publicUrl
+        : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
+      const customized = (data || '').replace('[string]$ServerUrl = "http://localhost:8080"', `[string]$ServerUrl = "${targetHost}"`);
+      res.end(customized);
+    });
+    return;
+  }
+
+  if (pathname === '/agent/universal-agent.py') {
+    const agentPath = path.join(__dirname, '../agent/universal-agent.py');
+    fs.readFile(agentPath, 'utf8', (err, data) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(data || '# Error loading universal-agent.py');
+    });
+    return;
+  }
+
+  if (pathname === '/scripts/agent-watchdog.sh') {
+    const watchdogPath = path.join(__dirname, '../scripts/agent-watchdog.sh');
+    fs.readFile(watchdogPath, 'utf8', (err, data) => {
+      res.writeHead(200, { 'Content-Type': 'text/x-shellscript' });
+      res.end(data || '# Error loading agent-watchdog.sh');
     });
     return;
   }
@@ -159,6 +200,89 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/x-shellscript' });
       res.end(data || '# Error loading script');
     });
+    return;
+  }
+
+  // 2B. RELAY HTTP EVENT & POLLING ENDPOINTS (Agent Fallback)
+  if (pathname === '/api/v1/relay/event' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const msg = JSON.parse(body || '{}');
+        if (!msg || typeof msg !== 'object' || !msg.type) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid event format. "type" field is required.' }));
+          return;
+        }
+
+        const machineId = req.headers['x-machine-id'] || (msg.payload && msg.payload.machine_id);
+        const token = req.headers['x-enrollment-token'] || (msg.payload && msg.payload.token);
+
+        // Security check for non-Auth events
+        const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
+        if (msg.type !== 'Auth') {
+          if (!machineId || !db.machines.has(machineId)) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Machine not enrolled. Please send Auth event first.' }));
+            return;
+          }
+          if (token && !db.enrollmentTokens.has(token) && token !== configuredMaster) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid enrollment token' }));
+            return;
+          }
+        }
+
+        const resResult = handleAgentMessage(null, msg);
+        if (resResult && !resResult.success) {
+          const statusCode = resResult.error && resResult.error.toLowerCase().includes('token') ? 401 : 400;
+          res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: resResult.error }));
+          return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, result: resResult ? resResult.result : null }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/relay/poll' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id') || req.headers['x-machine-id'];
+    const token = parsedUrl.searchParams.get('token') || req.headers['x-enrollment-token'];
+
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id parameter required' }));
+      return;
+    }
+
+    const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
+    if (!token || (!db.enrollmentTokens.has(token) && token !== configuredMaster)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid or missing enrollment token' }));
+      return;
+    }
+
+    if (!db.machines.has(machineId)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Machine not found' }));
+      return;
+    }
+
+    // Touch last_seen on successful poll
+    const m = db.machines.get(machineId);
+    if (m) m.last_seen = new Date().toISOString();
+
+    const cmds = db.pendingCommands.get(machineId) || [];
+    db.pendingCommands.set(machineId, []);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ commands: cmds }));
     return;
   }
 
@@ -194,9 +318,7 @@ const server = http.createServer(async (req, res) => {
   // 3. MACHINES & PORTS API
   if (pathname === '/api/v1/machines' && method === 'GET') {
     const list = Array.from(db.machines.values()).map(m => {
-      const isConnected = db.connectedAgents.has(m.id);
-      const diff = Date.now() - new Date(m.last_seen).getTime();
-      let status = isConnected ? 'online' : (diff < 30000 ? 'reconnecting' : 'offline');
+      const status = getMachineStatus(m);
       const virtualIp = vpnPool.allocated.get(m.id) || null;
       return { ...m, status, virtual_ip: virtualIp };
     });
@@ -303,7 +425,7 @@ const server = http.createServer(async (req, res) => {
       hostname: m.hostname,
       os: m.os,
       virtual_ip: vpnPool.allocated.get(m.id) || null,
-      status: db.connectedAgents.has(m.id) ? 'online' : 'offline',
+      status: getMachineStatus(m),
       route: `${vpnPool.allocated.get(m.id) || 'N/A'}/32`,
       tun_supported: !!m.capabilities?.is_root
     }));
@@ -521,14 +643,26 @@ wssTerminal.on('connection', (ws, request) => {
 });
 
 function handleAgentMessage(ws, msg) {
+  if (!msg || typeof msg !== 'object') {
+    return { success: false, error: 'Malformed message' };
+  }
   const { type, payload } = msg;
+  if (!type || !payload) {
+    return { success: false, error: 'Missing type or payload' };
+  }
+
+  const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
 
   if (type === 'Auth') {
     const { machine_id, token, agent_version, hostname, os, arch, capabilities } = payload;
-    
-    if (!db.enrollmentTokens.has(token) && token !== 'cvps_enroll_master_token') {
+    if (!machine_id) {
+      if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Missing machine_id' } }));
+      return { success: false, error: 'Missing machine_id' };
+    }
+
+    if (!db.enrollmentTokens.has(token) && token !== configuredMaster) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Invalid token' } }));
-      return;
+      return { success: false, error: 'Invalid enrollment token' };
     }
 
     // Auto-allocate Virtual IP for Mode B
@@ -536,11 +670,11 @@ function handleAgentMessage(ws, msg) {
 
     const machineInfo = {
       id: machine_id,
-      hostname,
-      os,
+      hostname: hostname || machine_id,
+      os: os || 'Linux',
       os_version: payload.os_version || 'standard',
-      arch,
-      agent_version,
+      arch: arch || 'x86_64',
+      agent_version: agent_version || '1.0.0',
       status: 'online',
       virtual_ip: virtualIp,
       last_seen: new Date().toISOString(),
@@ -551,11 +685,11 @@ function handleAgentMessage(ws, msg) {
       disk_used_bytes: 0,
       disk_total_bytes: 10 * 1024 * 1024 * 1024,
       capabilities: capabilities || {},
-      tags: ['universal-bridge', os.toLowerCase()]
+      tags: ['universal-bridge', (os || 'linux').toLowerCase()]
     };
 
     db.machines.set(machine_id, machineInfo);
-    logAudit('agent_enrolled', 'agent', machine_id, `Connected [${hostname}] (${os}) -> Assigned Virtual IP: ${virtualIp}`);
+    logAudit('agent_enrolled', 'agent', machine_id, `Connected [${machineInfo.hostname}] (${machineInfo.os}) -> Assigned Virtual IP: ${virtualIp}`);
 
     if (ws) {
       ws.send(JSON.stringify({
@@ -563,26 +697,36 @@ function handleAgentMessage(ws, msg) {
         payload: { machine_id, success: true, virtual_ip: virtualIp, heartbeat_interval_secs: 15 }
       }));
     }
+    return { success: true, result: { machine_id, virtual_ip: virtualIp, status: 'online' } };
   }
 
   else if (type === 'Heartbeat') {
     const { machine_id, uptime_seconds, cpu_usage, memory_used_bytes, memory_total_bytes, disk_used_bytes, disk_total_bytes } = payload;
-    const m = db.machines.get(machine_id);
-    if (m) {
-      m.last_seen = new Date().toISOString();
-      m.uptime_seconds = uptime_seconds;
-      m.cpu_usage = cpu_usage;
-      m.memory_used_bytes = memory_used_bytes;
-      m.memory_total_bytes = memory_total_bytes;
-      m.disk_used_bytes = disk_used_bytes;
-      m.disk_total_bytes = disk_total_bytes;
-      m.status = 'online';
+    if (!machine_id || !db.machines.has(machine_id)) {
+      return { success: false, error: 'Machine not found. Must enroll via Auth first.' };
     }
+    const m = db.machines.get(machine_id);
+    m.last_seen = new Date().toISOString();
+    if (uptime_seconds !== undefined) m.uptime_seconds = uptime_seconds;
+    if (cpu_usage !== undefined) m.cpu_usage = cpu_usage;
+    if (memory_used_bytes !== undefined) m.memory_used_bytes = memory_used_bytes;
+    if (memory_total_bytes !== undefined) m.memory_total_bytes = memory_total_bytes;
+    if (disk_used_bytes !== undefined) m.disk_used_bytes = disk_used_bytes;
+    if (disk_total_bytes !== undefined) m.disk_total_bytes = disk_total_bytes;
+    m.status = 'online';
+    return { success: true };
   }
 
   else if (type === 'DiscoveryReport') {
     const { machine_id, ports } = payload;
+    if (!machine_id || !db.machines.has(machine_id)) {
+      return { success: false, error: 'Machine not found' };
+    }
     db.ports.set(machine_id, ports || []);
+    const m = db.machines.get(machine_id);
+    m.last_seen = new Date().toISOString();
+    logAudit('ports_discovered', 'agent', machine_id, `Reported ${(ports || []).length} active listening ports`);
+    return { success: true };
   }
 
   else if (type === 'TerminalOutput') {
@@ -591,6 +735,7 @@ function handleAgentMessage(ws, msg) {
     if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
       sess.wsBrowser.send(JSON.stringify({ type: 'output', data }));
     }
+    return { success: true };
   }
 
   else if (type === 'TunnelOpenStream') {
@@ -602,6 +747,7 @@ function handleAgentMessage(ws, msg) {
         targetAgentWs.send(JSON.stringify(msg));
       }
     }
+    return { success: true };
   }
 
   else if (type === 'TunnelStreamOpened') {
@@ -616,6 +762,7 @@ function handleAgentMessage(ws, msg) {
     if (bridgePair && ws === bridgePair.agentWs) {
       bridgePair.clientWs.send(JSON.stringify(msg));
     }
+    return { success: true };
   }
 
   else if (type === 'TunnelData') {
@@ -665,6 +812,7 @@ function handleAgentMessage(ws, msg) {
         }
       }
     }
+    return { success: true };
   }
 
   else if (type === 'TunnelStreamClosed') {
@@ -687,13 +835,19 @@ function handleAgentMessage(ws, msg) {
       }
       db.bridgeStreamSockets.delete(stream_id);
     }
+    return { success: true };
   }
+
+  return { success: false, error: `Unhandled message type: ${type}` };
 }
 
 function sendServerCommand(machineId, cmd) {
   const agentWs = db.connectedAgents.get(machineId);
   if (agentWs && agentWs.readyState === WebSocket.OPEN) {
     agentWs.send(JSON.stringify(cmd));
+  } else {
+    if (!db.pendingCommands.has(machineId)) db.pendingCommands.set(machineId, []);
+    db.pendingCommands.get(machineId).push(cmd);
   }
 }
 

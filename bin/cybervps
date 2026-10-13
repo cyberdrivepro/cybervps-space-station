@@ -25,6 +25,8 @@ const PID_FILE = path.join(RUN_DIR, 'space-station.pid');
 const LOG_FILE = path.join(LOG_DIR, 'space-station.log');
 const BRIDGE_PID_FILE = path.join(RUN_DIR, 'bridge-daemon.pid');
 const BRIDGE_LOG_FILE = path.join(LOG_DIR, 'bridge-daemon.log');
+const AGENT_PID_FILE = path.join(RUN_DIR, 'agent.pid');
+const AGENT_LOG_FILE = path.join(LOG_DIR, 'agent.log');
 
 
 // Ensure system directories exist
@@ -44,6 +46,9 @@ async function main() {
       break;
     case 'bridge':
       await handleBridge();
+      break;
+    case 'agent':
+      await handleAgent();
       break;
     case 'restart':
       await handleStop();
@@ -244,6 +249,17 @@ async function handleStop() {
     fs.unlinkSync(BRIDGE_PID_FILE);
   }
 
+  // Stop agent daemon if running
+  if (fs.existsSync(AGENT_PID_FILE)) {
+    const aPid = parseInt(fs.readFileSync(AGENT_PID_FILE, 'utf8').trim(), 10);
+    if (isPidRunning(aPid)) {
+      console.log(`[*] Stopping CyberVPS Agent daemon (PID: ${aPid})...`);
+      try { process.kill(aPid, 'SIGTERM'); } catch (_) {}
+      anyStopped = true;
+    }
+    fs.unlinkSync(AGENT_PID_FILE);
+  }
+
   // Stop server daemon
   if (fs.existsSync(PID_FILE)) {
     const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
@@ -274,6 +290,70 @@ async function handleStop() {
     console.log('✅ Space Station and background services stopped successfully.');
   } else {
     console.log('ℹ️  No Space Station services were running.');
+  }
+}
+
+async function handleAgent() {
+  const isDaemon = args.includes('--daemon');
+  let targetServer = 'http://localhost:8080';
+  let token = 'cvps_enroll_master_token';
+  let machineId = '';
+
+  for (let i = 1; i < args.length; i++) {
+    if ((args[i] === '--server' || args[i] === '-s') && args[i + 1]) {
+      targetServer = args[i + 1];
+      i++;
+    } else if ((args[i] === '--token' || args[i] === '-t') && args[i + 1]) {
+      token = args[i + 1];
+      i++;
+    } else if ((args[i] === '--machine-id' || args[i] === '-m') && args[i + 1]) {
+      machineId = args[i + 1];
+      i++;
+    } else if (!args[i].startsWith('-') && targetServer === 'http://localhost:8080') {
+      targetServer = args[i];
+    }
+  }
+
+  const agentScript = path.join(APP_DIR, 'agent', 'universal-agent.py');
+  if (!fs.existsSync(agentScript)) {
+    console.error(`❌ Universal agent script not found at ${agentScript}`);
+    process.exit(1);
+  }
+
+  const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+  const pyArgs = [agentScript, targetServer, token];
+  if (machineId) pyArgs.push(machineId);
+
+  if (isDaemon) {
+    if (fs.existsSync(AGENT_PID_FILE)) {
+      const existingPid = parseInt(fs.readFileSync(AGENT_PID_FILE, 'utf8').trim(), 10);
+      if (isPidRunning(existingPid)) {
+        console.log(`⚠️  Agent daemon is already running (PID: ${existingPid}).`);
+        console.log(`   Run 'cybervps stop' to terminate.`);
+        return;
+      }
+    }
+    console.log(`[*] Starting CyberVPS Agent in background connecting to ${targetServer}...`);
+    const agentEnv = { ...process.env, CYBERVPS_LOG_FILE: AGENT_LOG_FILE };
+    const child = spawn(pyCmd, pyArgs, {
+      detached: true,
+      stdio: 'ignore',
+      env: agentEnv
+    });
+    child.unref();
+    fs.writeFileSync(AGENT_PID_FILE, String(child.pid), 'utf8');
+    console.log(`✅ Agent daemon active (PID: ${child.pid}).`);
+    console.log(`   Connected to Control Plane: ${targetServer}`);
+    console.log(`   Logs: ${AGENT_LOG_FILE}`);
+  } else {
+    console.log(`[*] Starting CyberVPS Agent in foreground connecting to ${targetServer}...`);
+    const child = spawn(pyCmd, pyArgs, { cwd: APP_DIR, stdio: 'inherit' });
+    const cleanExit = () => {
+      try { child.kill('SIGTERM'); } catch (_) {}
+      process.exit(0);
+    };
+    process.on('SIGINT', cleanExit);
+    process.on('SIGTERM', cleanExit);
   }
 }
 

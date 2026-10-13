@@ -6,9 +6,43 @@
 
 set -e
 
-SERVER_URL="${1:-http://localhost:8080}"
-TOKEN="${2:-cvps_enroll_master_token}"
-MACHINE_ID="${3:-}"
+SERVER_URL="http://localhost:8080"
+TOKEN="cvps_enroll_master_token"
+MACHINE_ID=""
+
+POS_1=""
+POS_2=""
+POS_3=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --server|-s)
+      SERVER_URL="$2"
+      shift 2
+      ;;
+    --token|-t)
+      TOKEN="$2"
+      shift 2
+      ;;
+    --machine-id|-m)
+      MACHINE_ID="$2"
+      shift 2
+      ;;
+    *)
+      if [ -z "$POS_1" ]; then
+        SERVER_URL="$1"
+        POS_1="1"
+      elif [ -z "$POS_2" ]; then
+        TOKEN="$1"
+        POS_2="1"
+      elif [ -z "$POS_3" ]; then
+        MACHINE_ID="$1"
+        POS_3="1"
+      fi
+      shift
+      ;;
+  esac
+done
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -17,7 +51,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${CYAN}================================================================${NC}"
-echo -e "${CYAN}   ðŸš€ CyberVPS SPACE STATION - Universal Agent Installer        ${NC}"
+echo -e "${CYAN}   🚀 CyberVPS SPACE STATION - Universal Agent Installer        ${NC}"
 echo -e "${CYAN}================================================================${NC}"
 
 CVPS_DIR="$HOME/.cybervps"
@@ -42,7 +76,7 @@ if [ $HAS_PYTHON -eq 0 ] && [ $HAS_CARGO -eq 0 ]; then
 fi
 
 # Fetch or install the universal agent script into ~/.cybervps/universal-agent.py
-# If local repo exists nearby, copy it; otherwise generate/download it
+# If local repo exists nearby, copy it; otherwise download from control plane or repo
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 PARENT_DIR="$(dirname "$SCRIPT_DIR")"
 
@@ -50,6 +84,15 @@ if [ -f "$PARENT_DIR/agent/universal-agent.py" ]; then
     cp "$PARENT_DIR/agent/universal-agent.py" "$CVPS_DIR/universal-agent.py"
     cp "$PARENT_DIR/scripts/agent-watchdog.sh" "$CVPS_DIR/agent-watchdog.sh"
     cp "$PARENT_DIR/scripts/diagnostics/doctor.sh" "$CVPS_DIR/doctor.sh"
+else
+    echo "Downloading CyberVPS universal agent components from $SERVER_URL..."
+    curl -fsSL "$SERVER_URL/agent/universal-agent.py" -o "$CVPS_DIR/universal-agent.py" 2>/dev/null || \
+    curl -fsSL "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py" -o "$CVPS_DIR/universal-agent.py"
+
+    curl -fsSL "$SERVER_URL/scripts/agent-watchdog.sh" -o "$CVPS_DIR/agent-watchdog.sh" 2>/dev/null || \
+    curl -fsSL "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/scripts/agent-watchdog.sh" -o "$CVPS_DIR/agent-watchdog.sh"
+
+    curl -fsSL "$SERVER_URL/doctor.sh" -o "$CVPS_DIR/doctor.sh" 2>/dev/null || true
 fi
 
 chmod +x "$CVPS_DIR/agent-watchdog.sh" 2>/dev/null || true

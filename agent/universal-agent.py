@@ -421,21 +421,39 @@ class CyberVPSAgent:
     def send_agent_event(self, event_data):
         url = f"{self.http_base}/api/v1/relay/event"
         try:
+            if "payload" in event_data and isinstance(event_data["payload"], dict):
+                if "token" not in event_data["payload"]:
+                    event_data["payload"]["token"] = self.token
+                if "machine_id" not in event_data["payload"]:
+                    event_data["payload"]["machine_id"] = self.machine_id
+
             req = urllib.request.Request(
                 url,
                 data=json.dumps(event_data).encode("utf-8"),
-                headers={"Content-Type": "application/json", "X-Machine-ID": self.machine_id},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Machine-ID": self.machine_id,
+                    "X-Enrollment-Token": self.token,
+                    "User-Agent": "CyberVPS-Agent/1.0"
+                },
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            with urllib.request.urlopen(req, timeout=4) as resp:
                 pass
-        except Exception:
+        except Exception as e:
             pass
 
     def poll_server_commands(self):
         url = f"{self.http_base}/api/v1/relay/poll?machine_id={self.machine_id}&token={self.token}"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "CyberVPS-Agent/1.0"})
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "CyberVPS-Agent/1.0",
+                    "X-Machine-ID": self.machine_id,
+                    "X-Enrollment-Token": self.token
+                }
+            )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for cmd in data.get("commands", []):
@@ -477,6 +495,7 @@ class CyberVPSAgent:
             "type": "DiscoveryReport",
             "payload": {
                 "machine_id": self.machine_id,
+                "token": self.token,
                 "ports": ports,
                 "processes": []
             }
@@ -516,6 +535,7 @@ class CyberVPSAgent:
                     "type": "Heartbeat",
                     "payload": {
                         "machine_id": self.machine_id,
+                        "token": self.token,
                         "timestamp": int(now),
                         "uptime_seconds": metrics["uptime_seconds"],
                         "cpu_usage": metrics["cpu_usage"],
@@ -537,9 +557,35 @@ class CyberVPSAgent:
 
 
 if __name__ == "__main__":
-    target = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"
-    token = sys.argv[2] if len(sys.argv) > 2 else "cvps_enroll_master_token"
-    mid = sys.argv[3] if len(sys.argv) > 3 else None
+    target = os.environ.get("CYBERVPS_SERVER", "http://localhost:8080")
+    token = os.environ.get("CYBERVPS_TOKEN", "cvps_enroll_master_token")
+    mid = os.environ.get("CYBERVPS_MACHINE_ID", None)
+
+    args = sys.argv[1:]
+    i = 0
+    pos_idx = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--server", "-s") and i + 1 < len(args):
+            target = args[i + 1]
+            i += 2
+        elif a in ("--token", "-t") and i + 1 < len(args):
+            token = args[i + 1]
+            i += 2
+        elif a in ("--machine-id", "-m") and i + 1 < len(args):
+            mid = args[i + 1]
+            i += 2
+        elif not a.startswith("-"):
+            if pos_idx == 0:
+                target = a
+            elif pos_idx == 1:
+                token = a
+            elif pos_idx == 2:
+                mid = a
+            pos_idx += 1
+            i += 1
+        else:
+            i += 1
 
     agent = CyberVPSAgent(target, token, mid)
     agent.run()

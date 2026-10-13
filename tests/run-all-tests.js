@@ -250,6 +250,86 @@ async function runTests() {
   assert(cliVer.includes('CyberVPS Space Station v1.0.0'), 'CLI version must report 1.0.0');
   console.log(`  ✅ Unified CLI verified: ${cliVer.trim()}`);
 
+  // TEST 11: HTTP Relay Event Agent Enrollment
+  console.log('\n[TEST 11] Testing HTTP Relay Agent Enrollment via POST /api/v1/relay/event...');
+  const httpNodeId = 'vps_http_node_' + Math.random().toString(36).slice(2, 6);
+  const enrollRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: httpNodeId,
+        token: 'cvps_enroll_master_token',
+        agent_version: '1.0.0',
+        hostname: 'vps-http-worker',
+        os: 'Linux',
+        arch: 'x86_64',
+        capabilities: { is_root: true }
+      }
+    })
+  });
+  assert.strictEqual(enrollRes.statusCode, 200, 'HTTP Auth event must succeed');
+  const enrollBody = JSON.parse(enrollRes.body);
+  assert.strictEqual(enrollBody.ok, true);
+
+  // Verify node appears in /api/v1/machines with status 'online'
+  const machinesRes = await request(`${SERVER_URL}/api/v1/machines`);
+  const machinesList = JSON.parse(machinesRes.body);
+  const enrolledHttpNode = machinesList.find(m => m.id === httpNodeId);
+  assert(enrolledHttpNode, 'HTTP enrolled node must appear in machines list');
+  assert.strictEqual(enrolledHttpNode.status, 'online', 'Newly enrolled HTTP node must report status online');
+  assert(enrolledHttpNode.virtual_ip.startsWith('10.77.0.'), 'HTTP node must be assigned Virtual IP in 10.77.0.X');
+  console.log(`  ✅ HTTP Agent Enrolled successfully! Assigned Virtual IP: ${enrolledHttpNode.virtual_ip}, Status: ${enrolledHttpNode.status}`);
+
+  // TEST 12: Rejection of Invalid Credentials
+  console.log('\n[TEST 12] Testing Rejection of Invalid Credentials via POST /api/v1/relay/event...');
+  const badAuthRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: 'bad_node',
+        token: 'invalid_secret_token_123',
+        hostname: 'bad-host'
+      }
+    })
+  });
+  assert.strictEqual(badAuthRes.statusCode, 401, 'Invalid enrollment token must return 401 Unauthorized');
+  console.log('  ✅ Invalid enrollment token correctly rejected with 401 Unauthorized.');
+
+  // TEST 13: HTTP Discovery Reporting and Heartbeat Processing
+  console.log('\n[TEST 13] Testing HTTP Port Discovery and Heartbeat processing...');
+  const discRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'DiscoveryReport',
+      payload: {
+        machine_id: httpNodeId,
+        ports: [
+          { port: 80, protocol: 'TCP', bind_address: '0.0.0.0', process_name: 'nginx' },
+          { port: 3000, protocol: 'TCP', bind_address: '127.0.0.1', process_name: 'api-service' }
+        ]
+      }
+    })
+  });
+  assert.strictEqual(discRes.statusCode, 200);
+
+  const httpPortsRes = await request(`${SERVER_URL}/api/v1/machines/${httpNodeId}/ports`);
+  const httpPortsList = JSON.parse(httpPortsRes.body);
+  assert.strictEqual(httpPortsList.length, 2, 'Must report 2 discovered ports for HTTP agent');
+  console.log('  ✅ Discovered ports saved via HTTP event successfully.');
+
+  // TEST 14: Command Polling via GET /api/v1/relay/poll
+  console.log('\n[TEST 14] Testing Command Queuing and Polling via GET /api/v1/relay/poll...');
+  const pollRes = await request(`${SERVER_URL}/api/v1/relay/poll?machine_id=${httpNodeId}&token=cvps_enroll_master_token`);
+  assert.strictEqual(pollRes.statusCode, 200);
+  const pollData = JSON.parse(pollRes.body);
+  assert(Array.isArray(pollData.commands), 'Poll response must contain commands array');
+  console.log(`  ✅ Command polling active and authenticated (Received ${pollData.commands.length} pending commands)`);
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -257,7 +337,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 10 ADVANCED UNIVERSAL BRIDGE & REMOTE ACCESS TESTS PASSED!');
+  console.log('🎉 ALL 14 ADVANCED UNIVERSAL BRIDGE, AGENT ENROLLMENT & HTTP TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

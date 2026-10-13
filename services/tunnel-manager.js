@@ -281,12 +281,29 @@ class TunnelManager {
     if (port) this.port = port;
     this.status = 'starting';
 
-    // 1. Check custom PUBLIC_BASE_URL
-    if (process.env.PUBLIC_BASE_URL) {
+    // 1. Check custom PUBLIC_BASE_URL, CYBERVPS_PUBLIC_URL, or PUBLIC_URL
+    const configuredUrl = process.env.PUBLIC_BASE_URL || process.env.CYBERVPS_PUBLIC_URL || process.env.PUBLIC_URL;
+    if (configuredUrl) {
       this.providerName = 'custom';
-      this.publicUrl = process.env.PUBLIC_BASE_URL.replace(/\/$/, '');
+      this.publicUrl = configuredUrl.replace(/\/$/, '');
       this.status = 'connected';
       console.log(`[+] Using configured PUBLIC_BASE_URL: ${this.publicUrl}`);
+      return this.getInfo();
+    }
+
+    // 1B. Check Railway Platform environment
+    if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+      this.providerName = 'railway';
+      this.publicUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN.replace(/\/$/, '')}`;
+      this.status = 'connected';
+      console.log(`[+] Railway Public Domain detected: ${this.publicUrl}`);
+      return this.getInfo();
+    }
+    if (process.env.RAILWAY_STATIC_URL) {
+      this.providerName = 'railway';
+      this.publicUrl = `https://${process.env.RAILWAY_STATIC_URL.replace(/\/$/, '')}`;
+      this.status = 'connected';
+      console.log(`[+] Railway Static URL detected: ${this.publicUrl}`);
       return this.getInfo();
     }
 

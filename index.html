@@ -1090,7 +1090,7 @@
     }
 
     const isGitHubPages = window.location.hostname.endsWith('github.io');
-    const defaultOrigin = isGitHubPages ? 'http://localhost:8080' : window.location.origin;
+    const defaultOrigin = isGitHubPages ? 'https://cybervps-space-station.up.railway.app' : window.location.origin;
 
     let appConfig = {
       serverUrl: localStorage.getItem('cvps_server_url') || defaultOrigin,
@@ -1195,7 +1195,16 @@
 
       if (mRes.ok) appState.machines = mRes.data || [];
       if (bRes.ok) appState.bridges = bRes.data || [];
-      if (vRes.ok) appState.vpn.peers = vRes.data || [];
+      if (vRes.ok) {
+        if (Array.isArray(vRes.data)) {
+          appState.vpn.peers = vRes.data;
+        } else if (vRes.data && Array.isArray(vRes.data.peers)) {
+          appState.vpn.peers = vRes.data.peers;
+          if (vRes.data.cidr) appState.vpn.cidr = vRes.data.cidr;
+        } else {
+          appState.vpn.peers = [];
+        }
+      }
       if (tRes.ok) appState.tunnels = tRes.data || [];
       if (aRes.ok) appState.audit = aRes.data || [];
       if (accRes.ok) {
@@ -1245,9 +1254,20 @@
       document.getElementById('kpi-bridges').innerText = activeBridges;
 
       document.getElementById('kpi-vpn').innerText = appState.vpn.cidr || '10.77.0.0/24';
-      document.getElementById('kpi-vpn-sub').innerText = `${appState.vpn.peers.length} peers allocated`;
+      const peerCount = Array.isArray(appState.vpn.peers) ? appState.vpn.peers.length : 0;
+      document.getElementById('kpi-vpn-sub').innerText = `${peerCount} peers allocated`;
 
       document.getElementById('kpi-ports').innerText = appState.ports.length;
+
+      // Update Onboarding Commands dynamically with current server URL
+      const linuxCmdEl = document.getElementById('cmd-linux');
+      if (linuxCmdEl) {
+        linuxCmdEl.innerText = `curl -fsSL ${appConfig.serverUrl}/install.sh | bash`;
+      }
+      const winCmdEl = document.getElementById('cmd-win');
+      if (winCmdEl) {
+        winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${appConfig.serverUrl}/install.ps1')))`;
+      }
 
       // Overview Audit Table (Recent 5)
       const tbody = document.getElementById('overview-audit-table');
