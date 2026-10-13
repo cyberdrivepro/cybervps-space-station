@@ -23,9 +23,19 @@ import shutil
 import stat
 import csv
 import io
+import ssl
+import struct
+import urllib.parse
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 try:
     import ctypes
+    if hasattr(ctypes, "wintypes"):
+        import ctypes.wintypes
 except ImportError:
     ctypes = None
 
@@ -39,15 +49,383 @@ try:
 except ImportError:
     psutil = None
 
-# Ensure unbuffered stdio for background logs
+# Ensure unbuffered stdio for background logs & safe headless fallback
+log_file_env = os.environ.get("CYBERVPS_LOG_FILE")
+if log_file_env:
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(log_file_env)), exist_ok=True)
+        _fp = open(log_file_env, "a", encoding="utf-8", buffering=1)
+        sys.stdout = _fp
+        sys.stderr = _fp
+    except Exception:
+        pass
+
+if sys.stdout is None:
+    try:
+        sys.stdout = open(os.devnull, "w")
+    except Exception:
+        pass
+if sys.stderr is None:
+    try:
+        sys.stderr = open(os.devnull, "w")
+    except Exception:
+        pass
+
 if sys.version_info >= (3, 7):
     try:
-        sys.stdout.reconfigure(line_buffering=True)
-        sys.stderr.reconfigure(line_buffering=True)
+        if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(line_buffering=True)
+        if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(line_buffering=True)
     except Exception:
         pass
 
 PROTOCOL_VERSION = "1.0.0"
+
+
+class ConPTYTerminal:
+    def __init__(self, session_id, cols=80, rows=24, shell_cmd=None, on_output=None, on_exit=None):
+        self.session_id = session_id
+        self.cols = int(cols)
+        self.rows = int(rows)
+        self.on_output = on_output
+        self.on_exit = on_exit
+        self.hpcon = None
+        self.h_proc = None
+        self.pid = 0
+        self.w_in = None
+        self.r_out = None
+        self.running = True
+        self._start(shell_cmd)
+
+    def _start(self, shell_cmd):
+        if platform.system() != "Windows" or not ctypes or not msvcrt:
+            raise NotImplementedError("ConPTY requires Windows with ctypes and msvcrt")
+
+        kernel32 = ctypes.windll.kernel32
+        if not hasattr(kernel32, "CreatePseudoConsole"):
+            raise NotImplementedError("CreatePseudoConsole not supported on this Windows build")
+
+        class COORD(ctypes.Structure):
+            _fields_ = [('X', ctypes.c_short), ('Y', ctypes.c_short)]
+
+        class STARTUPINFO(ctypes.Structure):
+            _fields_ = [
+                ('cb', ctypes.wintypes.DWORD), ('lpReserved', ctypes.c_wchar_p), ('lpDesktop', ctypes.c_wchar_p),
+                ('lpTitle', ctypes.c_wchar_p), ('dwX', ctypes.wintypes.DWORD), ('dwY', ctypes.wintypes.DWORD),
+                ('dwXSize', ctypes.wintypes.DWORD), ('dwYSize', ctypes.wintypes.DWORD), ('dwXCountChars', ctypes.wintypes.DWORD),
+                ('dwYCountChars', ctypes.wintypes.DWORD), ('dwFillAttribute', ctypes.wintypes.DWORD), ('dwFlags', ctypes.wintypes.DWORD),
+                ('wShowWindow', ctypes.wintypes.WORD), ('cbReserved2', ctypes.wintypes.WORD), ('lpReserved2', ctypes.c_char_p),
+                ('hStdInput', ctypes.wintypes.HANDLE), ('hStdOutput', ctypes.wintypes.HANDLE), ('hStdError', ctypes.wintypes.HANDLE)
+            ]
+
+        class STARTUPINFOEX(ctypes.Structure):
+            _fields_ = [('StartupInfo', STARTUPINFO), ('lpAttributeList', ctypes.c_void_p)]
+
+        class PROCESS_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ('hProcess', ctypes.wintypes.HANDLE), ('hThread', ctypes.wintypes.HANDLE),
+                ('dwProcessId', ctypes.wintypes.DWORD), ('dwThreadId', ctypes.wintypes.DWORD)
+            ]
+
+        r_in, w_in = os.pipe()
+        r_out, w_out = os.pipe()
+        self.w_in = w_in
+        self.r_out = r_out
+
+        h_in = ctypes.wintypes.HANDLE(msvcrt.get_osfhandle(r_in))
+        h_out = ctypes.wintypes.HANDLE(msvcrt.get_osfhandle(w_out))
+
+        hpcon_val = ctypes.c_void_p()
+        size = COORD(self.cols, self.rows)
+        res = kernel32.CreatePseudoConsole(size, h_in, h_out, 0, ctypes.byref(hpcon_val))
+        if res != 0 or not hpcon_val.value:
+            for p in (r_in, w_in, r_out, w_out):
+                try: os.close(p)
+                except Exception: pass
+            raise RuntimeError(f"CreatePseudoConsole failed (code {res})")
+        self.hpcon = hpcon_val
+
+        size_attr = ctypes.c_size_t(0)
+        kernel32.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(size_attr))
+        attr_buf = (ctypes.c_char * size_attr.value)()
+        kernel32.InitializeProcThreadAttributeList(attr_buf, 1, 0, ctypes.byref(size_attr))
+
+        PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
+        kernel32.UpdateProcThreadAttribute(
+            attr_buf, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+            self.hpcon, ctypes.sizeof(self.hpcon), None, None
+        )
+
+        si = STARTUPINFOEX()
+        si.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEX)
+        si.lpAttributeList = ctypes.cast(attr_buf, ctypes.c_void_p)
+
+        pi = PROCESS_INFORMATION()
+        EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+
+        cmd_str = shell_cmd or "powershell.exe -NoLogo"
+        if "cmd" in cmd_str.lower() and not cmd_str.lower().endswith(".exe"):
+            cmd_str = "cmd.exe"
+
+        ok = kernel32.CreateProcessW(
+            None, cmd_str, None, None, False,
+            EXTENDED_STARTUPINFO_PRESENT, None, None,
+            ctypes.byref(si), ctypes.byref(pi)
+        )
+        os.close(r_in)
+        os.close(w_out)
+
+        if not ok:
+            self.close()
+            raise RuntimeError("CreateProcessW failed for ConPTY")
+
+        self.h_proc = pi.hProcess
+        self.pid = pi.dwProcessId
+        kernel32.CloseHandle(pi.hThread)
+
+        threading.Thread(target=self._reader, daemon=True).start()
+
+    def _reader(self):
+        try:
+            while self.running and self.r_out:
+                data = os.read(self.r_out, 2048)
+                if not data:
+                    break
+                if self.on_output:
+                    self.on_output(self.session_id, data.decode('utf-8', errors='replace'))
+        except Exception:
+            pass
+        finally:
+            self.close()
+            if hasattr(self, "on_exit") and self.on_exit:
+                try:
+                    self.on_exit(self.session_id)
+                except Exception:
+                    pass
+
+    def write(self, data):
+        if self.w_in and self.running:
+            try:
+                if isinstance(data, str):
+                    data = data.encode('utf-8')
+                os.write(self.w_in, data)
+            except Exception:
+                pass
+
+    def resize(self, cols, rows):
+        self.cols = int(cols)
+        self.rows = int(rows)
+        if self.hpcon and ctypes and hasattr(ctypes.windll.kernel32, 'ResizePseudoConsole'):
+            class COORD(ctypes.Structure):
+                _fields_ = [('X', ctypes.c_short), ('Y', ctypes.c_short)]
+            size = COORD(self.cols, self.rows)
+            ctypes.windll.kernel32.ResizePseudoConsole(self.hpcon, size)
+
+    def close(self):
+        self.running = False
+        if self.h_proc:
+            try:
+                ctypes.windll.kernel32.TerminateProcess(self.h_proc, 0)
+                ctypes.windll.kernel32.CloseHandle(self.h_proc)
+            except Exception:
+                pass
+            self.h_proc = None
+        if self.hpcon:
+            try:
+                ctypes.windll.kernel32.ClosePseudoConsole(self.hpcon)
+            except Exception:
+                pass
+            self.hpcon = None
+        if self.w_in:
+            try: os.close(self.w_in)
+            except Exception: pass
+            self.w_in = None
+        if self.r_out:
+            try: os.close(self.r_out)
+            except Exception: pass
+            self.r_out = None
+
+
+class RelayWebSocket:
+    def __init__(self, agent, target_url):
+        self.agent = agent
+        self.target_url = target_url
+        self.sock = None
+        self.connected = False
+        self.running = True
+        self._lock = threading.Lock()
+
+    def start(self):
+        t = threading.Thread(target=self._run_loop, daemon=True)
+        t.start()
+
+    def _run_loop(self):
+        while self.running and self.agent.running:
+            try:
+                self._connect_and_read()
+            except Exception:
+                pass
+            self.connected = False
+            self.agent.ws_connected = False
+            time.sleep(2.0)
+
+    def _connect_and_read(self):
+        raw = self.target_url.replace("http://", "ws://").replace("https://", "wss://")
+        parsed = urllib.parse.urlparse(raw)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+        path = parsed.path or "/api/v1/relay/connect"
+        if parsed.query:
+            path += "?" + parsed.query
+
+        raw_s = socket.create_connection((host, port), timeout=6.0)
+        if parsed.scheme == "wss":
+            ctx = ssl.create_default_context()
+            s = ctx.wrap_socket(raw_s, server_hostname=host)
+        else:
+            s = raw_s
+        s.settimeout(None)
+
+        sec_key = base64.b64encode(os.urandom(16)).decode("utf-8")
+        req = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {sec_key}\r\n"
+            f"Sec-WebSocket-Version: 13\r\n"
+            f"User-Agent: CyberVPS-Agent/1.0\r\n\r\n"
+        )
+        s.sendall(req.encode("utf-8"))
+
+        hdr = b""
+        while b"\r\n\r\n" not in hdr:
+            chunk = s.recv(512)
+            if not chunk:
+                s.close()
+                return
+            hdr += chunk
+
+        first_line = hdr.split(b"\r\n")[0].decode("utf-8", errors="ignore")
+        if "101" not in first_line:
+            s.close()
+            return
+
+        with self._lock:
+            self.sock = s
+            self.connected = True
+            self.agent.ws_connected = True
+            self.agent.ws_relay = self
+
+        # Send Auth message
+        auth_msg = {
+            "type": "Auth",
+            "payload": {
+                "machine_id": self.agent.machine_id,
+                "token": self.agent.token,
+                "agent_version": PROTOCOL_VERSION,
+                "hostname": socket.gethostname(),
+                "os": platform.system(),
+                "os_version": self.agent.device_profile.get("os_full", platform.release()),
+                "arch": platform.machine(),
+                "capabilities": self.agent.get_capabilities(),
+                "profile": self.agent.device_profile
+            }
+        }
+        self.send_text(json.dumps(auth_msg))
+
+        # Send Discovery report
+        ports = self.agent.discover_listening_ports()
+        self.send_text(json.dumps({
+            "type": "DiscoveryReport",
+            "payload": {
+                "machine_id": self.agent.machine_id,
+                "token": self.agent.token,
+                "ports": ports,
+                "profile": self.agent.device_profile,
+                "processes": []
+            }
+        }))
+
+        while self.running and self.agent.running:
+            head = self._recv_exact(s, 2)
+            if not head or len(head) < 2:
+                break
+            b0, b1 = head[0], head[1]
+            opcode = b0 & 0x0F
+            is_masked = bool(b1 & 0x80)
+            length = b1 & 0x7F
+
+            if length == 126:
+                ext = self._recv_exact(s, 2)
+                if not ext: break
+                length = struct.unpack("!H", ext)[0]
+            elif length == 127:
+                ext = self._recv_exact(s, 8)
+                if not ext: break
+                length = struct.unpack("!Q", ext)[0]
+
+            mask_key = None
+            if is_masked:
+                mask_key = self._recv_exact(s, 4)
+                if not mask_key: break
+
+            payload = self._recv_exact(s, length)
+            if len(payload) < length:
+                break
+
+            if is_masked and mask_key:
+                payload = bytearray(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+
+            if opcode == 0x8:
+                break
+            elif opcode == 0x9:
+                self._send_frame(s, 0xA, payload)
+            elif opcode == 0x1:
+                try:
+                    text_data = payload.decode("utf-8")
+                    msg = json.loads(text_data)
+                    self.agent.dispatch_server_command(msg)
+                except Exception:
+                    pass
+
+    def _recv_exact(self, sock, num_bytes):
+        buf = bytearray()
+        while len(buf) < num_bytes:
+            chunk = sock.recv(num_bytes - len(buf))
+            if not chunk:
+                return bytes(buf)
+            buf.extend(chunk)
+        return bytes(buf)
+
+    def send_text(self, text_str):
+        with self._lock:
+            if not self.sock or not self.connected:
+                return False
+            try:
+                data = text_str.encode("utf-8")
+                self._send_frame(self.sock, 0x1, data)
+                return True
+            except Exception:
+                self.connected = False
+                return False
+
+    def _send_frame(self, sock, opcode, data):
+        length = len(data)
+        header = bytearray([0x80 | opcode])
+        if length < 126:
+            header.append(0x80 | length)
+        elif length <= 0xFFFF:
+            header.append(0x80 | 126)
+            header.extend(struct.pack("!H", length))
+        else:
+            header.append(0x80 | 127)
+            header.extend(struct.pack("!Q", length))
+        mask = os.urandom(4)
+        header.extend(mask)
+        masked = bytearray(b ^ mask[i % 4] for i, b in enumerate(data))
+        sock.sendall(bytes(header + masked))
 
 
 class CyberVPSAgent:
@@ -67,6 +445,8 @@ class CyberVPSAgent:
         self._prev_win_times = None
         self._prev_linux_stat = None
         self.device_profile = {}
+        self.ws_relay = None
+        self.ws_connected = False
 
     def generate_machine_id(self):
         home = os.path.expanduser("~")
@@ -550,6 +930,14 @@ class CyberVPSAgent:
         p = str(target_path).strip()
         if "\0" in p:
             raise ValueError("Path contains invalid null byte")
+        if platform.system() == "Windows":
+            if p in ["/", "\\"]:
+                return "C:\\"
+            if len(p) == 2 and p[1] == ":":
+                return p.upper() + "\\"
+            if len(p) >= 3 and p[1] == ":" and p[2] in ["/", "\\"]:
+                norm_p = p[:2].upper() + "\\" + p[3:].replace("/", "\\")
+                return os.path.abspath(norm_p)
         expanded = os.path.expanduser(p)
         resolved = os.path.abspath(expanded)
         return resolved
@@ -566,56 +954,68 @@ class CyberVPSAgent:
                 target_path = os.path.dirname(target_path)
 
             entries = []
-            with os.scandir(target_path) as it:
-                for entry in it:
-                    try:
-                        is_hidden = entry.name.startswith(".")
-                        if not is_hidden and platform.system() == "Windows":
-                            try:
-                                is_hidden = bool(entry.stat().st_file_attributes & 2)
-                            except Exception:
-                                pass
-                        if is_hidden and not show_hidden:
+            try:
+                with os.scandir(target_path) as it:
+                    for entry in it:
+                        try:
+                            is_hidden = entry.name.startswith(".")
+                            if not is_hidden and platform.system() == "Windows":
+                                try:
+                                    is_hidden = bool(entry.stat().st_file_attributes & 2)
+                                except Exception:
+                                    pass
+                            if is_hidden and not show_hidden:
+                                continue
+
+                            st = entry.stat(follow_symlinks=False)
+                            is_dir = entry.is_dir(follow_symlinks=False)
+                            is_symlink = entry.is_symlink()
+                            size = st.st_size if not is_dir else 0
+                            mtime_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime))
+                            mode_str = oct(st.st_mode)[-3:] if hasattr(st, "st_mode") else "755"
+
+                            ext = os.path.splitext(entry.name)[1].lower()
+                            ftype = "folder" if is_dir else "file"
+                            if ext in [".txt", ".md", ".log", ".json", ".js", ".ts", ".py", ".sh", ".yaml", ".yml", ".html", ".css", ".xml", ".ini", ".conf", ".env"]:
+                                ftype = "text"
+                            elif ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"]:
+                                ftype = "image"
+                            elif ext in [".zip", ".tar", ".gz", ".7z", ".rar"]:
+                                ftype = "archive"
+
+                            entries.append({
+                                "name": entry.name,
+                                "path": entry.path.replace("\\", "/"),
+                                "native_path": entry.path,
+                                "is_directory": is_dir,
+                                "is_dir": is_dir,
+                                "is_symlink": is_symlink,
+                                "size": size,
+                                "modified": mtime_iso,
+                                "mtime": mtime_iso,
+                                "permissions": mode_str,
+                                "mode": mode_str,
+                                "is_hidden": is_hidden,
+                                "file_type": ftype,
+                                "ext": ext
+                            })
+                        except Exception:
                             continue
-
-                        st = entry.stat(follow_symlinks=False)
-                        is_dir = entry.is_dir(follow_symlinks=False)
-                        is_symlink = entry.is_symlink()
-                        size = st.st_size if not is_dir else 0
-                        mtime_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime))
-                        mode_str = oct(st.st_mode)[-3:] if hasattr(st, "st_mode") else "755"
-
-                        ext = os.path.splitext(entry.name)[1].lower()
-                        ftype = "folder" if is_dir else "file"
-                        if ext in [".txt", ".md", ".log", ".json", ".js", ".ts", ".py", ".sh", ".yaml", ".yml", ".html", ".css", ".xml", ".ini", ".conf", ".env"]:
-                            ftype = "text"
-                        elif ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"]:
-                            ftype = "image"
-                        elif ext in [".zip", ".tar", ".gz", ".7z", ".rar"]:
-                            ftype = "archive"
-
-                        entries.append({
-                            "name": entry.name,
-                            "path": entry.path.replace("\\", "/"),
-                            "native_path": entry.path,
-                            "is_dir": is_dir,
-                            "is_symlink": is_symlink,
-                            "size": size,
-                            "mtime": mtime_iso,
-                            "mode": mode_str,
-                            "is_hidden": is_hidden,
-                            "file_type": ftype,
-                            "ext": ext
-                        })
-                    except Exception:
-                        continue
+            except PermissionError:
+                pass
 
             entries.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
 
             disk_info = {}
             try:
                 du = shutil.disk_usage(target_path)
+                total_gb = round(du.total / (1024**3), 1)
+                free_gb = round(du.free / (1024**3), 1)
+                used_gb = round(du.used / (1024**3), 1)
                 disk_info = {
+                    "total_gb": total_gb,
+                    "free_gb": free_gb,
+                    "used_gb": used_gb,
                     "total_bytes": du.total,
                     "used_bytes": du.used,
                     "free_bytes": du.free,
@@ -623,6 +1023,13 @@ class CyberVPSAgent:
                 }
             except Exception:
                 pass
+
+            drives = []
+            if platform.system() == "Windows":
+                for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                    dp = f"{d}:\\"
+                    if os.path.exists(dp):
+                        drives.append(dp)
 
             parent = os.path.dirname(target_path)
             if parent == target_path:
@@ -632,7 +1039,9 @@ class CyberVPSAgent:
                 "current_path": target_path.replace("\\", "/"),
                 "native_current_path": target_path,
                 "parent_path": parent.replace("\\", "/") if parent else None,
+                "items": entries,
                 "entries": entries,
+                "drives": drives,
                 "disk": disk_info,
                 "os": platform.system(),
                 "sep": os.sep
@@ -1270,8 +1679,40 @@ class CyberVPSAgent:
     # Terminal Session Handling
     # =========================================================================
     def start_terminal_session(self, session_id, cols=80, rows=24, shell=None):
+        cols = int(cols or 80)
+        rows = int(rows or 24)
         if platform.system() == "Windows":
-            cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass"]
+            # Prefer native ConPTY for full VT100/ANSI, arrow keys, Tab, interactive repls
+            try:
+                shell_cmd = shell
+                if not shell_cmd:
+                    shell_cmd = "powershell.exe -NoLogo"
+                term = ConPTYTerminal(
+                    session_id,
+                    cols=cols,
+                    rows=rows,
+                    shell_cmd=shell_cmd,
+                    on_output=lambda sid, out: self.send_agent_event({
+                        "type": "TerminalOutput",
+                        "payload": {"session_id": sid, "data": out}
+                    }),
+                    on_exit=lambda sid: self.send_agent_event({
+                        "type": "TerminalExit",
+                        "payload": {"session_id": sid, "exit_code": 0}
+                    })
+                )
+                with self.lock:
+                    self.active_terminals[session_id] = {"term": term, "type": "conpty"}
+
+                self.send_agent_event({
+                    "type": "TerminalReady",
+                    "payload": {"session_id": session_id, "backend": "conpty", "cols": cols, "rows": rows}
+                })
+                return
+            except Exception:
+                pass
+
+            cmd = [shell or "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass"]
             p = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -1284,6 +1725,10 @@ class CyberVPSAgent:
 
             threading.Thread(target=self._pipe_terminal_reader, args=(session_id, p.stdout), daemon=True).start()
             threading.Thread(target=self._pipe_terminal_reader, args=(session_id, p.stderr), daemon=True).start()
+            self.send_agent_event({
+                "type": "TerminalReady",
+                "payload": {"session_id": session_id, "backend": "pipe", "cols": cols, "rows": rows}
+            })
         else:
             import pty
             master, slave = pty.openpty()
@@ -1300,7 +1745,20 @@ class CyberVPSAgent:
             with self.lock:
                 self.active_terminals[session_id] = {"proc": p, "master": master, "type": "pty"}
 
+            try:
+                import fcntl
+                import termios
+                import struct
+                winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+                fcntl.ioctl(master, termios.TIOCSWINSZ, winsize)
+            except Exception:
+                pass
+
             threading.Thread(target=self._pty_terminal_reader, args=(session_id, master), daemon=True).start()
+            self.send_agent_event({
+                "type": "TerminalReady",
+                "payload": {"session_id": session_id, "backend": "pty", "cols": cols, "rows": rows}
+            })
 
     def _pty_terminal_reader(self, session_id, master_fd):
         try:
@@ -1324,6 +1782,10 @@ class CyberVPSAgent:
                 os.close(master_fd)
             except Exception:
                 pass
+            self.send_agent_event({
+                "type": "TerminalExit",
+                "payload": {"session_id": session_id, "exit_code": 0}
+            })
 
     def _pipe_terminal_reader(self, session_id, stream):
         try:
@@ -1347,9 +1809,12 @@ class CyberVPSAgent:
         if not term:
             return
         try:
-            if term["type"] == "pty":
+            ttype = term.get("type")
+            if ttype == "conpty":
+                term["term"].write(text)
+            elif ttype == "pty":
                 os.write(term["master"], text.encode("utf-8"))
-            elif term["type"] == "pipe":
+            elif ttype == "pipe":
                 term["proc"].stdin.write(text.encode("utf-8"))
                 term["proc"].stdin.flush()
         except Exception:
@@ -1358,14 +1823,18 @@ class CyberVPSAgent:
     def resize_terminal(self, session_id, cols=80, rows=24):
         with self.lock:
             term = self.active_terminals.get(session_id)
-        if not term or term.get("type") != "pty":
+        if not term:
             return
         try:
-            import fcntl
-            import termios
-            import struct
-            winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
-            fcntl.ioctl(term["master"], termios.TIOCSWINSZ, winsize)
+            ttype = term.get("type")
+            if ttype == "conpty":
+                term["term"].resize(cols, rows)
+            elif ttype == "pty":
+                import fcntl
+                import termios
+                import struct
+                winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+                fcntl.ioctl(term["master"], termios.TIOCSWINSZ, winsize)
         except Exception:
             pass
 
@@ -1374,9 +1843,23 @@ class CyberVPSAgent:
             term = self.active_terminals.pop(session_id, None)
         if term:
             try:
-                term["proc"].terminate()
+                ttype = term.get("type")
+                if ttype == "conpty":
+                    term["term"].close()
+                elif ttype == "pty":
+                    term["proc"].terminate()
+                    try:
+                        os.close(term["master"])
+                    except Exception:
+                        pass
+                elif ttype == "pipe":
+                    term["proc"].terminate()
             except Exception:
                 pass
+            self.send_agent_event({
+                "type": "TerminalExit",
+                "payload": {"session_id": session_id, "exit_code": 0}
+            })
 
     # =========================================================================
     # Localhost Tunnel Proxying (HTTP & WebSocket streaming over tunnel)
@@ -1472,14 +1955,23 @@ class CyberVPSAgent:
     # Outbound Relay Communication & Heartbeats
     # =========================================================================
     def send_agent_event(self, event_data):
+        if "payload" in event_data and isinstance(event_data["payload"], dict):
+            if "token" not in event_data["payload"]:
+                event_data["payload"]["token"] = self.token
+            if "machine_id" not in event_data["payload"]:
+                event_data["payload"]["machine_id"] = self.machine_id
+
+        # First attempt WebSocket transmission for zero-latency streaming
+        if self.ws_relay and self.ws_connected:
+            try:
+                if self.ws_relay.send_text(json.dumps(event_data)):
+                    return
+            except Exception:
+                pass
+
+        # Fallback to HTTP POST
         url = f"{self.http_base}/api/v1/relay/event"
         try:
-            if "payload" in event_data and isinstance(event_data["payload"], dict):
-                if "token" not in event_data["payload"]:
-                    event_data["payload"]["token"] = self.token
-                if "machine_id" not in event_data["payload"]:
-                    event_data["payload"]["machine_id"] = self.machine_id
-
             req = urllib.request.Request(
                 url,
                 data=json.dumps(event_data).encode("utf-8"),
@@ -1609,6 +2101,13 @@ class CyberVPSAgent:
         self.send_agent_event(auth_payload)
         self.send_discovery_report()
 
+        # Start persistent WebSocket relay client
+        ws_url = self.server_url.replace("http://", "ws://").replace("https://", "wss://")
+        if not ws_url.endswith("/api/v1/relay/connect"):
+            ws_url = ws_url.rstrip("/") + "/api/v1/relay/connect"
+        self.ws_relay = RelayWebSocket(self, ws_url)
+        self.ws_relay.start()
+
         last_hb = 0
         last_disc = 0
 
@@ -1638,12 +2137,13 @@ class CyberVPSAgent:
                     self.send_discovery_report()
                     last_disc = now
 
-                self.poll_server_commands()
+                if not self.ws_connected:
+                    self.poll_server_commands()
 
                 with self.lock:
                     has_active_term = len(self.active_terminals) > 0
                 if has_active_term:
-                    time.sleep(0.08)
+                    time.sleep(0.05)
                 else:
                     time.sleep(0.5)
             except Exception:

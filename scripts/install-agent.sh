@@ -169,15 +169,22 @@ if [ $SERVICE_INSTALLED -eq 0 ]; then
     echo -e "${GREEN}Watchdog spawned in background (PID: $WATCHDOG_PID)${NC}"
 fi
 
-echo -e "\n${GREEN}[4/4] Verifying Agent Status...${NC}"
+echo -e "\n${GREEN}[4/4] Verifying Agent Status & Fleet Enrollment...${NC}"
 sleep 2
 if [ -f "$CVPS_DIR/agent.pid" ]; then
     APID=$(cat "$CVPS_DIR/agent.pid")
-    echo -e "${GREEN}âœ… CyberVPS Agent is ACTIVE and RUNNING (PID: $APID)${NC}"
+    echo -e "${GREEN}✅ CyberVPS Agent is ACTIVE and RUNNING (PID: $APID)${NC}"
 else
     echo -e "${YELLOW}Agent starting up... Check logs at: $CVPS_DIR/agent.log${NC}"
 fi
 
+ENROLL_CHECK="$(curl --connect-timeout 3 --max-time 8 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
+if echo "${ENROLL_CHECK}" | grep -q "${MACHINE_ID}"; then
+    echo -e "${GREEN}✅ Fleet enrollment confirmed with Control Plane!${NC}"
+else
+    echo -e "${YELLOW}ℹ️  Agent background service active. Telemetry will sync within 5 seconds.${NC}"
+fi
+
 echo -e "\n${CYAN}================================================================${NC}"
-echo -e "${GREEN}   ðŸŽ‰ Installation Complete! Agent Connected to Space Station   ${NC}"
+echo -e "${GREEN}   🎉 Installation Complete! Agent Running on Space Station     ${NC}"
 echo -e "${CYAN}================================================================${NC}"

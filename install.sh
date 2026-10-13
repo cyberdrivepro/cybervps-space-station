@@ -210,17 +210,20 @@ fi
 
 # 9. Verify Enrollment with Central Backend
 echo "[*] Waiting for fleet enrollment confirmation..."
-ASSIGNED_VIP="10.77.0.x"
 sleep 2
 
 if [ "$DOWNLOAD_TOOL" = "curl" ]; then
-  ENROLL_CHECK="$(curl -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
+  ENROLL_CHECK="$(curl --connect-timeout 3 --max-time 8 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
 else
-  ENROLL_CHECK="$(wget -qO- "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
+  ENROLL_CHECK="$(wget -T 8 -t 1 -qO- "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
 fi
 
+BACKEND_STATUS="Enrolling (Auto-reconnecting)"
 if echo "${ENROLL_CHECK}" | grep -q "${MACHINE_ID}"; then
   echo "  ✅ Fleet enrollment verified online!"
+  BACKEND_STATUS="Connected & Verified ✅"
+else
+  echo "  ⚠️ Fleet enrollment pending (agent initializing in background)"
 fi
 
 echo ""
@@ -228,7 +231,7 @@ echo "================================================================"
 echo "🛰️  CYBERVPS HOST AGENT - SETUP COMPLETE"
 echo "================================================================"
 echo "Host:        ${HOSTNAME} (${OS} ${ARCH})"
-echo "Backend:     ${SERVER_URL} (Connected ✅)"
+echo "Backend:     ${SERVER_URL} (${BACKEND_STATUS})"
 echo "Service:     Running 24/7 in Background (${SERVICE_MODE})"
 echo "Startup:     Automatic on Reboot"
 echo "Machine ID:  ${MACHINE_ID}"

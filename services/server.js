@@ -202,7 +202,31 @@ function broadcastTelemetry(machine) {
   }
 }
 
-function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 12000) {
+function sendHttpError(res, err) {
+  let status = 500;
+  let code = 'INTERNAL_ERROR';
+  const msg = (err && err.message) ? err.message : String(err || 'Unknown error');
+  if (msg.includes('offline') || msg.includes('not found in fleet') || msg.includes('disconnected')) {
+    status = 503;
+    code = 'MACHINE_OFFLINE';
+  } else if (msg.includes('timed out')) {
+    status = 504;
+    code = 'RPC_TIMEOUT';
+  } else if (msg.includes('not found') || msg.includes('Directory not found') || msg.includes('File not found')) {
+    status = 404;
+    code = 'NOT_FOUND';
+  } else if (msg.includes('Permission denied') || msg.includes('Access is denied')) {
+    status = 403;
+    code = 'PERMISSION_DENIED';
+  } else if (msg.includes('required') || msg.includes('Safety guard') || msg.includes('invalid')) {
+    status = 400;
+    code = 'BAD_REQUEST';
+  }
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: msg, code, status }));
+}
+
+function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const machine = db.machines.get(machineId);
     if (!machine) return reject(new Error(`Machine '${machineId}' not found in fleet`));
@@ -215,7 +239,7 @@ function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 12000) {
       reject(new Error(`Host request '${type}' timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    db.pendingRequests.set(requestId, { resolve, reject, timer });
+    db.pendingRequests.set(requestId, { resolve, reject, timer, machineId, type, createdAt: Date.now() });
 
     sendServerCommand(machineId, {
       type,
@@ -315,6 +339,22 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/x-shellscript' });
       res.end(data || '# Error loading script');
     });
+    return;
+  }
+
+  if (pathname.startsWith('/vendor/')) {
+    const safeRel = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, '');
+    const safePath = path.join(__dirname, '..', safeRel);
+    const vendorBase = path.join(__dirname, '..', 'vendor');
+    if (safePath.startsWith(vendorBase) && fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
+      const ext = path.extname(safePath).toLowerCase();
+      const mimeTypes = { '.css': 'text/css', '.js': 'application/javascript', '.map': 'application/json' };
+      res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Cache-Control': 'public, max-age=86400' });
+      fs.createReadStream(safePath).pipe(res);
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not Found');
     return;
   }
 
@@ -550,16 +590,15 @@ const server = http.createServer(async (req, res) => {
     const showHidden = parsedUrl.searchParams.get('show_hidden') === 'true';
     if (!machineId) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'machine_id parameter required' }));
+      res.end(JSON.stringify({ error: 'machine_id parameter required', code: 'BAD_REQUEST' }));
       return;
     }
     try {
-      const data = await sendAgentRequest(machineId, 'FileList', { path: dirPath, show_hidden: showHidden });
+      const data = await sendAgentRequest(machineId, 'FileList', { path: dirPath, show_hidden: showHidden }, 18000);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      sendHttpError(res, err);
     }
     return;
   }
@@ -569,16 +608,15 @@ const server = http.createServer(async (req, res) => {
     const filePath = parsedUrl.searchParams.get('path');
     if (!machineId || !filePath) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'machine_id and path required' }));
+      res.end(JSON.stringify({ error: 'machine_id and path required', code: 'BAD_REQUEST' }));
       return;
     }
     try {
-      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath });
+      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath }, 18000);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      sendHttpError(res, err);
     }
     return;
   }
@@ -590,13 +628,12 @@ const server = http.createServer(async (req, res) => {
       try {
         const { machine_id, path: filePath, content, is_base64 } = JSON.parse(body || '{}');
         if (!machine_id || !filePath) throw new Error('machine_id and path required');
-        const data = await sendAgentRequest(machine_id, 'FileWrite', { path: filePath, content, is_base64 });
+        const data = await sendAgentRequest(machine_id, 'FileWrite', { path: filePath, content, is_base64 }, 18000);
         logAudit('file_saved', 'user', machine_id, `Saved file: ${filePath}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        sendHttpError(res, err);
       }
     });
     return;
@@ -611,13 +648,12 @@ const server = http.createServer(async (req, res) => {
         if (!machine_id || !destPath || !filename) throw new Error('machine_id, path and filename required');
         const sep = destPath.includes('\\') ? '\\' : '/';
         const targetFile = destPath.endsWith(sep) ? destPath + filename : destPath + sep + filename;
-        const data = await sendAgentRequest(machine_id, 'FileWrite', { path: targetFile, content: content_base64, is_base64: true });
+        const data = await sendAgentRequest(machine_id, 'FileWrite', { path: targetFile, content: content_base64, is_base64: true }, 25000);
         logAudit('file_uploaded', 'user', machine_id, `Uploaded file: ${targetFile}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, path: targetFile, filename }));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        sendHttpError(res, err);
       }
     });
     return;
@@ -628,11 +664,11 @@ const server = http.createServer(async (req, res) => {
     const filePath = parsedUrl.searchParams.get('path');
     if (!machineId || !filePath) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'machine_id and path required' }));
+      res.end(JSON.stringify({ error: 'machine_id and path required', code: 'BAD_REQUEST' }));
       return;
     }
     try {
-      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, max_bytes: 50 * 1024 * 1024 });
+      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, max_bytes: 50 * 1024 * 1024 }, 25000);
       const filename = data.filename || 'download';
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
       if (data.is_binary && data.content_base64) {
@@ -644,8 +680,7 @@ const server = http.createServer(async (req, res) => {
       }
       logAudit('file_downloaded', 'user', machineId, `Downloaded file: ${filePath}`);
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      sendHttpError(res, err);
     }
     return;
   }
@@ -661,17 +696,16 @@ const server = http.createServer(async (req, res) => {
         const norm = targetPath.trim().replace(/[\\/]+$/, '').toLowerCase();
         if (norm === '' || norm === '/' || norm === 'c:' || norm === 'c:\\' || norm === 'c:\\windows' || norm === '/etc' || norm === '/boot') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Safety guard: Root or critical system directory deletion is blocked!' }));
+          res.end(JSON.stringify({ error: 'Safety guard: Root or critical system directory deletion is blocked!', code: 'BAD_REQUEST' }));
           return;
         }
 
-        const data = await sendAgentRequest(machine_id, 'FileDelete', { path: targetPath, recursive });
+        const data = await sendAgentRequest(machine_id, 'FileDelete', { path: targetPath, recursive }, 18000);
         logAudit('file_deleted', 'user', machine_id, `Deleted path: ${targetPath}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        sendHttpError(res, err);
       }
     });
     return;
@@ -684,13 +718,12 @@ const server = http.createServer(async (req, res) => {
       try {
         const { machine_id, old_path, new_path } = JSON.parse(body || '{}');
         if (!machine_id || !old_path || !new_path) throw new Error('machine_id, old_path and new_path required');
-        const data = await sendAgentRequest(machine_id, 'FileRename', { old_path, new_path });
+        const data = await sendAgentRequest(machine_id, 'FileRename', { old_path, new_path }, 18000);
         logAudit('file_renamed', 'user', machine_id, `Renamed ${old_path} -> ${new_path}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        sendHttpError(res, err);
       }
     });
     return;
@@ -703,13 +736,12 @@ const server = http.createServer(async (req, res) => {
       try {
         const { machine_id, path: targetPath } = JSON.parse(body || '{}');
         if (!machine_id || !targetPath) throw new Error('machine_id and path required');
-        const data = await sendAgentRequest(machine_id, 'FileMkdir', { path: targetPath });
+        const data = await sendAgentRequest(machine_id, 'FileMkdir', { path: targetPath }, 18000);
         logAudit('folder_created', 'user', machine_id, `Created folder: ${targetPath}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        sendHttpError(res, err);
       }
     });
     return;
@@ -1150,6 +1182,13 @@ wssRelay.on('connection', (ws, request) => {
       const m = db.machines.get(machineId);
       if (m) m.status = 'offline';
       logAudit('agent_disconnected', 'agent', machineId, `Node ${machineId} disconnected from relay`, 'warning');
+      for (const [reqId, pending] of db.pendingRequests.entries()) {
+        if (pending.machineId === machineId) {
+          clearTimeout(pending.timer);
+          db.pendingRequests.delete(reqId);
+          pending.reject(new Error(`Host '${machineId}' disconnected during operation`));
+        }
+      }
     }
   });
 });
@@ -1158,6 +1197,9 @@ wssTerminal.on('connection', (ws, request) => {
   const parsed = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
   const machineId = parsed.searchParams.get('machine_id');
   const sessionId = 'term_' + crypto.randomUUID().slice(0, 8);
+  const shellPref = parsed.searchParams.get('shell') || null;
+  const cols = parseInt(parsed.searchParams.get('cols') || '80', 10);
+  const rows = parseInt(parsed.searchParams.get('rows') || '24', 10);
 
   if (!machineId || !db.machines.has(machineId)) {
     ws.send(JSON.stringify({ error: 'Machine not found' }));
@@ -1170,7 +1212,7 @@ wssTerminal.on('connection', (ws, request) => {
 
   sendServerCommand(machineId, {
     type: 'TerminalStart',
-    payload: { session_id: sessionId, cols: 80, rows: 24 }
+    payload: { session_id: sessionId, cols, rows, shell: shellPref }
   });
 
   ws.on('message', (data) => {
@@ -1349,6 +1391,24 @@ function handleAgentMessage(ws, msg) {
     const sess = db.terminalSessions.get(session_id);
     if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
       sess.wsBrowser.send(JSON.stringify({ type: 'output', data }));
+    }
+    return { success: true };
+  }
+
+  else if (type === 'TerminalReady') {
+    const { session_id, shell, pid, pty } = payload;
+    const sess = db.terminalSessions.get(session_id);
+    if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
+      sess.wsBrowser.send(JSON.stringify({ type: 'ready', session_id, shell, pid, pty }));
+    }
+    return { success: true };
+  }
+
+  else if (type === 'TerminalExit') {
+    const { session_id, exit_code } = payload;
+    const sess = db.terminalSessions.get(session_id);
+    if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
+      sess.wsBrowser.send(JSON.stringify({ type: 'exit', session_id, exit_code }));
     }
     return { success: true };
   }
