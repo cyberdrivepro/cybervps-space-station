@@ -266,13 +266,21 @@ async function handleStart() {
     }
   }
 
+  let logFd = null;
+  try {
+    logFd = fs.openSync(AGENT_LOG_FILE, 'a');
+  } catch (_) {}
+
   const child = spawn(execBinary, pyArgs, {
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', logFd || 'ignore', logFd || 'ignore'],
     windowsHide: true,
     env: agentEnv
   });
   child.unref();
+  if (logFd !== null) {
+    try { fs.closeSync(logFd); } catch (_) {}
+  }
   const childPid = child.pid;
 
   fs.writeFileSync(AGENT_PID_FILE, String(childPid), 'utf8');

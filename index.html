@@ -2552,33 +2552,55 @@
       }
     }
 
-    function updateTerminalQuickChips(osLabel) {
+    function isWindowsTarget(machineOrOs) {
+      if (!machineOrOs) return false;
+      const val = (typeof machineOrOs === 'string'
+        ? machineOrOs
+        : (machineOrOs.os || machineOrOs.platform || machineOrOs.profile?.os || '')
+      ).toLowerCase();
+      return val.includes('win');
+    }
+
+    function setQuickChipsEnabled(enabled) {
       const chipsEl = document.getElementById('terminal-quick-chips');
       if (!chipsEl) return;
-      if (osLabel === 'Windows') {
+      chipsEl.querySelectorAll('button').forEach(btn => {
+        btn.disabled = !enabled;
+        btn.style.opacity = enabled ? '1' : '0.5';
+        btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+      });
+    }
+
+    function updateTerminalQuickChips(targetMachine) {
+      const chipsEl = document.getElementById('terminal-quick-chips');
+      if (!chipsEl) return;
+      const isWin = isWindowsTarget(targetMachine);
+      if (isWin) {
         chipsEl.innerHTML = `
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('whoami')">whoami</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Location')">pwd</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('dir')">dir</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Process | Select-Object -First 15')">processes</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Service | Where-Object Status -eq \\'Running\\' | Select-Object -First 15')">services</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('ipconfig')">ipconfig</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('systeminfo')">systeminfo</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('clear')">clear</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Location')">Get-Location</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-ChildItem -Force')">Get-ChildItem</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-PSDrive -PSProvider FileSystem')">Disks</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Process | Sort-Object CPU -Descending | Select-Object -First 20')">Processes</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Service | Where-Object Status -eq \\'Running\\' | Select-Object -First 20')">Services</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-NetIPAddress | Where-Object AddressFamily -eq \\'IPv4\\' | Select-Object IPAddress, InterfaceAlias')">Network</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('(Get-CimInstance Win32_OperatingSystem).LastBootUpTime')">Uptime</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('clear')">Clear</button>
         `;
       } else {
         chipsEl.innerHTML = `
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('whoami')">whoami</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('pwd')">pwd</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('ls -la')">ls -la</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('ps aux | head -20')">ps aux</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('df -h')">df -h</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('free -m')">free -m</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('ps aux | head -20')">ps aux</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('ip a')">ip a</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('uptime')">uptime</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('clear')">clear</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('clear')">Clear</button>
         `;
       }
+      setQuickChipsEnabled(appState.isTerminalReady || false);
     }
 
     function initTerminalSession(forceClear = false) {
@@ -2610,22 +2632,34 @@
         badge.innerText = 'Disconnected';
         label.innerText = 'Session: Idle';
         if (meta) meta.innerText = 'No Target';
+        appState.isTerminalReady = false;
+        setQuickChipsEnabled(false);
         return;
       }
 
       const machineObj = appState.machines.find(m => m.id === machineId);
       const hostLabel = machineObj ? (machineObj.hostname || machineObj.id) : machineId;
-      const osLabel = machineObj ? (machineObj.os || 'Linux') : 'Remote';
+      const isWin = isWindowsTarget(machineObj);
+      const osLabel = machineObj ? (machineObj.os || (isWin ? 'Windows' : 'Linux')) : (isWin ? 'Windows' : 'Remote');
       const vipLabel = machineObj?.virtual_ip ? ` | VIP: ${machineObj.virtual_ip}` : '';
 
-      updateTerminalQuickChips(osLabel);
+      appState.isTerminalReady = false;
+      updateTerminalQuickChips(machineObj || osLabel);
+      setQuickChipsEnabled(false);
 
+      // Cleanly detach previous WebSocket handlers before closing to prevent ghost disconnect events
       if (appState.activeTerminalWs) {
-        try {
-          appState.activeTerminalWs.close();
-        } catch (_) {}
+        const oldWs = appState.activeTerminalWs;
         appState.activeTerminalWs = null;
+        oldWs.onopen = null;
+        oldWs.onmessage = null;
+        oldWs.onerror = null;
+        oldWs.onclose = null;
+        try { oldWs.close(); } catch (_) {}
       }
+
+      const currentSessionToken = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      appState.activeTerminalToken = currentSessionToken;
 
       badge.className = 'badge badge-warning';
       badge.innerText = 'Connecting...';
@@ -2736,41 +2770,59 @@
         appState.activeTerminalWs = ws;
 
         ws.onopen = () => {
-          badge.className = 'badge badge-success';
-          badge.innerText = `Connected (${osLabel === 'Windows' ? 'ConPTY' : 'PTY'})`;
+          if (appState.activeTerminalToken !== currentSessionToken) return;
+          badge.className = 'badge badge-warning';
+          badge.innerText = 'Starting Shell...';
           if (appState.termInstance) {
-            appState.termInstance.writeln(`\x1b[32m[+] Interactive shell session established. Ready for input.\x1b[0m\r\n`);
-            appState.termInstance.focus();
+            appState.termInstance.writeln(`\x1b[90m[*] Transport bridge connected. Launching remote shell on host...\x1b[0m\r\n`);
           } else {
-            appendTerminalBanner(`[+] Interactive shell session established. Ready for input.\n\n`);
-          }
-          updateTerminalPromptPrefix(machineObj);
-          const input = document.getElementById('terminal-cmd-input');
-          if (input) {
-            input.placeholder = `Command buffer for ${hostLabel} (or type directly in xterm above)...`;
+            appendTerminalBanner(`[*] Transport bridge connected. Launching remote shell on host...\n`);
           }
         };
 
         ws.onmessage = (event) => {
+          if (appState.activeTerminalToken !== currentSessionToken) return;
           let raw = event.data;
           try {
             const parsed = JSON.parse(raw);
             if (parsed && parsed.data !== undefined) {
               raw = parsed.data;
             } else if (parsed && parsed.type === 'ready') {
-              badge.innerText = `Ready (${parsed.backend || (osLabel === 'Windows' ? 'ConPTY' : 'PTY')})`;
+              appState.isTerminalReady = true;
+              setQuickChipsEnabled(true);
+              const backendDisplay = parsed.backend || parsed.shell || (isWin ? 'PowerShell' : 'PTY');
+              badge.className = 'badge badge-success';
+              badge.innerText = `Ready (${backendDisplay})`;
+              const readyMsg = `\x1b[32m[+] Interactive shell session established [${backendDisplay}${parsed.pid ? ` | PID: ${parsed.pid}` : ''}]. Ready for input.\x1b[0m\r\n\r\n`;
+              if (appState.termInstance) {
+                appState.termInstance.writeln(readyMsg);
+                appState.termInstance.focus();
+              } else {
+                appendTerminalBanner(readyMsg);
+              }
+              updateTerminalPromptPrefix(machineObj);
+              const input = document.getElementById('terminal-cmd-input');
+              if (input) {
+                input.placeholder = `Command buffer for ${hostLabel} (or type directly in xterm above)...`;
+              }
               return;
             } else if (parsed && parsed.type === 'exit') {
+              appState.isTerminalReady = false;
+              setQuickChipsEnabled(false);
+              const exitCode = parsed.exit_code !== undefined ? parsed.exit_code : 0;
               badge.className = 'badge badge-subtle';
-              badge.innerText = `Exited (${parsed.exit_code || 0})`;
+              badge.innerText = `Exited (${exitCode})`;
+              const exitMsg = `\r\n\x1b[33m[-] Remote shell process exited (code: ${exitCode})\x1b[0m\r\n`;
               if (appState.termInstance) {
-                appState.termInstance.writeln('\r\n\x1b[33m[Session closed by remote process]\x1b[0m\r\n');
+                appState.termInstance.writeln(exitMsg);
               } else {
-                appendTerminalBanner(`\n[-] Session closed by remote process.\n`);
+                appendTerminalBanner(exitMsg);
               }
               return;
             } else if (parsed && parsed.error) {
-              raw = `\r\n\x1b[31m[!] Remote error: ${parsed.error}\x1b[0m\r\n`;
+              appState.isTerminalReady = false;
+              setQuickChipsEnabled(false);
+              raw = `\r\n\x1b[31m[!] Remote host error: ${parsed.error}\x1b[0m\r\n`;
             }
           } catch (_) {}
 
@@ -2782,8 +2834,11 @@
         };
 
         ws.onerror = () => {
+          if (appState.activeTerminalToken !== currentSessionToken) return;
+          appState.isTerminalReady = false;
+          setQuickChipsEnabled(false);
           badge.className = 'badge badge-danger';
-          badge.innerText = 'Relay Error';
+          badge.innerText = 'Transport Error';
           if (appState.termInstance) {
             appState.termInstance.writeln(`\r\n\x1b[31m[!] WebSocket terminal connection error to ${appConfig.serverUrl}.\x1b[0m\r\n`);
           } else {
@@ -2792,6 +2847,9 @@
         };
 
         ws.onclose = () => {
+          if (appState.activeTerminalToken !== currentSessionToken) return;
+          appState.isTerminalReady = false;
+          setQuickChipsEnabled(false);
           badge.className = 'badge badge-subtle';
           badge.innerText = 'Disconnected';
           if (appState.termInstance) {
@@ -2801,6 +2859,8 @@
           }
         };
       } catch (e) {
+        appState.isTerminalReady = false;
+        setQuickChipsEnabled(false);
         badge.className = 'badge badge-danger';
         badge.innerText = 'Failed';
         if (appState.termInstance) {
@@ -2816,8 +2876,7 @@
       const trimmed = cmd.trim();
 
       if (!appState.activeTerminalWs || appState.activeTerminalWs.readyState !== WebSocket.OPEN) {
-        showToast('Terminal not connected. Reconnecting...', 'warning');
-        initTerminalSession(false);
+        showToast('Terminal not connected. Click Reconnect to open a session.', 'warning');
         return;
       }
 

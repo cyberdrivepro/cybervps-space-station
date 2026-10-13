@@ -1726,7 +1726,14 @@ class CyberVPSAgent:
                 threading.Thread(target=self._pipe_terminal_reader, args=(session_id, p.stdout), daemon=True).start()
                 self.send_agent_event({
                     "type": "TerminalReady",
-                    "payload": {"session_id": session_id, "backend": f"Background ({backend_label})", "cols": cols, "rows": rows}
+                    "payload": {
+                        "session_id": session_id,
+                        "backend": f"Background ({backend_label})",
+                        "shell": backend_label,
+                        "pid": p.pid,
+                        "cols": cols,
+                        "rows": rows
+                    }
                 })
             except Exception as e:
                 self.send_agent_event({
@@ -1761,7 +1768,14 @@ class CyberVPSAgent:
             threading.Thread(target=self._pty_terminal_reader, args=(session_id, master), daemon=True).start()
             self.send_agent_event({
                 "type": "TerminalReady",
-                "payload": {"session_id": session_id, "backend": "pty", "cols": cols, "rows": rows}
+                "payload": {
+                    "session_id": session_id,
+                    "backend": "PTY",
+                    "shell": shell_cmd,
+                    "pid": p.pid,
+                    "cols": cols,
+                    "rows": rows
+                }
             })
 
     def _pty_terminal_reader(self, session_id, master_fd):
@@ -1786,9 +1800,18 @@ class CyberVPSAgent:
                 os.close(master_fd)
             except Exception:
                 pass
+            with self.lock:
+                term_info = self.active_terminals.pop(session_id, None)
+            exit_code = 0
+            if term_info and "proc" in term_info:
+                try:
+                    term_info["proc"].poll()
+                    exit_code = term_info["proc"].returncode if term_info["proc"].returncode is not None else 0
+                except Exception:
+                    pass
             self.send_agent_event({
                 "type": "TerminalExit",
-                "payload": {"session_id": session_id, "exit_code": 0}
+                "payload": {"session_id": session_id, "exit_code": exit_code}
             })
 
     def _pipe_terminal_reader(self, session_id, stream):
@@ -1810,9 +1833,18 @@ class CyberVPSAgent:
         except Exception:
             pass
         finally:
+            with self.lock:
+                term_info = self.active_terminals.pop(session_id, None)
+            exit_code = 0
+            if term_info and "proc" in term_info:
+                try:
+                    term_info["proc"].poll()
+                    exit_code = term_info["proc"].returncode if term_info["proc"].returncode is not None else 0
+                except Exception:
+                    pass
             self.send_agent_event({
                 "type": "TerminalExit",
-                "payload": {"session_id": session_id, "exit_code": 0}
+                "payload": {"session_id": session_id, "exit_code": exit_code}
             })
 
     def write_terminal_input(self, session_id, text):
@@ -2029,7 +2061,7 @@ class CyberVPSAgent:
                 payload.get("session_id"),
                 payload.get("cols", 80),
                 payload.get("rows", 24),
-                payload.get("shell_preference")
+                payload.get("shell") or payload.get("shell_preference")
             )
         elif c_type == "TerminalInput":
             self.write_terminal_input(payload.get("session_id"), payload.get("data", ""))

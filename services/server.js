@@ -1212,7 +1212,13 @@ wssTerminal.on('connection', (ws, request) => {
 
   sendServerCommand(machineId, {
     type: 'TerminalStart',
-    payload: { session_id: sessionId, cols, rows, shell: shellPref }
+    payload: {
+      session_id: sessionId,
+      cols,
+      rows,
+      shell: shellPref,
+      shell_preference: shellPref
+    }
   });
 
   ws.on('message', (data) => {
@@ -1396,19 +1402,17 @@ function handleAgentMessage(ws, msg) {
   }
 
   else if (type === 'TerminalReady') {
-    const { session_id, shell, pid, pty } = payload;
-    const sess = db.terminalSessions.get(session_id);
+    const sess = db.terminalSessions.get(payload.session_id);
     if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
-      sess.wsBrowser.send(JSON.stringify({ type: 'ready', session_id, shell, pid, pty }));
+      sess.wsBrowser.send(JSON.stringify({ type: 'ready', ...payload }));
     }
     return { success: true };
   }
 
   else if (type === 'TerminalExit') {
-    const { session_id, exit_code } = payload;
-    const sess = db.terminalSessions.get(session_id);
+    const sess = db.terminalSessions.get(payload.session_id);
     if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
-      sess.wsBrowser.send(JSON.stringify({ type: 'exit', session_id, exit_code }));
+      sess.wsBrowser.send(JSON.stringify({ type: 'exit', ...payload }));
     }
     return { success: true };
   }

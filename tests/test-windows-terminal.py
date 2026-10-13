@@ -69,7 +69,21 @@ for i in (1, 2, 3):
     assert f"LOOP_TICK_{i}" in loop_output, f"LOOP_TICK_{i} must be in output"
 print("  ✅ Progressive loop streaming verified (LOOP_TICK_1, 2, 3)!")
 
-print("\n[Step 4] Testing terminal teardown & cleanup...")
+print("\n[Step 4] Testing interactive prompt confirmation [Y/N] & sequential commands...")
+events.clear()
+agent.write_terminal_input(session_id, '$ans = Read-Host "AGREE_PROMPT [Y/N]"; Write-Output "ANSWER_WAS_$ans"\r\n')
+time.sleep(1.2)
+agent.write_terminal_input(session_id, "Y\r\n")
+time.sleep(1.2)
+agent.write_terminal_input(session_id, 'Write-Output "POST_CONFIRM_OK"\r\n')
+time.sleep(1.2)
+
+interactive_out = "".join(e["payload"]["data"] for e in events if e.get("type") == "TerminalOutput")
+assert "ANSWER_WAS_Y" in interactive_out, f"Expected ANSWER_WAS_Y in output, got: {interactive_out}"
+assert "POST_CONFIRM_OK" in interactive_out, f"Expected POST_CONFIRM_OK in output, got: {interactive_out}"
+print("  ✅ Interactive confirmation prompt (Read-Host -> 'Y' -> subsequent command) verified!")
+
+print("\n[Step 5] Testing terminal teardown & cleanup...")
 agent.kill_terminal(session_id)
 time.sleep(0.5)
 assert session_id not in agent.active_terminals, "Terminal session must be removed"
