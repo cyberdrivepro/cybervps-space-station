@@ -65,13 +65,16 @@ function saveConfig(data) {
 function isPidRunning(pid) {
   if (!pid || isNaN(pid)) return false;
   try {
-    if (process.platform === 'win32') {
-      const out = execSync(`tasklist /FI "PID eq ${pid}" /NH`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-      return out && out.includes(String(pid));
-    }
     process.kill(pid, 0);
     return true;
   } catch (e) {
+    if (e && e.code === 'EPERM') return true;
+    if (process.platform === 'win32') {
+      try {
+        const out = execSync(`tasklist /FI "PID eq ${pid}" /NH`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        return out && out.includes(String(pid));
+      } catch (_) {}
+    }
     return false;
   }
 }

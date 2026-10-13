@@ -2167,9 +2167,9 @@ class CyberVPSAgent:
         })
 
     def run(self):
-        print(f"[*] CyberVPS Space Station Agent v{PROTOCOL_VERSION} Starting")
-        print(f"[*] Machine ID: {self.machine_id}")
-        print(f"[*] Server Target: {self.server_url}")
+        print(f"[*] CyberVPS Space Station Agent v{PROTOCOL_VERSION} Starting", flush=True)
+        print(f"[*] Machine ID: {self.machine_id}", flush=True)
+        print(f"[*] Server Target: {self.server_url}", flush=True)
 
         profile = self.discover_device_profile()
         caps = self.get_capabilities()
@@ -2195,8 +2195,10 @@ class CyberVPSAgent:
         ws_url = self.server_url.replace("http://", "ws://").replace("https://", "wss://")
         if not ws_url.endswith("/api/v1/relay/connect"):
             ws_url = ws_url.rstrip("/") + "/api/v1/relay/connect"
+        print(f"[*] Connecting WebSocket relay transport to {ws_url}...", flush=True)
         self.ws_relay = RelayWebSocket(self, ws_url)
         self.ws_relay.start()
+        print("[*] WebSocket relay thread active.", flush=True)
 
         last_hb = 0
         last_disc = 0
@@ -2245,7 +2247,9 @@ if __name__ == "__main__":
     if log_file_env:
         try:
             os.makedirs(os.path.dirname(os.path.abspath(log_file_env)), exist_ok=True)
-            _fp = open(log_file_env, "a", encoding="utf-8", buffering=1)
+            _fp = open(log_file_env, "a", encoding="utf-8")
+            if hasattr(_fp, "reconfigure"):
+                _fp.reconfigure(line_buffering=True, write_through=True)
             sys.stdout = _fp
             sys.stderr = _fp
         except Exception:
