@@ -2169,6 +2169,14 @@ class CyberVPSAgent:
         })
 
     def run(self):
+        pid_file = os.path.join(os.path.expanduser("~"), ".cybervps", "run", "agent.pid")
+        try:
+            os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+            with open(pid_file, "w") as f:
+                f.write(str(os.getpid()))
+        except Exception:
+            pass
+
         print(f"[*] CyberVPS Space Station Agent v{PROTOCOL_VERSION} Starting", flush=True)
         print(f"[*] Machine ID: {self.machine_id}", flush=True)
         print(f"[*] Server Target: {self.server_url}", flush=True)
@@ -2205,43 +2213,52 @@ class CyberVPSAgent:
         last_hb = 0
         last_disc = 0
 
-        # Fast 2-second telemetry loop
-        while self.running:
+        try:
+            # Fast 2-second telemetry loop
+            while self.running:
+                try:
+                    now = time.time()
+                    if now - last_hb >= 2.0:
+                        metrics = self.get_system_metrics()
+                        self.send_agent_event({
+                            "type": "Heartbeat",
+                            "payload": {
+                                "machine_id": self.machine_id,
+                                "token": self.token,
+                                "timestamp": int(now),
+                                "uptime_seconds": metrics["uptime_seconds"],
+                                "cpu_usage": metrics["cpu_usage"],
+                                "memory_used_bytes": metrics["memory_used_bytes"],
+                                "memory_total_bytes": metrics["memory_total_bytes"],
+                                "disk_used_bytes": metrics["disk_used_bytes"],
+                                "disk_total_bytes": metrics["disk_total_bytes"]
+                            }
+                        })
+                        last_hb = now
+
+                    if now - last_disc > 60:
+                        self.send_discovery_report()
+                        last_disc = now
+
+                    if not self.ws_connected:
+                        self.poll_server_commands()
+
+                    with self.lock:
+                        has_active_term = len(self.active_terminals) > 0
+                    if has_active_term:
+                        time.sleep(0.05)
+                    else:
+                        time.sleep(0.5)
+                except Exception:
+                    time.sleep(1.0)
+        finally:
             try:
-                now = time.time()
-                if now - last_hb >= 2.0:
-                    metrics = self.get_system_metrics()
-                    self.send_agent_event({
-                        "type": "Heartbeat",
-                        "payload": {
-                            "machine_id": self.machine_id,
-                            "token": self.token,
-                            "timestamp": int(now),
-                            "uptime_seconds": metrics["uptime_seconds"],
-                            "cpu_usage": metrics["cpu_usage"],
-                            "memory_used_bytes": metrics["memory_used_bytes"],
-                            "memory_total_bytes": metrics["memory_total_bytes"],
-                            "disk_used_bytes": metrics["disk_used_bytes"],
-                            "disk_total_bytes": metrics["disk_total_bytes"]
-                        }
-                    })
-                    last_hb = now
-
-                if now - last_disc > 60:
-                    self.send_discovery_report()
-                    last_disc = now
-
-                if not self.ws_connected:
-                    self.poll_server_commands()
-
-                with self.lock:
-                    has_active_term = len(self.active_terminals) > 0
-                if has_active_term:
-                    time.sleep(0.05)
-                else:
-                    time.sleep(0.5)
+                if os.path.exists(pid_file):
+                    with open(pid_file, "r") as f:
+                        if f.read().strip() == str(os.getpid()):
+                            os.remove(pid_file)
             except Exception:
-                time.sleep(1.0)
+                pass
 
 
 if __name__ == "__main__":
