@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * CyberVPS SPACE STATION - Official Cross-Platform CLI
- * Commands: install, start, stop, restart, status, doctor, update, uninstall, logs, version, tunnel
+ * Unified Host Agent & Network Control CLI
+ * Commands: start, stop, restart, status, doctor, logs, config, update, uninstall, version, server
  */
 
 const { spawn, execSync } = require('child_process');
@@ -9,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const https = require('https');
 
 const VERSION = '1.0.0';
 let APP_DIR = path.resolve(__dirname, '..');
@@ -19,19 +21,79 @@ if (!fs.existsSync(path.join(APP_DIR, 'services', 'server.js'))) {
   }
 }
 
-const RUN_DIR = path.join(os.homedir(), '.cybervps', 'run');
-const LOG_DIR = path.join(os.homedir(), '.cybervps', 'logs');
+const BASE_DIR = path.join(os.homedir(), '.cybervps');
+const RUN_DIR = path.join(BASE_DIR, 'run');
+const LOG_DIR = path.join(BASE_DIR, 'logs');
+const CONFIG_FILE = path.join(BASE_DIR, 'config.json');
 const PID_FILE = path.join(RUN_DIR, 'space-station.pid');
 const LOG_FILE = path.join(LOG_DIR, 'space-station.log');
-const BRIDGE_PID_FILE = path.join(RUN_DIR, 'bridge-daemon.pid');
-const BRIDGE_LOG_FILE = path.join(LOG_DIR, 'bridge-daemon.log');
 const AGENT_PID_FILE = path.join(RUN_DIR, 'agent.pid');
 const AGENT_LOG_FILE = path.join(LOG_DIR, 'agent.log');
-
 
 // Ensure system directories exist
 if (!fs.existsSync(RUN_DIR)) fs.mkdirSync(RUN_DIR, { recursive: true });
 if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+
+function loadConfig() {
+  const defaultCfg = {
+    server_url: process.env.CYBERVPS_SERVER || 'https://cybervps-space-station.up.railway.app',
+    token: process.env.CYBERVPS_TOKEN || 'cvps_enroll_master_token',
+    machine_id: '',
+    hostname: os.hostname()
+  };
+  if (fs.existsSync(CONFIG_FILE)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      return { ...defaultCfg, ...parsed };
+    } catch (_) {}
+  }
+  return defaultCfg;
+}
+
+function saveConfig(data) {
+  try {
+    const existing = loadConfig();
+    const updated = { ...existing, ...data };
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(updated, null, 2), 'utf8');
+    return updated;
+  } catch (e) {
+    console.error(`Failed to save config: ${e.message}`);
+    return null;
+  }
+}
+
+function isPidRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function fetchJson(urlStr, timeoutMs = 3500) {
+  return new Promise((resolve) => {
+    try {
+      const parsed = new URL(urlStr);
+      const client = parsed.protocol === 'https:' ? https : http;
+      const req = client.get(urlStr, { timeout: timeoutMs }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            resolve({ statusCode: res.statusCode, data: JSON.parse(data) });
+          } catch (_) {
+            resolve({ statusCode: res.statusCode, data: null });
+          }
+        });
+      });
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.on('error', () => resolve(null));
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
 
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
@@ -39,16 +101,11 @@ const command = args[0] || 'help';
 async function main() {
   switch (command.toLowerCase()) {
     case 'start':
+    case 'agent':
       await handleStart();
       break;
     case 'stop':
       await handleStop();
-      break;
-    case 'bridge':
-      await handleBridge();
-      break;
-    case 'agent':
-      await handleAgent();
       break;
     case 'restart':
       await handleStop();
@@ -64,8 +121,11 @@ async function main() {
     case 'logs':
       handleLogs();
       break;
-    case 'tunnel':
-      await handleTunnel();
+    case 'config':
+      handleConfig();
+      break;
+    case 'server':
+      await handleServerCommand();
       break;
     case 'install':
       handleInstall();
@@ -96,380 +156,278 @@ function showHelp() {
 Usage: cybervps <command> [options]
 
 Commands:
-  start       Start Space Station Control Plane & Auto-Tunnel
-              Options: --daemon (run in background), --port <number>
-  stop        Stop running background Space Station instance
-  restart     Restart running Space Station instance
-  status      Show live health, connected fleet, and public URLs
-  doctor      Run comprehensive system diagnostics & egress tests
-  tunnel      Show active HTTPS tunnel URL & secure pairing link
-  logs        Display recent server and relay logs
-  install     Verify environment and install production dependencies
-  update      Update Space Station from GitHub repository
-  uninstall   Remove background daemon, logs, and CLI shortcuts
-  version     Display current CLI and platform version
+  start           Start CyberVPS Host Agent in background (24/7 connection)
+  stop            Stop running background Host Agent
+  restart         Restart background Host Agent
+  status          Show agent health, fleet enrollment, and central dashboard
+  doctor          Run system diagnostics, runtime checks, and egress reachability
+  logs            View real-time agent execution and streaming logs
+  config          View or update backend target URL and tokens
+  server          Manage central control plane (server start, server stop)
+  update          Update CyberVPS Space Station from GitHub repository
+  uninstall       Remove background service/task, logs, and CLI shortcuts
+  version         Display CLI version and platform runtime
 
 Examples:
-  cybervps start              Start server in foreground with live logs
-  cybervps start --daemon     Start as background daemon
-  cybervps status             Check backend reachability and node fleet
-  cybervps doctor             Inspect DNS, egress firewall, and ports
+  cybervps status               Inspect agent health and central connection
+  cybervps start                Start agent in 24/7 background mode
+  cybervps logs                 Display recent output from background agent
+  cybervps config set server    Change central backend URL
 ================================================================
 `);
 }
 
-function isPidRunning(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
 async function handleStart() {
-  const isDaemon = args.includes('--daemon');
-  const portArgIdx = args.indexOf('--port');
-  const port = portArgIdx !== -1 && args[portArgIdx + 1] ? args[portArgIdx + 1] : (process.env.PORT || '8080');
+  const config = loadConfig();
+  let serverUrl = config.server_url;
+  let token = config.token;
 
-  // Check if already running
-  if (fs.existsSync(PID_FILE)) {
-    const existingPid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
-    if (isPidRunning(existingPid)) {
-      console.log(`⚠️  Space Station is already running (PID: ${existingPid}) on port ${port}.`);
-      console.log(`   Run 'cybervps status' to view live links, or 'cybervps stop' to terminate.`);
-      return;
-    } else {
-      fs.unlinkSync(PID_FILE);
+  for (let i = 1; i < args.length; i++) {
+    if ((args[i] === '--server' || args[i] === '-s') && args[i + 1]) {
+      serverUrl = args[i + 1];
+      i++;
+    } else if ((args[i] === '--token' || args[i] === '-t') && args[i + 1]) {
+      token = args[i + 1];
+      i++;
+    } else if (args[i].startsWith('http://') || args[i].startsWith('https://')) {
+      serverUrl = args[i];
     }
   }
 
-  // Ensure production dependencies are available
-  const serverPath = path.join(APP_DIR, 'services', 'server.js');
-  if (!fs.existsSync(serverPath)) {
-    console.error(`❌ Fatal: Server entrypoint not found at ${serverPath}`);
+  // Check if agent is already running
+  if (fs.existsSync(AGENT_PID_FILE)) {
+    const existingPid = parseInt(fs.readFileSync(AGENT_PID_FILE, 'utf8').trim(), 10);
+    if (isPidRunning(existingPid)) {
+      console.log(`⚠️  CyberVPS Agent is already running in background (PID: ${existingPid}).`);
+      console.log(`   Connected to: ${serverUrl}`);
+      console.log(`   Run 'cybervps status' to inspect, or 'cybervps stop' to terminate.`);
+      return;
+    } else {
+      fs.unlinkSync(AGENT_PID_FILE);
+    }
+  }
+
+  console.log(`[*] Launching CyberVPS Host Agent connecting to ${serverUrl}...`);
+
+  const agentScript = path.join(APP_DIR, 'agent', 'universal-agent.py');
+  if (!fs.existsSync(agentScript)) {
+    console.error(`❌ Agent script not found at ${agentScript}`);
     process.exit(1);
   }
 
-  const nodeModulesPath = path.join(APP_DIR, 'node_modules', 'ws');
-  if (!fs.existsSync(nodeModulesPath)) {
-    console.log('[*] Installing required production dependencies (ws)...');
+  // Detect Python or fallback to Node
+  let execCmd = 'python';
+  try {
+    execSync('python --version', { stdio: 'ignore' });
+  } catch (_) {
     try {
-      const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-      execSync(`${npmCmd} install --omit=dev --no-audit --no-fund`, { cwd: APP_DIR, stdio: 'inherit' });
-    } catch (e) {
-      console.warn(`[!] Note: npm install returned: ${e.message}`);
+      execSync('python3 --version', { stdio: 'ignore' });
+      execCmd = 'python3';
+    } catch (_) {
+      execCmd = 'node';
     }
   }
 
+  const agentEnv = {
+    ...process.env,
+    CYBERVPS_SERVER: serverUrl,
+    CYBERVPS_TOKEN: token,
+    CYBERVPS_CONFIG: CONFIG_FILE
+  };
 
-  const env = { ...process.env, PORT: port, CYBERVPS_LOG_FILE: LOG_FILE };
+  const pyArgs = [agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
 
-  if (isDaemon) {
-    console.log(`[*] Launching CyberVPS Space Station in daemon mode on port ${port}...`);
+  // Open log file stream for daemon output
+  const outLog = fs.openSync(AGENT_LOG_FILE, 'a');
+  const errLog = fs.openSync(AGENT_LOG_FILE, 'a');
 
-    const child = spawn(process.execPath, [serverPath], {
-      cwd: APP_DIR,
-      env,
-      detached: true,
-      stdio: 'ignore'
-    });
+  const child = spawn(execCmd, pyArgs, {
+    detached: true,
+    stdio: ['ignore', outLog, errLog],
+    env: agentEnv
+  });
 
-    child.unref();
-    fs.writeFileSync(PID_FILE, String(child.pid), 'utf8');
+  child.unref();
+  fs.writeFileSync(AGENT_PID_FILE, String(child.pid), 'utf8');
 
-    console.log(`✅ Space Station daemon started with PID: ${child.pid}`);
-    console.log(`📄 Server logs: ${LOG_FILE}`);
+  console.log(`✅ CyberVPS Host Agent active in background (PID: ${child.pid}).`);
+  console.log(`   Target Backend: ${serverUrl}`);
+  console.log(`   Log output:     ${AGENT_LOG_FILE}`);
 
-    // On Windows, also automatically launch native Windows Port Bridge in background
-    if (process.platform === 'win32') {
-      const bridgeScript = path.join(APP_DIR, 'apps', 'windows-client', 'bridge-daemon.js');
-      if (fs.existsSync(bridgeScript)) {
-        try {
-          const bridgeEnv = { ...process.env, CYBERVPS_LOG_FILE: BRIDGE_LOG_FILE };
-          const bridgeChild = spawn(process.execPath, [bridgeScript, `http://localhost:${port}`], {
-            cwd: APP_DIR,
-            env: bridgeEnv,
-            detached: true,
-            stdio: 'ignore'
-          });
-          bridgeChild.unref();
-          fs.writeFileSync(BRIDGE_PID_FILE, String(bridgeChild.pid), 'utf8');
-          console.log(`🪟 Windows Port Bridge Daemon started with PID: ${bridgeChild.pid}`);
-
-        } catch (bErr) {
-          console.warn(`[!] Note: Bridge auto-spawn warning: ${bErr.message}`);
-        }
-      }
-    }
-
-    // Poll for Control Plane & Tunnel readiness
-    for (let i = 0; i < 14; i++) {
-      await new Promise(r => setTimeout(r, 500));
-      const h = await fetchJson(`http://127.0.0.1:${port}/api/v1/access/status`);
-      if (h && h.statusCode === 200 && h.data && h.data.public_url && h.data.provider !== 'none') break;
-    }
-    await handleStatus();
-
-  } else {
-    // Foreground mode
-    const child = spawn(process.execPath, [serverPath], {
-      cwd: APP_DIR,
-      env,
-      stdio: 'inherit'
-    });
-
-    fs.writeFileSync(PID_FILE, String(child.pid), 'utf8');
-
-    const cleanExit = () => {
-      if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
-      process.exit(0);
-    };
-    process.on('SIGINT', cleanExit);
-    process.on('SIGTERM', cleanExit);
-
-    child.on('exit', (code) => {
-      if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
-      process.exit(code || 0);
-    });
-  }
+  // Quick verify
+  await new Promise(r => setTimeout(r, 1200));
+  await handleStatus();
 }
 
 async function handleStop() {
   let anyStopped = false;
 
-  // Stop bridge daemon if running
-  if (fs.existsSync(BRIDGE_PID_FILE)) {
-    const bPid = parseInt(fs.readFileSync(BRIDGE_PID_FILE, 'utf8').trim(), 10);
-    if (isPidRunning(bPid)) {
-      console.log(`[*] Stopping Windows Port Bridge daemon (PID: ${bPid})...`);
-      try { process.kill(bPid, 'SIGTERM'); } catch (_) {}
-      anyStopped = true;
-    }
-    fs.unlinkSync(BRIDGE_PID_FILE);
-  }
-
-  // Stop agent daemon if running
   if (fs.existsSync(AGENT_PID_FILE)) {
-    const aPid = parseInt(fs.readFileSync(AGENT_PID_FILE, 'utf8').trim(), 10);
-    if (isPidRunning(aPid)) {
-      console.log(`[*] Stopping CyberVPS Agent daemon (PID: ${aPid})...`);
-      try { process.kill(aPid, 'SIGTERM'); } catch (_) {}
-      anyStopped = true;
+    const pid = parseInt(fs.readFileSync(AGENT_PID_FILE, 'utf8').trim(), 10);
+    if (isPidRunning(pid)) {
+      console.log(`[*] Stopping CyberVPS Agent (PID: ${pid})...`);
+      try { process.kill(pid, 'SIGTERM'); anyStopped = true; } catch (_) {}
     }
     fs.unlinkSync(AGENT_PID_FILE);
   }
 
-  // Stop server daemon
+  // On Windows, also check scheduled task
+  if (process.platform === 'win32') {
+    try {
+      execSync('schtasks /End /TN "CyberVPS-Space-Station-Agent"', { stdio: 'ignore' });
+    } catch (_) {}
+  }
+
   if (fs.existsSync(PID_FILE)) {
-    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
-    if (isPidRunning(pid)) {
-      console.log(`[*] Stopping Space Station process (PID: ${pid})...`);
-      try {
-        process.kill(pid, 'SIGTERM');
-        let stopped = false;
-        for (let i = 0; i < 10; i++) {
-          await new Promise(r => setTimeout(r, 300));
-          if (!isPidRunning(pid)) {
-            stopped = true;
-            break;
-          }
-        }
-        if (!stopped) {
-          process.kill(pid, 'SIGKILL');
-        }
-        anyStopped = true;
-      } catch (e) {
-        console.error(`❌ Failed to stop process ${pid}: ${e.message}`);
-      }
+    const sPid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    if (isPidRunning(sPid)) {
+      console.log(`[*] Stopping Central Control Plane (PID: ${sPid})...`);
+      try { process.kill(sPid, 'SIGTERM'); anyStopped = true; } catch (_) {}
     }
     fs.unlinkSync(PID_FILE);
   }
 
   if (anyStopped) {
-    console.log('✅ Space Station and background services stopped successfully.');
+    console.log('✅ CyberVPS background services stopped successfully.');
   } else {
-    console.log('ℹ️  No Space Station services were running.');
+    console.log('ℹ️  No CyberVPS processes were currently running.');
   }
-}
-
-async function handleAgent() {
-  const isDaemon = args.includes('--daemon');
-  let targetServer = 'http://localhost:8080';
-  let token = 'cvps_enroll_master_token';
-  let machineId = '';
-
-  for (let i = 1; i < args.length; i++) {
-    if ((args[i] === '--server' || args[i] === '-s') && args[i + 1]) {
-      targetServer = args[i + 1];
-      i++;
-    } else if ((args[i] === '--token' || args[i] === '-t') && args[i + 1]) {
-      token = args[i + 1];
-      i++;
-    } else if ((args[i] === '--machine-id' || args[i] === '-m') && args[i + 1]) {
-      machineId = args[i + 1];
-      i++;
-    } else if (!args[i].startsWith('-') && targetServer === 'http://localhost:8080') {
-      targetServer = args[i];
-    }
-  }
-
-  const agentScript = path.join(APP_DIR, 'agent', 'universal-agent.py');
-  if (!fs.existsSync(agentScript)) {
-    console.error(`❌ Universal agent script not found at ${agentScript}`);
-    process.exit(1);
-  }
-
-  const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
-  const pyArgs = [agentScript, targetServer, token];
-  if (machineId) pyArgs.push(machineId);
-
-  if (isDaemon) {
-    if (fs.existsSync(AGENT_PID_FILE)) {
-      const existingPid = parseInt(fs.readFileSync(AGENT_PID_FILE, 'utf8').trim(), 10);
-      if (isPidRunning(existingPid)) {
-        console.log(`⚠️  Agent daemon is already running (PID: ${existingPid}).`);
-        console.log(`   Run 'cybervps stop' to terminate.`);
-        return;
-      }
-    }
-    console.log(`[*] Starting CyberVPS Agent in background connecting to ${targetServer}...`);
-    const agentEnv = { ...process.env, CYBERVPS_LOG_FILE: AGENT_LOG_FILE };
-    const child = spawn(pyCmd, pyArgs, {
-      detached: true,
-      stdio: 'ignore',
-      env: agentEnv
-    });
-    child.unref();
-    fs.writeFileSync(AGENT_PID_FILE, String(child.pid), 'utf8');
-    console.log(`✅ Agent daemon active (PID: ${child.pid}).`);
-    console.log(`   Connected to Control Plane: ${targetServer}`);
-    console.log(`   Logs: ${AGENT_LOG_FILE}`);
-  } else {
-    console.log(`[*] Starting CyberVPS Agent in foreground connecting to ${targetServer}...`);
-    const child = spawn(pyCmd, pyArgs, { cwd: APP_DIR, stdio: 'inherit' });
-    const cleanExit = () => {
-      try { child.kill('SIGTERM'); } catch (_) {}
-      process.exit(0);
-    };
-    process.on('SIGINT', cleanExit);
-    process.on('SIGTERM', cleanExit);
-  }
-}
-
-async function handleBridge() {
-  const isDaemon = args.includes('--daemon');
-  const targetServer = args.find(a => a.startsWith('http://') || a.startsWith('https://')) || 'http://localhost:8080';
-  const bridgeScript = path.join(APP_DIR, 'apps', 'windows-client', 'bridge-daemon.js');
-
-  if (!fs.existsSync(bridgeScript)) {
-    console.error(`❌ Bridge script not found at ${bridgeScript}`);
-    process.exit(1);
-  }
-
-  if (isDaemon) {
-    console.log(`[*] Starting CyberVPS Port Bridge daemon connecting to ${targetServer}...`);
-    const bridgeEnv = { ...process.env, CYBERVPS_LOG_FILE: BRIDGE_LOG_FILE };
-    const child = spawn(process.execPath, [bridgeScript, targetServer], {
-      cwd: APP_DIR,
-      env: bridgeEnv,
-      detached: true,
-      stdio: 'ignore'
-    });
-    child.unref();
-    fs.writeFileSync(BRIDGE_PID_FILE, String(child.pid), 'utf8');
-    console.log(`✅ Port Bridge daemon active (PID: ${child.pid}).`);
-    console.log(`   Remote ports mapped on Space Station will now bind to 127.0.0.1 on this PC!`);
-  } else {
-    spawn(process.execPath, [bridgeScript, targetServer], { cwd: APP_DIR, stdio: 'inherit' });
-  }
-
-}
-
-
-function fetchJson(urlStr, timeoutMs = 2500) {
-  return new Promise((resolve) => {
-    try {
-      const parsed = new URL(urlStr);
-      const req = http.get({
-        hostname: parsed.hostname,
-        port: parsed.port || 80,
-        path: parsed.pathname + (parsed.search || ''),
-        timeout: timeoutMs
-      }, (res) => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
-          try {
-            resolve({ statusCode: res.statusCode, data: JSON.parse(data) });
-          } catch (_) {
-            resolve({ statusCode: res.statusCode, data: null });
-          }
-        });
-      });
-      req.on('timeout', () => { req.destroy(); resolve(null); });
-      req.on('error', () => resolve(null));
-    } catch (_) {
-      resolve(null);
-    }
-  });
 }
 
 async function handleStatus() {
   console.log('================================================================');
-  console.log('📊 CYBERVPS SPACE STATION STATUS');
+  console.log('🛰️  CYBERVPS SPACE STATION STATUS');
   console.log('================================================================');
 
-  let pid = null;
-  let isRunning = false;
+  const config = loadConfig();
+  const serverUrl = config.server_url;
+  const hostname = config.hostname || os.hostname();
 
-  if (fs.existsSync(PID_FILE)) {
-    pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
-    isRunning = isPidRunning(pid);
+  let aPid = null;
+  let isAgentRunning = false;
+  if (fs.existsSync(AGENT_PID_FILE)) {
+    aPid = parseInt(fs.readFileSync(AGENT_PID_FILE, 'utf8').trim(), 10);
+    isAgentRunning = isPidRunning(aPid);
   }
 
-  const port = process.env.PORT || '8080';
-  const health = await fetchJson(`http://127.0.0.1:${port}/health`);
-  const access = await fetchJson(`http://127.0.0.1:${port}/api/v1/access/status`);
+  // Check background scheduled task on Windows
+  let taskStatus = 'Not Installed';
+  if (process.platform === 'win32') {
+    try {
+      const q = execSync('schtasks /Query /TN "CyberVPS-Space-Station-Agent" /FO CSV /NH', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      if (q && q.includes('CyberVPS-Space-Station-Agent')) {
+        taskStatus = q.toLowerCase().includes('running') ? 'Running (24/7 Auto-Start)' : 'Ready (Auto-Start on Logon)';
+      }
+    } catch (_) {}
+  } else if (fs.existsSync('/etc/systemd/system/cybervps-agent.service')) {
+    taskStatus = 'Installed (systemd)';
+  }
+
+  console.log(`[Host]        ${hostname} (${process.platform}-${os.arch()})`);
+  console.log(`[Agent]       ${isAgentRunning ? `RUNNING (PID: ${aPid}) ✅` : 'STOPPED 🔴'}`);
+  if (taskStatus !== 'Not Installed') {
+    console.log(`[Autostart]   ${taskStatus} ✅`);
+  }
+
+  // Ping Central Backend
+  const t0 = Date.now();
+  const health = await fetchJson(`${serverUrl}/health`, 4000);
+  const latency = health ? `${Date.now() - t0}ms` : 'Unreachable';
+
+  console.log(`[Backend]     ${serverUrl} (${latency})`);
 
   if (health && health.statusCode === 200) {
-    console.log(`🟢 Control Plane:    ACTIVE (Listening on http://localhost:${port})`);
-    if (pid) console.log(`⚙️  Process ID:       ${pid}`);
-    console.log(`🖥️  Connected Nodes:  ${health.data.active_machines || 0}`);
-    console.log(`🌉 Port Bridges:     ${health.data.active_bridge_mappings || 0}`);
-    console.log(`🪐 Virtual Network:  ${health.data.virtual_network_cidr || '10.77.0.0/24'}`);
-
-    if (access && access.data && access.data.public_url) {
-      console.log(`🌐 Remote Access:    ${access.data.public_url} (${access.data.provider})`);
-      console.log(``);
-      console.log(`👉 Live Dashboard URL:`);
-      console.log(`   ${access.data.public_url}`);
-      console.log(`👉 GitHub Pages Linked:`);
-      console.log(`   https://cyberdrivepro.github.io/cybervps-space-station/?backend=${encodeURIComponent(access.data.public_url)}`);
-    } else {
-      console.log(`👉 Local Dashboard: http://localhost:${port}`);
+    // Check if enrolled in machine fleet
+    const mRes = await fetchJson(`${serverUrl}/api/v1/machines`, 4000);
+    if (mRes && Array.isArray(mRes.data)) {
+      const thisNode = mRes.data.find(m => m.hostname === hostname || m.id === config.machine_id);
+      if (thisNode) {
+        console.log(`[Fleet Status] ONLINE in Space Station Fleet ✅`);
+        console.log(`[Virtual IP]   ${thisNode.virtual_ip || 'Assigned'}`);
+        console.log(`[Machine ID]   ${thisNode.id}`);
+        console.log(`[Uptime]       ${thisNode.uptime_seconds || 0} seconds`);
+      } else {
+        console.log(`[Fleet Status] Enrolling... (Agent active; awaiting first heartbeat)`);
+      }
     }
   } else {
-    console.log(`🔴 Control Plane:    STOPPED / UNREACHABLE`);
-    if (isRunning) {
-      console.log(`⚠️  Process ${pid} is running, but port ${port} is not responding.`);
-    } else {
-      console.log(`ℹ️  Run 'cybervps start' to start the Space Station.`);
-    }
+    console.log(`[Fleet Status] Backend unreachable. Agent will auto-reconnect.`);
   }
+
+  console.log(``);
+  console.log(`👉 Official Single Dashboard:`);
+  console.log(`   https://cyberdrivepro.github.io/cybervps-space-station/`);
   console.log('================================================================');
 }
 
-async function handleTunnel() {
+async function handleServerCommand() {
+  const subCmd = args[1] || 'status';
   const port = process.env.PORT || '8080';
-  const access = await fetchJson(`http://127.0.0.1:${port}/api/v1/access/status`);
-  if (access && access.data && access.data.public_url) {
-    console.log(`🌐 Remote Access URL: ${access.data.public_url}`);
-    console.log(`Provider: ${access.data.provider}`);
-    console.log(`Status: ${access.data.status}`);
+  const serverPath = path.join(APP_DIR, 'services', 'server.js');
+
+  if (subCmd === 'start') {
+    if (fs.existsSync(PID_FILE)) {
+      const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+      if (isPidRunning(pid)) {
+        console.log(`⚠️  Control Plane server already running (PID: ${pid}) on port ${port}.`);
+        return;
+      }
+    }
+    console.log(`[*] Starting Central Control Plane on port ${port}...`);
+    const env = { ...process.env, PORT: port, CYBERVPS_LOG_FILE: LOG_FILE };
+    const child = spawn(process.execPath, [serverPath], { cwd: APP_DIR, env, detached: true, stdio: 'ignore' });
+    child.unref();
+    fs.writeFileSync(PID_FILE, String(child.pid), 'utf8');
+    console.log(`✅ Control Plane server active (PID: ${child.pid}) on port ${port}.`);
+  } else if (subCmd === 'stop') {
+    if (fs.existsSync(PID_FILE)) {
+      const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+      if (isPidRunning(pid)) {
+        try { process.kill(pid, 'SIGTERM'); } catch (_) {}
+        console.log(`✅ Stopped Control Plane server (PID: ${pid}).`);
+      }
+      fs.unlinkSync(PID_FILE);
+    }
   } else {
-    console.log('ℹ️  No active remote tunnel detected on http://127.0.0.1:' + port);
+    console.log(`Usage: cybervps server [start|stop]`);
   }
+}
+
+function handleConfig() {
+  const action = args[1] || 'get';
+  const key = args[2];
+  const value = args[3];
+
+  const cfg = loadConfig();
+
+  if (action === 'get') {
+    if (key) {
+      console.log(cfg[key] !== undefined ? cfg[key] : `Key '${key}' not found.`);
+    } else {
+      console.log('Current Configuration (~/.cybervps/config.json):');
+      console.log(JSON.stringify(cfg, null, 2));
+    }
+  } else if (action === 'set') {
+    if (!key || !value) {
+      console.log('Usage: cybervps config set <key> <value>');
+      return;
+    }
+    cfg[key] = value;
+    saveConfig(cfg);
+    console.log(`✅ Updated config: ${key} = ${value}`);
+  }
+}
+
+function handleLogs() {
+  const logFile = args.includes('--server') ? LOG_FILE : AGENT_LOG_FILE;
+  if (!fs.existsSync(logFile)) {
+    console.log('ℹ️  No log file found at ' + logFile);
+    return;
+  }
+  const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
+  const tail = lines.slice(-50);
+  console.log(`--- [Last ${tail.length} lines of ${logFile}] ---`);
+  console.log(tail.join('\n'));
 }
 
 async function handleDoctor() {
@@ -481,62 +439,38 @@ async function handleDoctor() {
   console.log(`[OS] CPUs: ${os.cpus().length}, Memory: ${Math.round(os.totalmem() / 1024 / 1024)} MB`);
   console.log(`[Node] Version: ${process.version}, Executable: ${process.execPath}`);
 
-  // Check npm
+  // Check Python
   try {
-    const npmVer = execSync('npm -v', { encoding: 'utf8' }).trim();
-    console.log(`[npm] Version: ${npmVer} ✅`);
+    const pyVer = execSync('python --version', { encoding: 'utf8' }).trim();
+    console.log(`[Python] ${pyVer} ✅`);
   } catch (_) {
-    console.log(`[npm] Not found in PATH ⚠️`);
+    try {
+      const py3Ver = execSync('python3 --version', { encoding: 'utf8' }).trim();
+      console.log(`[Python] ${py3Ver} ✅`);
+    } catch (_) {
+      console.log(`[Python] Python not found in PATH (Node agent fallback active) ℹ️`);
+    }
   }
 
-  // Check git
-  try {
-    const gitVer = execSync('git --version', { encoding: 'utf8' }).trim();
-    console.log(`[git] Version: ${gitVer} ✅`);
-  } catch (_) {
-    console.log(`[git] Not found in PATH ⚠️`);
-  }
-
-  // Check port 8080
-  const port = process.env.PORT || '8080';
-  const portFree = await new Promise((resolve) => {
-    const s = http.createServer();
-    s.once('error', () => resolve(false));
-    s.once('listening', () => { s.close(); resolve(true); });
-    s.listen(parseInt(port, 10), '127.0.0.1');
-  });
-  console.log(`[Port] Port ${port} status: ${portFree ? 'Available ✅' : 'Occupied (or in use by Space Station) ℹ️'}`);
-
-  // Test outbound DNS & HTTPS
+  // Outbound Egress Checks
   console.log('[Network] Checking outbound HTTPS reachability...');
   const checkUrl = (u) => new Promise(r => {
     try {
       const parsed = new URL(u);
-      const req = require('https').get({ hostname: parsed.hostname, path: '/', timeout: 4000 }, (res) => r(res.statusCode));
+      const req = https.get({ hostname: parsed.hostname, path: '/', timeout: 4000 }, (res) => r(res.statusCode));
       req.on('error', () => r(null));
       req.on('timeout', () => { req.destroy(); r(null); });
     } catch (_) { r(null); }
   });
 
   const ghStatus = await checkUrl('https://github.com');
-  console.log(`[Egress] GitHub HTTPS: ${ghStatus ? 'REACHABLE ✅' : 'UNREACHABLE / BLOCKED ❌'}`);
+  console.log(`[Egress] GitHub HTTPS:    ${ghStatus ? 'REACHABLE ✅' : 'UNREACHABLE ❌'}`);
 
-  const cfStatus = await checkUrl('https://cloudflare.com');
-  console.log(`[Egress] Cloudflare HTTPS: ${cfStatus ? 'REACHABLE ✅' : 'UNREACHABLE / BLOCKED ❌'}`);
+  const rwStatus = await checkUrl('https://cybervps-space-station.up.railway.app/health');
+  console.log(`[Egress] Railway Backend: ${rwStatus ? 'REACHABLE (200 OK) ✅' : 'UNREACHABLE ❌'}`);
 
   console.log('\n✅ Diagnostic scan complete.');
   console.log('================================================================');
-}
-
-function handleLogs() {
-  if (!fs.existsSync(LOG_FILE)) {
-    console.log('ℹ️  No log file found at ' + LOG_FILE);
-    return;
-  }
-  const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n').filter(Boolean);
-  const tail = lines.slice(-40);
-  console.log(`--- [Last ${tail.length} lines of ${LOG_FILE}] ---`);
-  console.log(tail.join('\n'));
 }
 
 function handleInstall() {
@@ -544,14 +478,11 @@ function handleInstall() {
   console.log('📦 CYBERVPS SPACE STATION DEPENDENCY INSTALLER');
   console.log('================================================================');
   try {
-    console.log(`[*] Working directory: ${APP_DIR}`);
     const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     execSync(`${npmCmd} install --omit=dev --no-audit --no-fund`, { cwd: APP_DIR, stdio: 'inherit' });
-    console.log('\n🎉 Space Station dependencies verified and installed successfully!');
-    console.log('👉 Run "cybervps start" to launch.');
+    console.log('\n🎉 Dependencies installed successfully!');
   } catch (e) {
     console.error(`❌ Installation error: ${e.message}`);
-    process.exit(1);
   }
 }
 
@@ -560,32 +491,32 @@ function handleUpdate() {
   console.log('🔄 UPDATING CYBERVPS SPACE STATION FROM GITHUB');
   console.log('================================================================');
   try {
-    console.log('[*] Fetching latest changes from origin/main...');
     execSync('git pull origin main', { cwd: APP_DIR, stdio: 'inherit' });
-    console.log('[*] Verifying dependencies...');
-    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    execSync(`${npmCmd} install --omit=dev --no-audit --no-fund`, { cwd: APP_DIR, stdio: 'inherit' });
     console.log('\n🎉 CyberVPS Space Station updated to latest version!');
   } catch (e) {
     console.error(`❌ Update failed: ${e.message}`);
-    console.log('Please ensure git is installed and network access is available.');
   }
 }
-
 
 function handleUninstall() {
   console.log('================================================================');
   console.log('🗑️  UNINSTALL CYBERVPS SPACE STATION');
   console.log('================================================================');
-  if (fs.existsSync(PID_FILE)) {
-    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
-    if (isPidRunning(pid)) {
-      console.log(`[*] Terminating running daemon (PID: ${pid})...`);
-      try { process.kill(pid, 'SIGKILL'); } catch (_) {}
-    }
-    fs.unlinkSync(PID_FILE);
+  handleStop();
+
+  if (process.platform === 'win32') {
+    try {
+      execSync('schtasks /Delete /TN "CyberVPS-Space-Station-Agent" /F', { stdio: 'ignore' });
+      console.log('[*] Removed Windows Scheduled Task.');
+    } catch (_) {}
+  } else if (fs.existsSync('/etc/systemd/system/cybervps-agent.service')) {
+    try {
+      execSync('systemctl disable --now cybervps-agent.service; rm -f /etc/systemd/system/cybervps-agent.service; systemctl daemon-reload', { stdio: 'ignore' });
+      console.log('[*] Removed systemd service.');
+    } catch (_) {}
   }
-  console.log('✅ Daemons stopped. You can safely remove the repository folder.');
+
+  console.log('✅ Background agent removed cleanly. You can remove ~/.cybervps if desired.');
 }
 
 main().catch(err => {

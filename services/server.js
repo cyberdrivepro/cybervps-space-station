@@ -66,7 +66,7 @@ class VirtualIpPool {
 
 const vpnPool = new VirtualIpPool();
 
-// In-Memory Data Store
+// In-Memory Data Store with Durable Persistence
 const db = {
   machines: new Map(),
   ports: new Map(), // machine_id -> [PortObservation]
@@ -81,6 +81,78 @@ const db = {
   terminalSessions: new Map() // session_id -> { machine_id, wsBrowser }
 };
 
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const STATE_FILE = path.join(DATA_DIR, 'server-state.json');
+
+function loadPersistentState() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(STATE_FILE)) {
+      const raw = fs.readFileSync(STATE_FILE, 'utf8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.machines)) {
+        for (const m of data.machines) {
+          db.machines.set(m.id, m);
+          if (m.virtual_ip) {
+            vpnPool.allocated.set(m.id, m.virtual_ip);
+            const host = parseInt(m.virtual_ip.split('.')[3], 10);
+            if (!isNaN(host)) vpnPool.used.add(host);
+          }
+        }
+      }
+      if (Array.isArray(data.ports)) {
+        for (const p of data.ports) {
+          db.ports.set(p.machine_id, p.ports || []);
+        }
+      }
+      if (Array.isArray(data.bridgeMappings)) {
+        for (const b of data.bridgeMappings) {
+          db.bridgeMappings.set(b.id, b);
+        }
+      }
+      if (Array.isArray(data.tunnels)) {
+        for (const t of data.tunnels) {
+          db.tunnels.set(t.id, t);
+        }
+      }
+      if (Array.isArray(data.auditLogs)) {
+        db.auditLogs = data.auditLogs.slice(0, 500);
+      }
+      console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels`);
+    }
+  } catch (err) {
+    console.warn(`[WARN] Could not load persistent state: ${err.message}`);
+  }
+}
+
+let saveStateTimeout = null;
+function savePersistentState() {
+  if (saveStateTimeout) return;
+  saveStateTimeout = setTimeout(() => {
+    saveStateTimeout = null;
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      const data = {
+        machines: Array.from(db.machines.values()),
+        ports: Array.from(db.ports.entries()).map(([mid, pts]) => ({ machine_id: mid, ports: pts })),
+        bridgeMappings: Array.from(db.bridgeMappings.values()),
+        tunnels: Array.from(db.tunnels.values()),
+        auditLogs: db.auditLogs.slice(0, 300)
+      };
+      fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+      console.warn(`[WARN] Could not save persistent state: ${err.message}`);
+    }
+  }, 500);
+}
+
+// Load state immediately on startup
+loadPersistentState();
+
 function logAudit(eventType, actor, machineId, details, severity = 'info') {
   const event = {
     id: 'aud_' + crypto.randomUUID().slice(0, 8),
@@ -94,6 +166,7 @@ function logAudit(eventType, actor, machineId, details, severity = 'info') {
   db.auditLogs.unshift(event);
   if (db.auditLogs.length > 500) db.auditLogs.pop();
   console.log(`[AUDIT] [${event.severity.toUpperCase()}] ${eventType}: ${details}`);
+  savePersistentState();
 }
 
 function getMachineStatus(m) {
@@ -104,8 +177,8 @@ function getMachineStatus(m) {
   }
   const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
   const diff = Date.now() - lastSeenMs;
-  if (diff < 35000) return 'online';
-  if (diff < 75000) return 'reconnecting';
+  if (diff < 40000) return 'online';
+  if (diff < 90000) return 'reconnecting';
   return 'offline';
 }
 
@@ -118,7 +191,7 @@ const server = http.createServer(async (req, res) => {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Machine-ID, X-Enrollment-Token');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Machine-ID, X-Enrollment-Token, X-CVPS-Pairing-Key');
 
   if (method === 'OPTIONS') {
     res.writeHead(204);

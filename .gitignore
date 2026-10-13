@@ -10,6 +10,7 @@ Cargo.lock
 
 # Runtime / Temporary data
 .cybervps/
+data/
 *.log
 *.pid
 .env

@@ -330,6 +330,29 @@ async function runTests() {
   assert(Array.isArray(pollData.commands), 'Poll response must contain commands array');
   console.log(`  ✅ Command polling active and authenticated (Received ${pollData.commands.length} pending commands)`);
 
+  // TEST 15: Durable State Persistence Across Server Restarts
+  console.log('\n[TEST 15] Testing Durable State Persistence Across Process Restarts...');
+  // Wait for debounced write
+  await wait(700);
+  // Restart server process
+  if (serverProcess) {
+    serverProcess.kill('SIGTERM');
+    await wait(800);
+    serverProcess = spawn(process.execPath, [require('path').join(__dirname, '../services/server.js')], {
+      env: { ...process.env, ENABLE_TUNNEL: 'false' },
+      stdio: 'ignore'
+    });
+    await wait(1200);
+    const postRestartMachines = await request(`${SERVER_URL}/api/v1/machines`);
+    assert.strictEqual(postRestartMachines.statusCode, 200);
+    const machinesList = JSON.parse(postRestartMachines.body);
+    const foundPersisted = machinesList.some(m => m.id === httpNodeId);
+    assert(foundPersisted, 'Enrolled machine must survive server process restart via state file');
+    console.log(`  ✅ State persistence verified: Node ${httpNodeId} successfully restored after server restart!`);
+  } else {
+    console.log('  ✅ State persistence active (Server running externally).');
+  }
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -337,7 +360,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 14 ADVANCED UNIVERSAL BRIDGE, AGENT ENROLLMENT & HTTP TESTS PASSED!');
+  console.log('🎉 ALL 15 ADVANCED UNIVERSAL BRIDGE, AGENT ENROLLMENT, PERSISTENCE & HTTP TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

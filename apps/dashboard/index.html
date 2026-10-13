@@ -1188,8 +1188,16 @@
     const isGitHubPages = window.location.hostname.endsWith('github.io');
     const defaultOrigin = isGitHubPages ? 'https://cybervps-space-station.up.railway.app' : window.location.origin;
 
+    let savedUrl = localStorage.getItem('cvps_server_url');
+    if (window.location.protocol === 'https:' && savedUrl && savedUrl.startsWith('http://')) {
+      savedUrl = null;
+    }
+    if (savedUrl && savedUrl.includes('trycloudflare.com')) {
+      savedUrl = null;
+    }
+
     let appConfig = {
-      serverUrl: localStorage.getItem('cvps_server_url') || defaultOrigin,
+      serverUrl: savedUrl || defaultOrigin,
       pairingKey: localStorage.getItem('cvps_pairing_key') || '',
       refreshInterval: parseInt(localStorage.getItem('cvps_refresh_interval') || '4000', 10),
       theme: localStorage.getItem('cvps_theme') || 'dark'

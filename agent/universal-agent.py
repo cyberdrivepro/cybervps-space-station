@@ -36,9 +36,27 @@ class CyberVPSAgent:
         self.uptime_start = time.time()
         
     def generate_machine_id(self):
+        home = os.path.expanduser("~")
+        mid_file = os.path.join(home, ".cybervps", "machine_id")
+        try:
+            if os.path.exists(mid_file):
+                with open(mid_file, "r") as f:
+                    saved = f.read().strip()
+                    if saved:
+                        return saved
+        except Exception:
+            pass
+
         hostname = socket.gethostname()
         rand_suffix = "%08x" % random.randint(0, 0xFFFFFFFF)
-        return f"cvps_{hostname}_{rand_suffix}"
+        new_id = f"cvps_{hostname}_{rand_suffix}"
+        try:
+            os.makedirs(os.path.dirname(mid_file), exist_ok=True)
+            with open(mid_file, "w") as f:
+                f.write(new_id)
+        except Exception:
+            pass
+        return new_id
 
     def get_capabilities(self):
         is_root = False
@@ -579,10 +597,32 @@ class CyberVPSAgent:
 
 
 if __name__ == "__main__":
-    target = os.environ.get("CYBERVPS_SERVER", "http://localhost:8080")
+    target = os.environ.get("CYBERVPS_SERVER", "https://cybervps-space-station.up.railway.app")
     token = os.environ.get("CYBERVPS_TOKEN", "cvps_enroll_master_token")
     mid = os.environ.get("CYBERVPS_MACHINE_ID", None)
 
+    # 1. Attempt to load ~/.cybervps/config.json
+    cfg_path = os.environ.get("CYBERVPS_CONFIG")
+    if not cfg_path:
+        home = os.path.expanduser("~")
+        candidate = os.path.join(home, ".cybervps", "config.json")
+        if os.path.exists(candidate):
+            cfg_path = candidate
+
+    if cfg_path and os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r") as f:
+                cfg = json.load(f)
+                if cfg.get("server_url"):
+                    target = cfg["server_url"]
+                if cfg.get("token"):
+                    token = cfg["token"]
+                if cfg.get("machine_id"):
+                    mid = cfg["machine_id"]
+        except Exception as e:
+            print(f"[!] Warning reading config {cfg_path}: {e}")
+
+    # 2. Command-line overrides
     args = sys.argv[1:]
     i = 0
     pos_idx = 0
@@ -596,6 +636,21 @@ if __name__ == "__main__":
             i += 2
         elif a in ("--machine-id", "-m") and i + 1 < len(args):
             mid = args[i + 1]
+            i += 2
+        elif a in ("--config", "-c") and i + 1 < len(args):
+            c_file = args[i + 1]
+            if os.path.exists(c_file):
+                try:
+                    with open(c_file, "r") as f:
+                        c_data = json.load(f)
+                        if c_data.get("server_url"):
+                            target = c_data["server_url"]
+                        if c_data.get("token"):
+                            token = c_data["token"]
+                        if c_data.get("machine_id"):
+                            mid = c_data["machine_id"]
+                except Exception:
+                    pass
             i += 2
         elif not a.startswith("-"):
             if pos_idx == 0:
