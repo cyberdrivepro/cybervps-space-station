@@ -39,7 +39,7 @@ class TunnelManager {
   async verifyUrlReachability(targetUrl, timeoutMs = 6000) {
     return new Promise((resolve) => {
       try {
-        const parsed = url.parse(targetUrl);
+        const parsed = new URL(targetUrl);
         const client = parsed.protocol === 'https:' ? https : http;
         const testPath = (parsed.pathname === '/' || !parsed.pathname) ? '/health' : `${parsed.pathname.replace(/\/$/, '')}/health`;
 
