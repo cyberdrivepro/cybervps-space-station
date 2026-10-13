@@ -116,12 +116,16 @@ Write-Host "[*] Saved host configuration in $ConfigFile" -ForegroundColor Green
 # 5. Copy CLI to BinDir and Add to PATH
 Copy-Item (Join-Path $InstallDir "bin\*") $BinDir -Force -Recurse
 
-# Create cybervps.ps1 wrapper
-$Ps1Wrapper = @"
-`$ErrorActionPreference = 'Stop'
-node "`$PSScriptRoot\cybervps" `$args
+try {
+    Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# Create cybervps.cmd wrapper for universal Command Prompt & PowerShell compatibility
+$CmdWrapper = @"
+@echo off
+node "%~dp0cybervps" %*
 "@
-Set-Content -Path (Join-Path $BinDir "cybervps.ps1") -Value $Ps1Wrapper -Force
+Set-Content -Path (Join-Path $BinDir "cybervps.cmd") -Value $CmdWrapper -Force
 
 $UserPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
 if ($UserPath -notlike "*$BinDir*") {

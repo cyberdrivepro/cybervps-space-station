@@ -1221,7 +1221,7 @@ wssTerminal.on('connection', (ws, request) => {
       let inputData = null;
       try {
         const msg = JSON.parse(str);
-        if (msg && msg.type === 'input') {
+        if (msg && (msg.type === 'input' || (!msg.type && typeof msg.data === 'string'))) {
           inputData = msg.data;
         } else if (msg && msg.type === 'resize') {
           sendServerCommand(machineId, {
