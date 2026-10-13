@@ -252,18 +252,16 @@ async function handleStart() {
     PYTHONUNBUFFERED: '1',
     CYBERVPS_SERVER: serverUrl,
     CYBERVPS_TOKEN: token,
-    CYBERVPS_CONFIG: CONFIG_FILE
+    CYBERVPS_CONFIG: CONFIG_FILE,
+    CYBERVPS_LOG_FILE: AGENT_LOG_FILE
   };
 
   const pyArgs = ['-u', agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
 
-  // Open log file stream for daemon output
-  const outLog = fs.openSync(AGENT_LOG_FILE, 'a');
-  const errLog = fs.openSync(AGENT_LOG_FILE, 'a');
-
   const child = spawn(execCmd, pyArgs, {
     detached: true,
-    stdio: ['ignore', outLog, errLog],
+    stdio: 'ignore',
+    windowsHide: true,
     env: agentEnv
   });
 

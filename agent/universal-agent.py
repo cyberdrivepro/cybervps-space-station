@@ -1614,40 +1614,53 @@ class CyberVPSAgent:
 
         # Fast 2-second telemetry loop
         while self.running:
-            now = time.time()
-            if now - last_hb >= 2.0:
-                metrics = self.get_system_metrics()
-                self.send_agent_event({
-                    "type": "Heartbeat",
-                    "payload": {
-                        "machine_id": self.machine_id,
-                        "token": self.token,
-                        "timestamp": int(now),
-                        "uptime_seconds": metrics["uptime_seconds"],
-                        "cpu_usage": metrics["cpu_usage"],
-                        "memory_used_bytes": metrics["memory_used_bytes"],
-                        "memory_total_bytes": metrics["memory_total_bytes"],
-                        "disk_used_bytes": metrics["disk_used_bytes"],
-                        "disk_total_bytes": metrics["disk_total_bytes"]
-                    }
-                })
-                last_hb = now
+            try:
+                now = time.time()
+                if now - last_hb >= 2.0:
+                    metrics = self.get_system_metrics()
+                    self.send_agent_event({
+                        "type": "Heartbeat",
+                        "payload": {
+                            "machine_id": self.machine_id,
+                            "token": self.token,
+                            "timestamp": int(now),
+                            "uptime_seconds": metrics["uptime_seconds"],
+                            "cpu_usage": metrics["cpu_usage"],
+                            "memory_used_bytes": metrics["memory_used_bytes"],
+                            "memory_total_bytes": metrics["memory_total_bytes"],
+                            "disk_used_bytes": metrics["disk_used_bytes"],
+                            "disk_total_bytes": metrics["disk_total_bytes"]
+                        }
+                    })
+                    last_hb = now
 
-            if now - last_disc > 60:
-                self.send_discovery_report()
-                last_disc = now
+                if now - last_disc > 60:
+                    self.send_discovery_report()
+                    last_disc = now
 
-            self.poll_server_commands()
+                self.poll_server_commands()
 
-            with self.lock:
-                has_active_term = len(self.active_terminals) > 0
-            if has_active_term:
-                time.sleep(0.08)
-            else:
-                time.sleep(0.5)
+                with self.lock:
+                    has_active_term = len(self.active_terminals) > 0
+                if has_active_term:
+                    time.sleep(0.08)
+                else:
+                    time.sleep(0.5)
+            except Exception:
+                time.sleep(1.0)
 
 
 if __name__ == "__main__":
+    log_file_env = os.environ.get("CYBERVPS_LOG_FILE")
+    if log_file_env:
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(log_file_env)), exist_ok=True)
+            _fp = open(log_file_env, "a", encoding="utf-8", buffering=1)
+            sys.stdout = _fp
+            sys.stderr = _fp
+        except Exception:
+            pass
+
     target = os.environ.get("CYBERVPS_SERVER", "https://cybervps-space-station.up.railway.app")
     token = os.environ.get("CYBERVPS_TOKEN", "cvps_enroll_master_token")
     mid = os.environ.get("CYBERVPS_MACHINE_ID", None)
