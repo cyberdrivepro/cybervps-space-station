@@ -41,6 +41,16 @@ async function runTests() {
   console.log('🧪 RUNNING CYBERVPS UNIVERSAL NETWORK BRIDGE VERIFICATION SUITE');
   console.log('================================================================\n');
 
+  // Auto-spawn server if not running
+  let serverProcess = null;
+  const healthCheck = await request(`${SERVER_URL}/health`).catch(() => null);
+  if (!healthCheck || healthCheck.statusCode !== 200) {
+    console.log('[*] Starting local Space Station Control Plane for testing...');
+    const { spawn } = require('child_process');
+    serverProcess = spawn(process.execPath, [require('path').join(__dirname, '../services/server.js')], { stdio: 'ignore' });
+    await wait(1000);
+  }
+
   // TEST 1: Control Plane Health & Virtual Network Configuration
   console.log('[TEST 1] Verifying Control Plane & Virtual Network configuration...');
   const healthRes = await request(`${SERVER_URL}/health`);
@@ -215,6 +225,7 @@ async function runTests() {
   winBridge.stop();
   agentWs.close();
   localTargetApp.close();
+  if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
   console.log('🎉 ALL 8 ADVANCED UNIVERSAL BRIDGE VERIFICATION TESTS PASSED!');
