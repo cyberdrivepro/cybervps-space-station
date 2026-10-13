@@ -354,7 +354,7 @@ async function handleStatus() {
     isAgentRunning = isPidRunning(aPid);
   }
 
-  // Check background scheduled task on Windows
+  // Check background scheduled task or logon autostart on Windows
   let taskStatus = 'Not Installed';
   if (process.platform === 'win32') {
     try {
@@ -363,6 +363,20 @@ async function handleStatus() {
         taskStatus = q.toLowerCase().includes('running') ? 'Running (24/7 Auto-Start)' : 'Ready (Auto-Start on Logon)';
       }
     } catch (_) {}
+    if (taskStatus === 'Not Installed') {
+      try {
+        const reg = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v CyberVPS-Agent', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        if (reg && reg.includes('CyberVPS-Agent')) {
+          taskStatus = 'Configured (User Registry Autostart)';
+        }
+      } catch (_) {}
+    }
+    if (taskStatus === 'Not Installed') {
+      const startupLink = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'CyberVPS-Agent.lnk');
+      if (fs.existsSync(startupLink)) {
+        taskStatus = 'Configured (User Startup Shortcut)';
+      }
+    }
   } else if (fs.existsSync('/etc/systemd/system/cybervps-agent.service')) {
     taskStatus = 'Installed (systemd)';
   }
@@ -553,6 +567,17 @@ function handleUninstall() {
     try {
       execSync('schtasks /Delete /TN "CyberVPS-Space-Station-Agent" /F', { stdio: 'ignore' });
       console.log('[*] Removed Windows Scheduled Task.');
+    } catch (_) {}
+    try {
+      execSync('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v CyberVPS-Agent /f', { stdio: 'ignore' });
+      console.log('[*] Removed User Registry Autostart key.');
+    } catch (_) {}
+    try {
+      const startupLink = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'CyberVPS-Agent.lnk');
+      if (fs.existsSync(startupLink)) {
+        fs.unlinkSync(startupLink);
+        console.log('[*] Removed User Startup shortcut.');
+      }
     } catch (_) {}
   } else if (fs.existsSync('/etc/systemd/system/cybervps-agent.service')) {
     try {

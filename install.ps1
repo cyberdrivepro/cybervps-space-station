@@ -203,8 +203,8 @@ try {
     Write-Warning "Could not verify backend health: $_"
 }
 
-# 7. Configure 24/7 Silent Background Windows Service (Scheduled Task + VBScript)
-Write-Host "[*] Registering persistent Windows Scheduled Task..." -ForegroundColor Cyan
+# 7. Configure 24/7 Silent Background Windows Service (Startup Shortcut + Registry Run Key + Task Scheduler)
+Write-Host "[*] Configuring silent background autostart on logon..." -ForegroundColor Cyan
 
 # Generate silent VBScript launcher (SW_HIDE = 0, zero flashing cmd window)
 $VbsScript = Join-Path $BinDir "run-agent.vbs"
@@ -214,29 +214,38 @@ WshShell.Run "node """ & CreateObject("Scripting.FileSystemObject").GetParentFol
 "@
 Set-Content -Path $VbsScript -Value $VbsContent -Force
 
+# Method A: User Startup Shortcut (Non-Admin & Standard Users)
+try {
+    $StartupDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::Startup)
+    if (Test-Path $StartupDir) {
+        $WshShell = New-Object -ComObject WScript.Shell
+        $Shortcut = $WshShell.CreateShortcut((Join-Path $StartupDir "CyberVPS-Agent.lnk"))
+        $Shortcut.TargetPath = "wscript.exe"
+        $Shortcut.Arguments = "//B //Nologo `"$VbsScript`""
+        $Shortcut.WindowStyle = 7
+        $Shortcut.Save()
+        Write-Host "  ✅ User Startup shortcut registered (Autostart on Logon)." -ForegroundColor Green
+    }
+} catch {}
+
+# Method B: HKCU Run Registry Key (Standard User, zero UAC prompt)
+try {
+    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Value "wscript.exe //B //Nologo `"$VbsScript`"" -Force
+    Write-Host "  ✅ User Registry autostart key registered (HKCU Run)." -ForegroundColor Green
+} catch {}
+
+# Method C: Scheduled Task (If elevated admin privileges available)
+$TaskName = "CyberVPS-Space-Station-Agent"
 $oldEap = $ErrorActionPreference
 $ErrorActionPreference = 'SilentlyContinue'
 try {
-    # Check if task already exists
     & schtasks.exe /Query /TN $TaskName 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
         & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
     }
-    # Create task running at user logon, completely hidden
     $TaskRun = "`"wscript.exe`" //B //Nologo `"$VbsScript`""
     & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  ✅ Windows Scheduled Task '$TaskName' registered (Autostart on Logon)." -ForegroundColor Green
-    } else {
-        # Fallback to direct wscript path
-        & schtasks.exe /Create /TN $TaskName /TR "wscript.exe `"$VbsScript`"" /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  ✅ Windows Scheduled Task '$TaskName' registered (Autostart on Logon)." -ForegroundColor Green
-        }
-    }
-} catch {
-    Write-Warning "Could not register scheduled task: $_"
-} finally {
+} catch {} finally {
     $ErrorActionPreference = $oldEap
 }
 
