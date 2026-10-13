@@ -1,0 +1,10 @@
+[package]
+name = "cybervps-agent-platform-windows"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+cybervps-shared-types = { path = "../../crates/shared-types" }
+sysinfo.workspace = true

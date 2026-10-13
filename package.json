@@ -1,0 +1,13 @@
+{
+  "name": "cybervps-space-station",
+  "version": "1.0.0",
+  "description": "Universal Remote VPS Control, Secure Tunnel Network & Cross-Platform Hosting Platform",
+  "main": "services/server.js",
+  "scripts": {
+    "start": "node services/server.js",
+    "test": "node tests/run-all-tests.js"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}

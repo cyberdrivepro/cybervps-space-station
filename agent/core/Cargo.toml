@@ -1,0 +1,28 @@
+[package]
+name = "cybervps-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+cybervps-protocol = { path = "../../crates/protocol" }
+cybervps-shared-types = { path = "../../crates/shared-types" }
+cybervps-configuration = { path = "../../crates/configuration" }
+cybervps-observability = { path = "../../crates/observability" }
+cybervps-agent-discovery = { path = "../discovery" }
+cybervps-agent-terminal = { path = "../terminal" }
+cybervps-agent-tunnel = { path = "../tunnel" }
+cybervps-agent-platform-linux = { path = "../platform-linux" }
+cybervps-agent-platform-windows = { path = "../platform-windows" }
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+clap.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sysinfo.workspace = true
+base64.workspace = true
+anyhow.workspace = true

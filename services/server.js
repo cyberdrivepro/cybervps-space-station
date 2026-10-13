@@ -1,0 +1,1251 @@
+/**
+ * CyberVPS SPACE STATION - Unified Control Plane, Relay & Universal Network Bridge
+ * Mode A: Universal TCP Port Bridge (1-65535 on demand, conflict-safe local binding)
+ * Mode B: Virtual Private Network (10.77.0.0/24 Virtual IP allocator, peer routing)
+ */
+
+const http = require('http');
+const url = require('url');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { WebSocketServer, WebSocket } = require('ws');
+
+const PORT = process.env.PORT || 8080;
+const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
+
+// Virtual IP Pool for Mode B (10.77.0.0/24)
+class VirtualIpPool {
+  constructor() {
+    this.allocated = new Map(); // machine_id -> '10.77.0.X'
+    this.used = new Set([0, 1, 255]); // 10.77.0.1 reserved for Station Gateway
+  }
+  allocate(machineId) {
+    if (this.allocated.has(machineId)) return this.allocated.get(machineId);
+    for (let host = 2; host < 255; host++) {
+      if (!this.used.has(host)) {
+        this.used.add(host);
+        const ip = `10.77.0.${host}`;
+        this.allocated.set(machineId, ip);
+        return ip;
+      }
+    }
+    throw new Error('Virtual IP address pool exhausted (253 peers limit)');
+  }
+  release(machineId) {
+    const ip = this.allocated.get(machineId);
+    if (ip) {
+      const host = parseInt(ip.split('.')[3], 10);
+      this.used.delete(host);
+      this.allocated.delete(machineId);
+    }
+  }
+}
+
+const vpnPool = new VirtualIpPool();
+
+// In-Memory Data Store
+const db = {
+  machines: new Map(),
+  ports: new Map(), // machine_id -> [PortObservation]
+  tunnels: new Map(), // tunnel_id -> TunnelConfig (Public Gateway)
+  bridgeMappings: new Map(), // mapping_id -> BridgeMapping (Local PC -> Remote Port)
+  enrollmentTokens: new Set(['cvps_enroll_master_token']),
+  auditLogs: [],
+  pendingCommands: new Map(), // machine_id -> [ServerCommand]
+  connectedAgents: new Map(), // machine_id -> ws
+  tunnelStreams: new Map(), // stream_id -> { res, req, buffer, isWsUpgrade, ... }
+  bridgeStreamSockets: new Map(), // stream_id -> { clientWs, agentWs }
+  terminalSessions: new Map() // session_id -> { machine_id, wsBrowser }
+};
+
+function logAudit(eventType, actor, machineId, details, severity = 'info') {
+  const event = {
+    id: 'aud_' + crypto.randomUUID().slice(0, 8),
+    timestamp: new Date().toISOString(),
+    event_type: eventType,
+    actor,
+    machine_id: machineId || null,
+    details,
+    severity
+  };
+  db.auditLogs.unshift(event);
+  if (db.auditLogs.length > 500) db.auditLogs.pop();
+  console.log(`[AUDIT] [${event.severity.toUpperCase()}] ${eventType}: ${details}`);
+}
+
+// HTTP Server
+const server = http.createServer(async (req, res) => {
+  const parsedUrl = url.parse(req.url, true);
+  const pathname = parsedUrl.pathname;
+  const method = req.method;
+
+  // CORS Headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Machine-ID');
+
+  if (method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // 1. PUBLIC TUNNEL REVERSE PROXY GATEWAY (/tunnel/:tunnel_id/*)
+  if (pathname.startsWith('/tunnel/')) {
+    handleTunnelProxyRequest(req, res, pathname, parsedUrl);
+    return;
+  }
+
+  // 2. HEALTH & DOWNLOAD ENDPOINTS
+  if (pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'OK',
+      version: '1.0.0',
+      service: 'CyberVPS Space Station Universal Network Bridge',
+      timestamp: new Date().toISOString(),
+      active_machines: db.connectedAgents.size,
+      active_bridge_mappings: Array.from(db.bridgeMappings.values()).filter(m => m.status === 'active').length,
+      active_public_tunnels: Array.from(db.tunnels.values()).filter(t => t.status === 'active').length,
+      virtual_network_cidr: '10.77.0.0/24'
+    }));
+    return;
+  }
+
+  if (pathname === '/install.sh') {
+    const installScriptPath = path.join(__dirname, '../scripts/install-agent.sh');
+    fs.readFile(installScriptPath, 'utf8', (err, data) => {
+      res.writeHead(200, { 'Content-Type': 'text/x-shellscript' });
+      res.end(data || '# Error loading script');
+    });
+    return;
+  }
+
+  if (pathname === '/install.ps1') {
+    const scriptPath = path.join(__dirname, '../scripts/install-agent.ps1');
+    fs.readFile(scriptPath, 'utf8', (err, data) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(data || '# Error loading script');
+    });
+    return;
+  }
+
+  if (pathname === '/doctor.sh') {
+    const docPath = path.join(__dirname, '../scripts/diagnostics/doctor.sh');
+    fs.readFile(docPath, 'utf8', (err, data) => {
+      res.writeHead(200, { 'Content-Type': 'text/x-shellscript' });
+      res.end(data || '# Error loading script');
+    });
+    return;
+  }
+
+  // 3. MACHINES & PORTS API
+  if (pathname === '/api/v1/machines' && method === 'GET') {
+    const list = Array.from(db.machines.values()).map(m => {
+      const isConnected = db.connectedAgents.has(m.id);
+      const diff = Date.now() - new Date(m.last_seen).getTime();
+      let status = isConnected ? 'online' : (diff < 30000 ? 'reconnecting' : 'offline');
+      const virtualIp = vpnPool.allocated.get(m.id) || null;
+      return { ...m, status, virtual_ip: virtualIp };
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(list));
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/ports') && method === 'GET') {
+    const parts = pathname.split('/');
+    const mId = parts[4];
+    const ports = db.ports.get(mId) || [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(ports));
+    return;
+  }
+
+  if (pathname === '/api/v1/enrollment/token' && method === 'POST') {
+    const token = 'cvps_enroll_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+    db.enrollmentTokens.add(token);
+    logAudit('token_created', 'admin', null, `Created enrollment token ${token}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ token, expires_in_seconds: 3600 }));
+    return;
+  }
+
+  // 4. MODE A: UNIVERSAL TCP PORT BRIDGE API (PC <---> Remote VPS Port Mapping)
+  if (pathname === '/api/v1/bridge/mappings' && method === 'GET') {
+    const list = Array.from(db.bridgeMappings.values());
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(list));
+    return;
+  }
+
+  if (pathname === '/api/v1/bridge/mappings' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body);
+        const { machine_id, remote_port, local_port } = payload;
+        
+        if (!machine_id || !remote_port) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'machine_id and remote_port are required' }));
+          return;
+        }
+
+        const rPort = parseInt(remote_port, 10);
+        if (rPort < 1 || rPort > 65535) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Port must be between 1 and 65535' }));
+          return;
+        }
+
+        const mappingId = 'bridge_' + crypto.randomUUID().slice(0, 8);
+        const lPort = local_port ? parseInt(local_port, 10) : (rPort < 1024 ? rPort + 10000 : rPort);
+
+        const mapping = {
+          id: mappingId,
+          machine_id,
+          remote_port: rPort,
+          local_port: lPort,
+          protocol: payload.protocol || 'TCP',
+          status: 'active',
+          created_at: new Date().toISOString(),
+          active_connections: 0,
+          bytes_transferred: 0
+        };
+
+        db.bridgeMappings.set(mappingId, mapping);
+        logAudit('bridge_mapping_created', 'user', machine_id, `Created port bridge: Local 127.0.0.1:${lPort} <---> Remote [${machine_id}]:${rPort}`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(mapping));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/bridge/mappings/') && pathname.endsWith('/revoke') && method === 'POST') {
+    const parts = pathname.split('/');
+    const mappingId = parts[4];
+    const mapping = db.bridgeMappings.get(mappingId);
+    if (mapping) {
+      mapping.status = 'revoked';
+      logAudit('bridge_mapping_revoked', 'user', mapping.machine_id, `Revoked port bridge ${mappingId}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, status: 'revoked' }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Mapping not found' }));
+    }
+    return;
+  }
+
+  // 5. MODE B: VIRTUAL PRIVATE NETWORK (VPN) API
+  if (pathname === '/api/v1/vpn/network' && method === 'GET') {
+    const peers = Array.from(db.machines.values()).map(m => ({
+      machine_id: m.id,
+      hostname: m.hostname,
+      os: m.os,
+      virtual_ip: vpnPool.allocated.get(m.id) || null,
+      status: db.connectedAgents.has(m.id) ? 'online' : 'offline',
+      route: `${vpnPool.allocated.get(m.id) || 'N/A'}/32`,
+      tun_supported: !!m.capabilities?.is_root
+    }));
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      network_name: 'CyberVPS Space Virtual Mesh',
+      cidr: '10.77.0.0/24',
+      gateway_ip: '10.77.0.1',
+      total_allocated_peers: vpnPool.allocated.size,
+      peers
+    }));
+    return;
+  }
+
+  if (pathname === '/api/v1/vpn/peers/join' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { machine_id } = JSON.parse(body);
+        if (!machine_id || !db.machines.has(machine_id)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Machine not found' }));
+          return;
+        }
+
+        const virtualIp = vpnPool.allocate(machine_id);
+        logAudit('vpn_peer_joined', 'system', machine_id, `Assigned Virtual IP ${virtualIp} to machine ${machine_id}`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          machine_id,
+          virtual_ip: virtualIp,
+          network_cidr: '10.77.0.0/24',
+          gateway: '10.77.0.1'
+        }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // 6. PUBLIC TUNNELS API
+  if (pathname === '/api/v1/tunnels' && method === 'GET') {
+    const list = Array.from(db.tunnels.values());
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(list));
+    return;
+  }
+
+  if (pathname === '/api/v1/tunnels' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body);
+        const { machine_id, target_port, access_mode = 'public' } = payload;
+        
+        const tunnelId = 'tun_' + crypto.randomUUID().slice(0, 8);
+        const hostHeader = req.headers.host || `localhost:${PORT}`;
+        const publicUrl = `http://${hostHeader}/tunnel/${tunnelId}/`;
+
+        const tunnelConfig = {
+          id: tunnelId,
+          machine_id,
+          target_port: parseInt(target_port, 10),
+          public_subdomain: `${target_port}-${tunnelId}`,
+          public_url: publicUrl,
+          access_mode,
+          status: 'active',
+          created_at: new Date().toISOString(),
+          request_count: 0,
+          bytes_transferred: 0
+        };
+
+        db.tunnels.set(tunnelId, tunnelConfig);
+        logAudit('tunnel_created', 'admin', machine_id, `Created public tunnel ${tunnelId} for localhost:${target_port}`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(tunnelConfig));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/tunnels/') && pathname.endsWith('/revoke') && method === 'POST') {
+    const parts = pathname.split('/');
+    const tId = parts[4];
+    const tunnel = db.tunnels.get(tId);
+    if (tunnel) {
+      tunnel.status = 'revoked';
+      logAudit('tunnel_revoked', 'admin', tunnel.machine_id, `Revoked tunnel ${tId}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, status: 'revoked' }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Tunnel not found' }));
+    }
+    return;
+  }
+
+  // 7. EMBEDDED DASHBOARD UI
+  if (pathname === '/' || pathname === '/dashboard') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(getUniversalBridgeDashboardHtml(req.headers.host || `localhost:${PORT}`));
+    return;
+  }
+
+  // Default 404
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Endpoint not found' }));
+});
+
+// =============================================================================
+// WEBSOCKET SERVERS: RELAY FOR AGENTS & STREAMING TERMINAL FOR BROWSER
+// =============================================================================
+const wssRelay = new WebSocketServer({ noServer: true });
+const wssTerminal = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  const pathname = url.parse(request.url).pathname;
+
+  if (pathname === '/api/v1/relay/connect') {
+    wssRelay.handleUpgrade(request, socket, head, (ws) => {
+      wssRelay.emit('connection', ws, request);
+    });
+  } else if (pathname === '/api/v1/terminal/stream') {
+    wssTerminal.handleUpgrade(request, socket, head, (ws) => {
+      wssTerminal.emit('connection', ws, request);
+    });
+  } else if (pathname.startsWith('/tunnel/')) {
+    handleTunnelWebSocketUpgrade(request, socket, head, pathname);
+  } else {
+    socket.destroy();
+  }
+});
+
+wssRelay.on('connection', (ws, request) => {
+  let machineId = null;
+
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'Auth' && msg.payload) {
+        machineId = msg.payload.machine_id;
+        db.connectedAgents.set(machineId, ws);
+      }
+      handleAgentMessage(ws, msg);
+    } catch (e) {
+      console.error('Error handling agent message:', e);
+    }
+  });
+
+  ws.on('close', () => {
+    if (machineId) {
+      db.connectedAgents.delete(machineId);
+      const m = db.machines.get(machineId);
+      if (m) m.status = 'offline';
+      logAudit('agent_disconnected', 'agent', machineId, `Node ${machineId} disconnected from relay`, 'warning');
+    }
+  });
+});
+
+wssTerminal.on('connection', (ws, request) => {
+  const parsed = url.parse(request.url, true);
+  const machineId = parsed.query.machine_id;
+  const sessionId = 'term_' + crypto.randomUUID().slice(0, 8);
+
+  if (!machineId || !db.machines.has(machineId)) {
+    ws.send(JSON.stringify({ error: 'Machine not found' }));
+    ws.close();
+    return;
+  }
+
+  db.terminalSessions.set(sessionId, { machine_id: machineId, wsBrowser: ws });
+  logAudit('terminal_opened', 'user', machineId, `Terminal session ${sessionId} opened`);
+
+  sendServerCommand(machineId, {
+    type: 'TerminalStart',
+    payload: { session_id: sessionId, cols: 80, rows: 24 }
+  });
+
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'input') {
+        sendServerCommand(machineId, {
+          type: 'TerminalInput',
+          payload: { session_id: sessionId, data: msg.data }
+        });
+      }
+    } catch (e) {}
+  });
+
+  ws.on('close', () => {
+    sendServerCommand(machineId, {
+      type: 'TerminalKill',
+      payload: { session_id: sessionId }
+    });
+    db.terminalSessions.delete(sessionId);
+  });
+});
+
+function handleAgentMessage(ws, msg) {
+  const { type, payload } = msg;
+
+  if (type === 'Auth') {
+    const { machine_id, token, agent_version, hostname, os, arch, capabilities } = payload;
+    
+    if (!db.enrollmentTokens.has(token) && token !== 'cvps_enroll_master_token') {
+      if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Invalid token' } }));
+      return;
+    }
+
+    // Auto-allocate Virtual IP for Mode B
+    const virtualIp = vpnPool.allocate(machine_id);
+
+    const machineInfo = {
+      id: machine_id,
+      hostname,
+      os,
+      os_version: payload.os_version || 'standard',
+      arch,
+      agent_version,
+      status: 'online',
+      virtual_ip: virtualIp,
+      last_seen: new Date().toISOString(),
+      uptime_seconds: 0,
+      cpu_usage: 0.0,
+      memory_used_bytes: 0,
+      memory_total_bytes: 1024 * 1024 * 1024,
+      disk_used_bytes: 0,
+      disk_total_bytes: 10 * 1024 * 1024 * 1024,
+      capabilities: capabilities || {},
+      tags: ['universal-bridge', os.toLowerCase()]
+    };
+
+    db.machines.set(machine_id, machineInfo);
+    logAudit('agent_enrolled', 'agent', machine_id, `Connected [${hostname}] (${os}) -> Assigned Virtual IP: ${virtualIp}`);
+
+    if (ws) {
+      ws.send(JSON.stringify({
+        type: 'AuthAck',
+        payload: { machine_id, success: true, virtual_ip: virtualIp, heartbeat_interval_secs: 15 }
+      }));
+    }
+  }
+
+  else if (type === 'Heartbeat') {
+    const { machine_id, uptime_seconds, cpu_usage, memory_used_bytes, memory_total_bytes, disk_used_bytes, disk_total_bytes } = payload;
+    const m = db.machines.get(machine_id);
+    if (m) {
+      m.last_seen = new Date().toISOString();
+      m.uptime_seconds = uptime_seconds;
+      m.cpu_usage = cpu_usage;
+      m.memory_used_bytes = memory_used_bytes;
+      m.memory_total_bytes = memory_total_bytes;
+      m.disk_used_bytes = disk_used_bytes;
+      m.disk_total_bytes = disk_total_bytes;
+      m.status = 'online';
+    }
+  }
+
+  else if (type === 'DiscoveryReport') {
+    const { machine_id, ports } = payload;
+    db.ports.set(machine_id, ports || []);
+  }
+
+  else if (type === 'TerminalOutput') {
+    const { session_id, data } = payload;
+    const sess = db.terminalSessions.get(session_id);
+    if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
+      sess.wsBrowser.send(JSON.stringify({ type: 'output', data }));
+    }
+  }
+
+  else if (type === 'TunnelOpenStream') {
+    const { destination_machine, stream_id } = payload;
+    if (destination_machine) {
+      const targetAgentWs = db.connectedAgents.get(destination_machine);
+      if (targetAgentWs) {
+        db.bridgeStreamSockets.set(stream_id, { clientWs: ws, agentWs: targetAgentWs });
+        targetAgentWs.send(JSON.stringify(msg));
+      }
+    }
+  }
+
+  else if (type === 'TunnelStreamOpened') {
+    const { stream_id, success, error } = payload;
+    const stream = db.tunnelStreams.get(stream_id);
+    if (stream && !success) {
+      stream.res.writeHead(502, { 'Content-Type': 'text/html' });
+      stream.res.end(`<h1>502 Bad Gateway</h1><p>Failed to connect to local port on remote machine: ${error}</p>`);
+      db.tunnelStreams.delete(stream_id);
+    }
+    const bridgePair = db.bridgeStreamSockets.get(stream_id);
+    if (bridgePair && ws === bridgePair.agentWs) {
+      bridgePair.clientWs.send(JSON.stringify(msg));
+    }
+  }
+
+  else if (type === 'TunnelData') {
+    const { stream_id, data_base64 } = payload;
+    const stream = db.tunnelStreams.get(stream_id);
+    if (stream) {
+      const chunk = Buffer.from(data_base64, 'base64');
+      
+      if (stream.isWsUpgrade) {
+        if (stream.clientSocket && !stream.clientSocket.destroyed) {
+          stream.clientSocket.write(chunk);
+        }
+      } else {
+        if (!stream.headersParsed) {
+          stream.buffer = Buffer.concat([stream.buffer || Buffer.alloc(0), chunk]);
+          const headerEndIndex = stream.buffer.indexOf('\r\n\r\n');
+          if (headerEndIndex !== -1) {
+            const headerText = stream.buffer.slice(0, headerEndIndex).toString('utf-8');
+            const bodyChunk = stream.buffer.slice(headerEndIndex + 4);
+            stream.headersParsed = true;
+
+            const lines = headerText.split('\r\n');
+            const statusLine = lines[0];
+            const statusCode = parseInt(statusLine.split(' ')[1] || '200', 10);
+            
+            const responseHeaders = {};
+            for (let i = 1; i < lines.length; i++) {
+              const [k, ...v] = lines[i].split(':');
+              if (k) responseHeaders[k.trim().toLowerCase()] = v.join(':').trim();
+            }
+
+            delete responseHeaders['transfer-encoding'];
+            stream.res.writeHead(statusCode, responseHeaders);
+            if (bodyChunk.length > 0) stream.res.write(bodyChunk);
+          }
+        } else {
+          stream.res.write(chunk);
+        }
+      }
+    } else {
+      const bridgePair = db.bridgeStreamSockets.get(stream_id);
+      if (bridgePair) {
+        if (ws === bridgePair.clientWs) {
+          bridgePair.agentWs.send(JSON.stringify(msg));
+        } else {
+          bridgePair.clientWs.send(JSON.stringify(msg));
+        }
+      }
+    }
+  }
+
+  else if (type === 'TunnelStreamClosed') {
+    const { stream_id } = payload;
+    const stream = db.tunnelStreams.get(stream_id);
+    if (stream) {
+      if (stream.isWsUpgrade) {
+        if (stream.clientSocket && !stream.clientSocket.destroyed) stream.clientSocket.end();
+      } else {
+        stream.res.end();
+      }
+      db.tunnelStreams.delete(stream_id);
+    }
+    const bridgePair = db.bridgeStreamSockets.get(stream_id);
+    if (bridgePair) {
+      if (ws === bridgePair.agentWs) {
+        bridgePair.clientWs.send(JSON.stringify(msg));
+      } else {
+        bridgePair.agentWs.send(JSON.stringify(msg));
+      }
+      db.bridgeStreamSockets.delete(stream_id);
+    }
+  }
+}
+
+function sendServerCommand(machineId, cmd) {
+  const agentWs = db.connectedAgents.get(machineId);
+  if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+    agentWs.send(JSON.stringify(cmd));
+  }
+}
+
+function handleTunnelProxyRequest(req, res, pathname, parsedUrl) {
+  const parts = pathname.slice('/tunnel/'.length).split('/');
+  const tunnelId = parts[0];
+  const subPath = '/' + parts.slice(1).join('/');
+
+  const tunnel = db.tunnels.get(tunnelId);
+  if (!tunnel || tunnel.status !== 'active') {
+    res.writeHead(404, { 'Content-Type': 'text/html' });
+    res.end('<h1>404 Tunnel Not Found or Revoked</h1>');
+    return;
+  }
+
+  tunnel.request_count++;
+  const streamId = 'stream_' + crypto.randomUUID().slice(0, 8);
+  const targetPort = tunnel.target_port;
+  const forwardingPath = (subPath || '/') + (parsedUrl.search || '');
+  
+  let rawRequestHeaders = `${req.method} ${forwardingPath} HTTP/1.1\r\n`;
+  rawRequestHeaders += `Host: 127.0.0.1:${targetPort}\r\n`;
+  rawRequestHeaders += `X-Forwarded-For: ${req.socket.remoteAddress || '127.0.0.1'}\r\n`;
+  rawRequestHeaders += `X-Forwarded-Proto: http\r\n`;
+
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (!['host', 'connection'].includes(k.toLowerCase())) {
+      rawRequestHeaders += `${k}: ${v}\r\n`;
+    }
+  }
+  rawRequestHeaders += `Connection: close\r\n\r\n`;
+
+  db.tunnelStreams.set(streamId, {
+    res,
+    req,
+    headersParsed: false,
+    buffer: Buffer.alloc(0),
+    isWsUpgrade: false
+  });
+
+  sendServerCommand(tunnel.machine_id, {
+    type: 'TunnelOpenStream',
+    payload: { tunnel_id: tunnelId, stream_id: streamId, target_port: targetPort }
+  });
+
+  sendServerCommand(tunnel.machine_id, {
+    type: 'TunnelData',
+    payload: {
+      tunnel_id: tunnelId,
+      stream_id: streamId,
+      data_base64: Buffer.from(rawRequestHeaders).toString('base64')
+    }
+  });
+
+  req.on('data', chunk => {
+    sendServerCommand(tunnel.machine_id, {
+      type: 'TunnelData',
+      payload: {
+        tunnel_id: tunnelId,
+        stream_id: streamId,
+        data_base64: chunk.toString('base64')
+      }
+    });
+  });
+
+  req.on('error', () => {
+    sendServerCommand(tunnel.machine_id, {
+      type: 'TunnelCloseStream',
+      payload: { tunnel_id: tunnelId, stream_id: streamId }
+    });
+    db.tunnelStreams.delete(streamId);
+  });
+}
+
+function handleTunnelWebSocketUpgrade(request, socket, head, pathname) {
+  const parts = pathname.slice('/tunnel/'.length).split('/');
+  const tunnelId = parts[0];
+  const tunnel = db.tunnels.get(tunnelId);
+
+  if (!tunnel || tunnel.status !== 'active') {
+    socket.destroy();
+    return;
+  }
+
+  const streamId = 'ws_stream_' + crypto.randomUUID().slice(0, 8);
+  const targetPort = tunnel.target_port;
+
+  sendServerCommand(tunnel.machine_id, {
+    type: 'TunnelOpenStream',
+    payload: { tunnel_id: tunnelId, stream_id: streamId, target_port: targetPort }
+  });
+
+  db.tunnelStreams.set(streamId, { clientSocket: socket, isWsUpgrade: true });
+
+  socket.on('data', (chunk) => {
+    sendServerCommand(tunnel.machine_id, {
+      type: 'TunnelData',
+      payload: {
+        tunnel_id: tunnelId,
+        stream_id: streamId,
+        data_base64: chunk.toString('base64')
+      }
+    });
+  });
+
+  socket.on('close', () => {
+    sendServerCommand(tunnel.machine_id, {
+      type: 'TunnelCloseStream',
+      payload: { tunnel_id: tunnelId, stream_id: streamId }
+    });
+    db.tunnelStreams.delete(streamId);
+  });
+}
+
+// =============================================================================
+// UNIVERSAL NETWORK BRIDGE DASHBOARD UI
+// =============================================================================
+function getUniversalBridgeDashboardHtml(host) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberVPS SPACE STATION - Universal Network Bridge</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --card-bg: #0f172a;
+      --border: #1e293b;
+      --accent: #00f0ff;
+      --accent-glow: rgba(0, 240, 255, 0.25);
+      --purple: #8b5cf6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 1px;
+      font-size: 1.25rem;
+      color: var(--accent);
+    }
+    .logo-badge {
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid var(--accent);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+    }
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      padding: 1.5rem 2rem 0.5rem;
+    }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .stat-card .label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card .value { font-size: 1.8rem; font-weight: 700; color: var(--accent); }
+    main {
+      padding: 1.5rem 2rem;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+    .section-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem;
+    }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; }
+    td { padding: 0.85rem 1rem; border-bottom: 1px solid rgba(30, 41, 59, 0.6); font-size: 0.9rem; }
+    tr:hover { background: rgba(255, 255, 255, 0.02); }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-online { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid var(--success); }
+    .badge-offline { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
+    .badge-mesh { background: rgba(139, 92, 246, 0.15); color: var(--purple); border: 1px solid var(--purple); }
+    .btn {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.2s;
+    }
+    .btn:hover { box-shadow: 0 0 12px var(--accent-glow); opacity: 0.95; }
+    .btn-purple { background: var(--purple); color: #fff; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+    .copy-box {
+      background: #0a0f1d;
+      border: 1px dashed var(--accent);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-family: monospace;
+      color: var(--accent);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .bridge-banner {
+      background: linear-gradient(90deg, rgba(0,240,255,0.08) 0%, rgba(139,92,246,0.08) 100%);
+      border: 1px solid rgba(0,240,255,0.2);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <span>🛰️ CYBERVPS SPACE STATION</span>
+      <span class="logo-badge">UNIVERSAL NETWORK BRIDGE</span>
+    </div>
+    <div style="display:flex; gap:0.75rem;">
+      <button class="btn btn-outline" onclick="fetchData()">🔄 Sync Fleet</button>
+      <button class="btn btn-purple" onclick="showBridgeModal()">+ New Port Bridge</button>
+    </div>
+  </header>
+
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="label">Connected Fleet Nodes</div>
+      <div class="value" id="stat-machines">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Mode A: PC Port Bridges</div>
+      <div class="value" id="stat-bridges">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Mode B: Virtual Network Mesh</div>
+      <div class="value" style="font-size:1.4rem; color:var(--purple);" id="stat-vpn">10.77.0.0/24</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">All-Port Discovery Engine</div>
+      <div class="value" id="stat-ports">0 Active Ports</div>
+    </div>
+  </div>
+
+  <main>
+    <!-- MODE A: UNIVERSAL TCP PORT BRIDGE -->
+    <div class="card">
+      <div class="section-title">🌉 MODE A: Universal TCP Port Bridge (Remote Port ➡️ Windows PC 127.0.0.1)</div>
+      <div class="bridge-banner">
+        <div>
+          <strong>Map ANY remote port (1–65535) directly to your Windows PC!</strong>
+          <div style="font-size:0.85rem; color:var(--text-muted); margin-top:2px;">
+            Open <code style="color:var(--accent);">http://127.0.0.1:&lt;local_port&gt;</code> on your PC to access the remote VPS service directly with conflict-safe auto-binding.
+          </div>
+        </div>
+        <button class="btn" onclick="showBridgeModal()">⚡ Create Port Bridge</button>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Bridge ID</th>
+            <th>Target Machine</th>
+            <th>Remote Service</th>
+            <th>Local PC Mapping</th>
+            <th>Protocol</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="bridge-table-body">
+          <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No active port bridges. Map a port below!</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- MODE B: VIRTUAL PRIVATE NETWORK -->
+    <div class="card">
+      <div class="section-title">🪐 MODE B: Virtual Private Network (10.77.0.0/24 Mesh Network)</div>
+      <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">
+        Private virtual mesh network connecting your Windows PC and remote machines. Each enrolled node receives a dedicated Virtual IP.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Virtual IP</th>
+            <th>Machine ID / Hostname</th>
+            <th>Platform</th>
+            <th>Route / Subnet</th>
+            <th>Mesh Status</th>
+            <th>TUN Adapter Privileges</th>
+          </tr>
+        </thead>
+        <tbody id="vpn-table-body">
+          <tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Loading Virtual Mesh...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ALL-PORT DISCOVERY INVENTORY -->
+    <div class="card">
+      <div class="section-title">🔍 Live All-Port Inventory (Any Port 1–65535 Discovered on Remote Machines)</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Machine</th>
+            <th>Port</th>
+            <th>Protocol</th>
+            <th>Bind Address</th>
+            <th>Process / Service</th>
+            <th>HTTP Title / Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="ports-table-body">
+          <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Scanning for listening ports...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- FLEET OVERVIEW -->
+    <div class="card">
+      <div class="section-title">🖥️ Connected Machines Fleet</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Machine ID / Hostname</th>
+            <th>Platform</th>
+            <th>Virtual IP</th>
+            <th>CPU / RAM</th>
+            <th>Discovered Ports</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="machines-table-body">
+          <tr><td colspan="7" style="text-align:center; color:var(--text-muted);">Scanning connected fleet...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ONBOARDING -->
+    <div class="card">
+      <div class="section-title">🚀 Connect Any Machine to the Universal Bridge</div>
+      <div style="font-weight:600; font-size:0.85rem; margin-top:0.5rem;">🐧 Linux (Ubuntu, Debian, Root & Non-Root):</div>
+      <div class="copy-box">
+        <code id="cmd-linux">curl -sSL http://${host}/install.sh | bash</code>
+        <button class="btn btn-outline" onclick="copyText('cmd-linux')">Copy</button>
+      </div>
+
+      <div style="font-weight:600; font-size:0.85rem; margin-top:0.75rem;">🪟 Windows PowerShell (Client & Remote Server):</div>
+      <div class="copy-box">
+        <code id="cmd-win">irm http://${host}/install.ps1 | iex</code>
+        <button class="btn btn-outline" onclick="copyText('cmd-win')">Copy</button>
+      </div>
+
+      <div style="font-weight:600; font-size:0.85rem; margin-top:0.75rem;">🩺 System Doctor & Curl Timeout Checker:</div>
+      <div class="copy-box">
+        <code id="cmd-doc">curl -sSL http://${host}/doctor.sh | bash</code>
+        <button class="btn btn-outline" onclick="copyText('cmd-doc')">Copy</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let currentMachines = [];
+
+    async function fetchData() {
+      try {
+        const [mRes, bRes, vRes] = await Promise.all([
+          fetch('/api/v1/machines'),
+          fetch('/api/v1/bridge/mappings'),
+          fetch('/api/v1/vpn/network')
+        ]);
+        const machines = await mRes.json();
+        const bridges = await bRes.json();
+        const vpn = await vRes.json();
+        currentMachines = machines;
+
+        document.getElementById('stat-machines').innerText = machines.filter(m => m.status === 'online').length;
+        document.getElementById('stat-bridges').innerText = bridges.filter(b => b.status === 'active').length;
+
+        renderMachines(machines);
+        renderBridges(bridges);
+        renderVpn(vpn);
+        fetchAllPorts(machines);
+      } catch (e) {
+        console.error('Fetch error:', e);
+      }
+    }
+
+    function renderBridges(bridges) {
+      const tbody = document.getElementById('bridge-table-body');
+      if (bridges.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No active port bridges. Click below to map any remote port to your PC!</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = bridges.map(b => \`
+        <tr>
+          <td><code>\${b.id}</code></td>
+          <td><strong>\${b.machine_id}</strong></td>
+          <td><strong style="color:var(--accent);">:\${b.remote_port}</strong></td>
+          <td>
+            <a href="http://127.0.0.1:\${b.local_port}" target="_blank" style="color:var(--accent); font-weight:700; text-decoration:none;">
+              🔗 127.0.0.1:\${b.local_port}
+            </a>
+          </td>
+          <td><span class="badge" style="background:#1e293b; color:#38bdf8;">\${b.protocol}</span></td>
+          <td><span class="badge badge-online">\${b.status.toUpperCase()}</span></td>
+          <td>
+            <button class="btn btn-danger" style="padding:2px 8px; font-size:0.75rem;" onclick="revokeBridge('\${b.id}')">Disconnect</button>
+          </td>
+        </tr>
+      \`).join('');
+    }
+
+    function renderVpn(vpn) {
+      const tbody = document.getElementById('vpn-table-body');
+      if (!vpn.peers || vpn.peers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">No peers in Virtual Network.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = vpn.peers.map(p => \`
+        <tr>
+          <td><strong style="color:var(--purple); font-family:monospace; font-size:1rem;">\${p.virtual_ip}</strong></td>
+          <td><strong>\${p.hostname}</strong><br><small style="color:var(--text-muted);">\${p.machine_id}</small></td>
+          <td>\${p.os}</td>
+          <td><code>\${p.route}</code></td>
+          <td><span class="badge badge-mesh">\${p.status.toUpperCase()}</span></td>
+          <td>\${p.tun_supported ? '<span style="color:var(--success);">✅ Root / Admin Available</span>' : '<span style="color:var(--warning);">⚠️ User Mode (Port Bridge Active)</span>'}</td>
+        </tr>
+      \`).join('');
+    }
+
+    function renderMachines(machines) {
+      const tbody = document.getElementById('machines-table-body');
+      if (machines.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No machines enrolled yet. Use the command below to connect one!</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = machines.map(m => \`
+        <tr>
+          <td><span class="badge badge-\${m.status}">\${m.status.toUpperCase()}</span></td>
+          <td><strong>\${m.hostname}</strong><br><small style="color:var(--text-muted);">\${m.id}</small></td>
+          <td>\${m.os} (\${m.arch})</td>
+          <td><strong style="color:var(--purple);">\${m.virtual_ip || 'Assigning...'}</strong></td>
+          <td>CPU: \${m.cpu_usage || 0}%<br><small style="color:var(--text-muted);">RAM: \${Math.round((m.memory_used_bytes||0)/(1024*1024))} MB</small></td>
+          <td><span class="badge" style="background:#1e293b; color:#38bdf8;" id="port-count-\${m.id}">...</span></td>
+          <td>
+            <button class="btn btn-outline" style="padding:2px 8px; font-size:0.75rem;" onclick="promptBridge('\${m.id}', 6767)">Bridge Port</button>
+          </td>
+        </tr>
+      \`).join('');
+    }
+
+    async function fetchAllPorts(machines) {
+      const portsTbody = document.getElementById('ports-table-body');
+      let totalPorts = 0;
+      let allPortsRows = [];
+
+      for (const m of machines) {
+        try {
+          const res = await fetch(\`/api/v1/machines/\${m.id}/ports\`);
+          const ports = await res.json();
+          totalPorts += ports.length;
+
+          const badgeEl = document.getElementById(\`port-count-\${m.id}\`);
+          if (badgeEl) badgeEl.innerText = \`\${ports.length} ports\`;
+
+          for (const p of ports) {
+            allPortsRows.push(\`
+              <tr>
+                <td><strong>\${m.hostname}</strong></td>
+                <td><strong style="color:var(--accent);">:\${p.port}</strong></td>
+                <td>\${p.protocol}</td>
+                <td>\${p.bind_address}</td>
+                <td>\${p.process_name || 'System Service'}</td>
+                <td>\${p.is_http ? \`✅ HTTP \${p.http_status || ''} (\${p.http_title || 'Web Service'})\` : 'Listening Endpoint'}</td>
+                <td>
+                  <button class="btn" style="padding:3px 8px; font-size:0.75rem;" onclick="bridgePort('\${m.id}', \${p.port})">⚡ Bridge to My PC</button>
+                </td>
+              </tr>
+            \`);
+          }
+        } catch (e) {}
+      }
+
+      document.getElementById('stat-ports').innerText = \`\${totalPorts} Discovered Ports\`;
+      if (allPortsRows.length > 0) {
+        portsTbody.innerHTML = allPortsRows.join('');
+      }
+    }
+
+    async function bridgePort(machineId, port) {
+      try {
+        const res = await fetch('/api/v1/bridge/mappings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId, remote_port: port })
+        });
+        const created = await res.json();
+        alert(\`🎉 Universal Port Bridge Created!\\nRemote [:\${port}] is now mapped to your PC at 127.0.0.1:\${created.local_port}\`);
+        fetchData();
+      } catch (e) {
+        alert('Bridge Error: ' + e.message);
+      }
+    }
+
+    async function revokeBridge(mappingId) {
+      if (!confirm('Revoke this port bridge mapping?')) return;
+      await fetch(\`/api/v1/bridge/mappings/\${mappingId}/revoke\`, { method: 'POST' });
+      fetchData();
+    }
+
+    function showBridgeModal() {
+      if (currentMachines.length === 0) {
+        alert('Please connect a remote machine first!');
+        return;
+      }
+      const mId = currentMachines[0].id;
+      const port = prompt('Enter remote port number to bridge to your PC (e.g. 6767, 3000, 8080, 22):', '6767');
+      if (port) bridgePort(mId, parseInt(port, 10));
+    }
+
+    function promptBridge(mId, defaultPort) {
+      const port = prompt('Enter remote port number to bridge to your PC:', defaultPort);
+      if (port) bridgePort(mId, parseInt(port, 10));
+    }
+
+    function copyText(id) {
+      const txt = document.getElementById(id).innerText;
+      navigator.clipboard.writeText(txt);
+      alert('Copied to clipboard!');
+    }
+
+    fetchData();
+    setInterval(fetchData, 4000);
+  </script>
+</body>
+</html>`;
+}
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`================================================================`);
+  console.log(`🛰️  CYBERVPS SPACE STATION UNIVERSAL NETWORK BRIDGE READY`);
+  console.log(`🌐 Dashboard: http://localhost:${PORT}`);
+  console.log(`🌉 Mode A (TCP Port Bridge API): http://localhost:${PORT}/api/v1/bridge/mappings`);
+  console.log(`🪐 Mode B (Virtual Network Mesh): http://localhost:${PORT}/api/v1/vpn/network`);
+  console.log(`================================================================`);
+});

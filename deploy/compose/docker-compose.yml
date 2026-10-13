@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  space-station:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile
+    container_name: cybervps-space-station
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - NODE_ENV=production
+      - BASE_DOMAIN=localhost
+    volumes:
+      - station_data:/root/.cybervps
+
+volumes:
+  station_data:
