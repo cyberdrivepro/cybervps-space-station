@@ -477,11 +477,20 @@ const server = http.createServer(async (req, res) => {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body || '{}');
-        const { machine_id, pairing_key, session_token, profile } = payload;
+        const { machine_id, profile } = payload;
+        const pairing_key = payload.pairing_key || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
+        const session_token = payload.session_token || req.headers['x-session-token'];
+        let bearerToken = null;
+        const authHdr = req.headers['authorization'];
+        if (authHdr && authHdr.toLowerCase().startsWith('bearer ')) {
+          bearerToken = authHdr.slice(7).trim();
+        }
         
         // Authenticate client identity
-        const isKeyValid = pairing_key && (pairing_key === tunnelManager.pairingKey);
-        const isSessionValid = session_token && tunnelManager.isValidSession(session_token);
+        const isKeyValid = (pairing_key && tunnelManager.pairingKey && pairing_key === tunnelManager.pairingKey) ||
+                           (bearerToken && tunnelManager.pairingKey && bearerToken === tunnelManager.pairingKey);
+        const isSessionValid = (session_token && tunnelManager.isValidSession(session_token)) ||
+                               (bearerToken && tunnelManager.isValidSession(bearerToken));
         
         if (!isKeyValid && !isSessionValid) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -495,10 +504,11 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        const selectedProfile = profile || 'privileged';
         const termToken = 'term_tok_' + crypto.randomBytes(16).toString('hex');
         db.terminalAuthTokens.set(termToken, {
           machine_id,
-          profile: profile || 'default',
+          profile: selectedProfile,
           created_at: Date.now(),
           expires_at: Date.now() + 60000 // 60s single-use token
         });
@@ -508,7 +518,7 @@ const server = http.createServer(async (req, res) => {
           success: true,
           token: termToken,
           machine_id,
-          profile: profile || 'default',
+          profile: selectedProfile,
           expires_in: 60
         }));
       } catch (e) {
@@ -1196,16 +1206,31 @@ function verifyTerminalAuthorization(request, parsedUrl) {
     return { authorized: false, error: 'Machine not found in fleet', status: 404 };
   }
 
-  // 1. Extract credential from query params or headers
-  let cred = parsedUrl.searchParams.get('token') ||
-             parsedUrl.searchParams.get('session_token') ||
-             parsedUrl.searchParams.get('pairing_key') ||
-             parsedUrl.searchParams.get('pair');
+  // 1. Browser Origin verification: block untrusted cross-origin terminal hijack attempts
+  const origin = request.headers['origin'];
+  if (origin) {
+    try {
+      const originUrl = new URL(origin);
+      const hostHeader = (request.headers.host || '').split(':')[0].toLowerCase();
+      const originHost = originUrl.hostname.toLowerCase();
+      const isAllowed = 
+        originHost === hostHeader ||
+        originHost === 'localhost' ||
+        originHost === '127.0.0.1' ||
+        originHost.endsWith('.github.io') ||
+        originHost.endsWith('.up.railway.app');
+      if (!isAllowed) {
+        return { authorized: false, error: 'Forbidden: Untrusted WebSocket Origin', status: 403 };
+      }
+    } catch (_) {
+      return { authorized: false, error: 'Forbidden: Invalid Origin header', status: 403 };
+    }
+  }
 
+  // 2. Extract credential from query params or headers
+  let cred = parsedUrl.searchParams.get('token');
   if (!cred && request.headers) {
-    cred = request.headers['x-session-token'] ||
-           request.headers['x-cvps-pairing-key'] ||
-           request.headers['x-pairing-key'];
+    cred = request.headers['x-terminal-token'];
     if (!cred && request.headers['authorization']) {
       const parts = request.headers['authorization'].split(' ');
       if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') {
@@ -1215,7 +1240,7 @@ function verifyTerminalAuthorization(request, parsedUrl) {
   }
 
   if (!cred) {
-    return { authorized: false, error: 'Unauthorized: Missing terminal authentication credentials', status: 401 };
+    return { authorized: false, error: 'Unauthorized: Missing terminal authentication token', status: 401 };
   }
 
   // Guard: Agent enrollment token MUST NOT be accepted as browser authorization
@@ -1224,7 +1249,13 @@ function verifyTerminalAuthorization(request, parsedUrl) {
     return { authorized: false, error: 'Unauthorized: Agent enrollment token cannot be used for terminal authorization', status: 401 };
   }
 
-  // 2. Validate single-use machine-scoped terminal token
+  // Guard: Direct pairing keys must NEVER be accepted directly in the WebSocket URL
+  // Clients must exchange pairing credentials for short-lived, single-use tokens via POST /api/v1/terminal/token
+  if (tunnelManager.pairingKey && (cred === tunnelManager.pairingKey || parsedUrl.searchParams.get('pairing_key') || parsedUrl.searchParams.get('pair'))) {
+    return { authorized: false, error: 'Unauthorized: Direct pairing key is not accepted on terminal WebSocket stream. Mint a one-time token via POST /api/v1/terminal/token', status: 401 };
+  }
+
+  // 3. Validate single-use machine-scoped terminal token
   if (db.terminalAuthTokens.has(cred)) {
     const record = db.terminalAuthTokens.get(cred);
     db.terminalAuthTokens.delete(cred); // Single-use consumption
@@ -1232,22 +1263,16 @@ function verifyTerminalAuthorization(request, parsedUrl) {
       return { authorized: false, error: 'Unauthorized: Terminal token expired', status: 401 };
     }
     if (record.machine_id !== machineId) {
-      return { authorized: false, error: 'Unauthorized: Token not authorized for this machine', status: 403 };
+      return { authorized: false, error: 'Forbidden: Terminal token not authorized for this machine', status: 403 };
+    }
+    const requestedProfile = parsedUrl.searchParams.get('profile') || 'privileged';
+    if (record.profile && record.profile !== 'any' && record.profile !== requestedProfile) {
+      return { authorized: false, error: `Forbidden: Terminal token is restricted to profile '${record.profile}', cannot execute '${requestedProfile}'`, status: 403 };
     }
     return { authorized: true, user: 'browser-authenticated', machineId, profile: record.profile };
   }
 
-  // 3. Validate session token from pairing
-  if (tunnelManager.isValidSession(cred)) {
-    return { authorized: true, user: 'session-authenticated', machineId };
-  }
-
-  // 4. Validate direct pairing key
-  if (tunnelManager.pairingKey && cred === tunnelManager.pairingKey) {
-    return { authorized: true, user: 'pairing-key-authenticated', machineId };
-  }
-
-  return { authorized: false, error: 'Unauthorized: Invalid terminal credentials', status: 401 };
+  return { authorized: false, error: 'Unauthorized: Invalid or expired terminal token', status: 401 };
 }
 
 server.on('upgrade', (request, socket, head) => {

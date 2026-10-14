@@ -480,7 +480,7 @@ class RelayWebSocket:
 
 
 class CyberVPSAgent:
-    def __init__(self, server_url, token="cvps_enroll_master_token", machine_id=None):
+    def __init__(self, server_url, token="cvps_enroll_master_token", machine_id=None, pid_file=None):
         raw = (server_url or "https://cybervps-space-station.up.railway.app").strip().rstrip("/")
         if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("ws://") or raw.startswith("wss://")):
             raw = "https://" + raw
@@ -488,6 +488,10 @@ class CyberVPSAgent:
         self.http_base = self.server_url.replace("ws://", "http://").replace("wss://", "https://")
         self.token = token
         self.machine_id = machine_id or self.generate_machine_id()
+        self.pid_file = pid_file or os.environ.get("CYBERVPS_PID_FILE") or os.path.join(
+            os.environ.get("CYBERVPS_RUN_DIR") or os.path.join(os.path.expanduser("~"), ".cybervps", "run"),
+            "agent.pid"
+        )
         self.running = True
         self.active_terminals = {}
         self.active_tunnel_streams = {}
@@ -1905,12 +1909,16 @@ class CyberVPSAgent:
             class TokenProcess:
                 def __init__(self, hProcess, pid, stdin_f, stdout_f):
                     self.hProcess = hProcess
-                    self.pid = pid
+                    self.pid = int(pid)
                     self.stdin = stdin_f
                     self.stdout = stdout_f
                     self.returncode = None
+                    self._closed = False
+
                 def poll(self):
                     if self.returncode is not None:
+                        return self.returncode
+                    if not self.hProcess:
                         return self.returncode
                     code = wintypes.DWORD()
                     if kernel32.GetExitCodeProcess(self.hProcess, ctypes.byref(code)):
@@ -1918,8 +1926,51 @@ class CyberVPSAgent:
                             self.returncode = code.value
                             return self.returncode
                     return None
+
+                def wait(self, timeout=None):
+                    if self.returncode is not None:
+                        return self.returncode
+                    if not self.hProcess:
+                        return self.returncode
+                    timeout_ms = int(timeout * 1000) if timeout is not None else 0xFFFFFFFF
+                    kernel32.WaitForSingleObject(self.hProcess, timeout_ms)
+                    code = wintypes.DWORD()
+                    if kernel32.GetExitCodeProcess(self.hProcess, ctypes.byref(code)):
+                        if code.value != 259:
+                            self.returncode = code.value
+                            return self.returncode
+                    return self.poll()
+
+                def terminate(self):
+                    if self.returncode is None and self.hProcess:
+                        kernel32.TerminateProcess(self.hProcess, 1)
+                        kernel32.WaitForSingleObject(self.hProcess, 1000)
+                    self.poll()
+                    self._cleanup_handles()
+
                 def kill(self):
-                    kernel32.TerminateProcess(self.hProcess, 1)
+                    self.terminate()
+
+                def _cleanup_handles(self):
+                    if self._closed:
+                        return
+                    self._closed = True
+                    try:
+                        if self.stdin and not self.stdin.closed:
+                            self.stdin.close()
+                    except Exception:
+                        pass
+                    try:
+                        if self.stdout and not self.stdout.closed:
+                            self.stdout.close()
+                    except Exception:
+                        pass
+                    if self.hProcess:
+                        try:
+                            kernel32.CloseHandle(self.hProcess)
+                        except Exception:
+                            pass
+                        self.hProcess = None
 
             kernel32.CloseHandle(pi.hThread)
             return TokenProcess(pi.hProcess, pi.dwProcessId, stdin_file, stdout_file)
@@ -2274,23 +2325,45 @@ class CyberVPSAgent:
         with self.lock:
             term = self.active_terminals.pop(session_id, None)
         if term:
+            exit_code = 0
             try:
                 ttype = term.get("type")
                 if ttype == "conpty":
                     term["term"].close()
                 elif ttype == "pty":
-                    term["proc"].terminate()
+                    proc = term.get("proc")
+                    if proc:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=1.0)
+                        except Exception:
+                            proc.kill()
+                        exit_code = getattr(proc, "returncode", 0) or 0
                     try:
                         os.close(term["master"])
                     except Exception:
                         pass
                 elif ttype == "pipe":
-                    term["proc"].terminate()
-            except Exception:
-                pass
+                    proc = term.get("proc")
+                    if proc:
+                        proc.terminate()
+                        if hasattr(proc, "wait"):
+                            try:
+                                proc.wait(timeout=1.0)
+                            except Exception:
+                                proc.kill()
+                        pid = getattr(proc, "pid", None)
+                        if pid and self.is_pid_alive(pid):
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                        exit_code = getattr(proc, "returncode", 0) or 0
+            except Exception as e:
+                print(f"[!] Error stopping terminal {session_id}: {e}", flush=True)
             self.send_agent_event({
                 "type": "TerminalExit",
-                "payload": {"session_id": session_id, "exit_code": 0}
+                "payload": {"session_id": session_id, "exit_code": exit_code}
             })
 
     # =========================================================================
@@ -2546,7 +2619,7 @@ class CyberVPSAgent:
                 return False
 
     def run(self):
-        pid_file = os.path.join(os.path.expanduser("~"), ".cybervps", "run", "agent.pid")
+        pid_file = self.pid_file
         try:
             if os.path.exists(pid_file):
                 with open(pid_file, "r") as f:

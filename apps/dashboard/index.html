@@ -2608,7 +2608,7 @@
       setQuickChipsEnabled(appState.isTerminalReady || false);
     }
 
-    function initTerminalSession(forceClear = false) {
+    async function initTerminalSession(forceClear = false) {
       const select = document.getElementById('terminal-machine-select');
       if (!select) return;
 
@@ -2765,12 +2765,53 @@
       const cols = appState.termInstance ? appState.termInstance.cols : 80;
       const rows = appState.termInstance ? appState.termInstance.rows : 24;
 
+      badge.className = 'badge badge-warning';
+      badge.innerText = 'Authenticating...';
+
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       const wsProtocol = base.startsWith('https') ? 'wss:' : 'ws:';
       const wsHost = base.replace(/^https?:\/\//, '');
       const profilePref = document.getElementById('terminal-profile-select')?.value || 'privileged';
-      const pairingCred = appConfig.pairingKey || '';
-      const wsUrl = `${wsProtocol}//${wsHost}/api/v1/terminal/stream?machine_id=${encodeURIComponent(machineId)}&cols=${cols}&rows=${rows}&profile=${encodeURIComponent(profilePref)}${pairingCred ? `&token=${encodeURIComponent(pairingCred)}` : ''}`;
+
+      let singleUseToken = '';
+      try {
+        const tokenRes = await fetch(`${base.replace(/\/$/, '')}/api/v1/terminal/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(appConfig.pairingKey ? { 'X-CVPS-Pairing-Key': appConfig.pairingKey } : {})
+          },
+          body: JSON.stringify({
+            machine_id: machineId,
+            profile: profilePref,
+            pairing_key: appConfig.pairingKey || undefined
+          })
+        });
+        if (!tokenRes.ok) {
+          const errData = await tokenRes.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${tokenRes.status} authorization failed`);
+        }
+        const tokenData = await tokenRes.json();
+        if (!tokenData.success || !tokenData.token) {
+          throw new Error(tokenData.error || 'Failed to acquire terminal authorization token');
+        }
+        singleUseToken = tokenData.token;
+      } catch (authErr) {
+        if (appState.activeTerminalToken !== currentSessionToken) return;
+        badge.className = 'badge badge-danger';
+        badge.innerText = 'Auth Failed';
+        const errMsg = `\x1b[31m[!] Terminal Authentication Error: ${authErr.message}\x1b[0m\r\n\x1b[90mEnsure your Pairing Key is configured in Space Station Settings.\x1b[0m\r\n`;
+        if (appState.termInstance) {
+          appState.termInstance.writeln(errMsg);
+        } else {
+          appendTerminalBanner(`[!] Terminal Authentication Error: ${authErr.message}\nEnsure your Pairing Key is configured in Space Station Settings.\n`);
+        }
+        return;
+      }
+
+      if (appState.activeTerminalToken !== currentSessionToken) return;
+
+      const wsUrl = `${wsProtocol}//${wsHost}/api/v1/terminal/stream?machine_id=${encodeURIComponent(machineId)}&cols=${cols}&rows=${rows}&profile=${encodeURIComponent(profilePref)}&token=${encodeURIComponent(singleUseToken)}`;
 
       try {
         const ws = new WebSocket(wsUrl);

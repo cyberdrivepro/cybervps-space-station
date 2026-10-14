@@ -145,6 +145,8 @@ export PATH="${BIN_DIR}:${PATH}"
 echo "[*] Configuring 24/7 background service..."
 
 SERVICE_MODE="nohup"
+SYSTEMD_CONFIGURED=0
+
 if [ "$(id -u)" = "0" ] && [ -d "/etc/systemd/system" ] && command -v systemctl >/dev/null 2>&1; then
   SERVICE_FILE="/etc/systemd/system/cybervps-agent.service"
   cat <<EOF > "${SERVICE_FILE}"
@@ -167,15 +169,23 @@ StandardError=append:${LOG_DIR}/agent.log
 [Install]
 WantedBy=multi-user.target
 EOF
-  systemctl daemon-reload
-  systemctl enable cybervps-agent.service >/dev/null 2>&1 || true
-  systemctl restart cybervps-agent.service >/dev/null 2>&1 || true
-  # Remove redundant crontab entry so there is only one supervisor
-  if command -v crontab >/dev/null 2>&1; then
-    (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true) | crontab - >/dev/null 2>&1 || true
+  if systemctl daemon-reload >/dev/null 2>&1 && \
+     systemctl enable cybervps-agent.service >/dev/null 2>&1 && \
+     systemctl restart cybervps-agent.service >/dev/null 2>&1 && \
+     systemctl is-active --quiet cybervps-agent.service 2>/dev/null; then
+    SYSTEMD_CONFIGURED=1
+    SERVICE_MODE="systemd (root)"
+    # Remove redundant crontab entry so there is only one supervisor
+    if command -v crontab >/dev/null 2>&1; then
+      (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true) | crontab - >/dev/null 2>&1 || true
+    fi
+    echo "  ✅ Registered and activated systemd service (Single mechanism): ${SERVICE_FILE}"
+  else
+    echo "  ⚠️ systemd root service could not be activated in this environment."
+    echo "     Falling back to background supervisor (nohup + crontab @reboot)."
+    systemctl disable cybervps-agent.service >/dev/null 2>&1 || true
+    rm -f "${SERVICE_FILE}" 2>/dev/null || true
   fi
-  SERVICE_MODE="systemd (root)"
-  echo "  ✅ Registered systemd service (Single mechanism): ${SERVICE_FILE}"
 else
   # Non-root installation: check if systemd user unit + linger is truly supported
   HAS_USER_SYSTEMD=0
@@ -214,34 +224,37 @@ StandardError=append:${LOG_DIR}/agent.log
 [Install]
 WantedBy=default.target
 EOF
-    systemctl --user daemon-reload >/dev/null 2>&1 || true
-    systemctl --user enable --now cybervps-agent.service >/dev/null 2>&1 || true
-    # Remove redundant crontab entry so there is only one supervisor
-    if command -v crontab >/dev/null 2>&1; then
-      (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true) | crontab - >/dev/null 2>&1 || true
-    fi
-    SERVICE_MODE="systemd (user linger)"
-    echo "  ✅ Registered systemd user service with 24/7 linger (Single mechanism): ${USER_SERVICE}"
-  else
-    if [ "$HAS_USER_SYSTEMD" -eq 1 ] && [ "$HAS_LINGER" -eq 0 ]; then
-      echo "  ℹ️  User lingering could not be confirmed for '${USER}'."
-      echo "     Using background daemon + crontab @reboot for persistent supervision."
+    if systemctl --user daemon-reload >/dev/null 2>&1 && \
+       systemctl --user enable --now cybervps-agent.service >/dev/null 2>&1 && \
+       systemctl --user is-active --quiet cybervps-agent.service 2>/dev/null; then
+      SYSTEMD_CONFIGURED=1
+      SERVICE_MODE="systemd (user linger)"
+      # Remove redundant crontab entry so there is only one supervisor
+      if command -v crontab >/dev/null 2>&1; then
+        (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true) | crontab - >/dev/null 2>&1 || true
+      fi
+      echo "  ✅ Registered and activated systemd user service with 24/7 linger (Single mechanism): ${USER_SERVICE}"
+    else
+      echo "  ⚠️ systemd user service could not be activated in this session."
+      echo "     Falling back to background daemon + crontab @reboot."
       systemctl --user stop cybervps-agent.service >/dev/null 2>&1 || true
       systemctl --user disable cybervps-agent.service >/dev/null 2>&1 || true
-      rm -f "${HOME}/.config/systemd/user/cybervps-agent.service" 2>/dev/null || true
+      rm -f "${USER_SERVICE}" 2>/dev/null || true
     fi
+  fi
+fi
 
-    # Background supervisor via nohup and crontab @reboot (Single fallback mechanism)
-    pkill -f "universal-agent.py" >/dev/null 2>&1 || true
-    nohup ${PY_CMD} -u "${INSTALL_DIR}/agent/universal-agent.py" --config "${CONFIG_FILE}" --log-dir "${LOG_DIR}" >> "${LOG_DIR}/agent.log" 2>&1 &
-    AGENT_PID=$!
-    echo "${AGENT_PID}" > "${RUN_DIR}/agent.pid"
-    SERVICE_MODE="background daemon (PID ${AGENT_PID})"
+if [ "$SYSTEMD_CONFIGURED" -eq 0 ]; then
+  # Background supervisor via nohup and crontab @reboot (Single fallback mechanism)
+  pkill -f "universal-agent.py" >/dev/null 2>&1 || true
+  nohup ${PY_CMD} -u "${INSTALL_DIR}/agent/universal-agent.py" --config "${CONFIG_FILE}" --log-dir "${LOG_DIR}" >> "${LOG_DIR}/agent.log" 2>&1 &
+  AGENT_PID=$!
+  echo "${AGENT_PID}" > "${RUN_DIR}/agent.pid"
+  SERVICE_MODE="background daemon (PID ${AGENT_PID})"
 
-    if command -v crontab >/dev/null 2>&1; then
-      (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true; echo "@reboot ${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR} >> ${LOG_DIR}/agent.log 2>&1 &") | crontab - >/dev/null 2>&1 || true
-      echo "  ✅ Registered crontab @reboot autostart (Single mechanism)."
-    fi
+  if command -v crontab >/dev/null 2>&1; then
+    (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true; echo "@reboot ${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR} >> ${LOG_DIR}/agent.log 2>&1 &") | crontab - >/dev/null 2>&1 || true
+    echo "  ✅ Registered crontab @reboot autostart (Single mechanism)."
   fi
 fi
 

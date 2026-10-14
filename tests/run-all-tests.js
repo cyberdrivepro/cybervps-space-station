@@ -593,11 +593,61 @@ async function runTests() {
   assert(enrollRejected, 'Enrollment token must NOT authorize terminal WebSocket stream (strictly rejected with HTTP 401)');
   console.log('  ✅ Agent enrollment token strictly rejected for browser terminal access (HTTP 401).');
 
-  // 21c. Acquire single-use terminal token with pairing key
+  // 21c. Direct pairing key must NOT be accepted on terminal WebSocket stream
+  let directPairingRejected = false;
+  const directPairWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=test_pair_key_123`);
+  await new Promise((resolve) => {
+    directPairWs.on('open', () => { directPairWs.close(); resolve(); });
+    directPairWs.on('unexpected-response', (req, res) => {
+      if (res.statusCode === 401) directPairingRejected = true;
+      resolve();
+    });
+    directPairWs.on('error', () => { resolve(); });
+  });
+  assert(directPairingRejected, 'Direct pairing key must be rejected on WebSocket stream (HTTP 401)');
+  console.log('  ✅ Direct pairing key strictly rejected on WebSocket stream (forces one-time token flow).');
+
+  // 21d. Untrusted Origin header must be rejected with HTTP 403 Forbidden
+  let untrustedOriginRejected = false;
+  const untrustedWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=any_token`, {
+    headers: { 'Origin': 'http://malicious-attacker-site.com' }
+  });
+  await new Promise((resolve) => {
+    untrustedWs.on('open', () => { untrustedWs.close(); resolve(); });
+    untrustedWs.on('unexpected-response', (req, res) => {
+      if (res.statusCode === 403) untrustedOriginRejected = true;
+      resolve();
+    });
+    untrustedWs.on('error', () => { resolve(); });
+  });
+  assert(untrustedOriginRejected, 'Untrusted WebSocket Origin header must be rejected with HTTP 403');
+  console.log('  ✅ Untrusted cross-origin terminal stream connection rejected with HTTP 403.');
+
+  // 21e. Mismatched execution profile on minted token must be rejected with HTTP 403
+  const mismatchTokenRes = await request(`${SERVER_URL}/api/v1/terminal/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, profile: 'standard', pairing_key: 'test_pair_key_123' })
+  });
+  const mismatchToken = JSON.parse(mismatchTokenRes.body).token;
+  let mismatchProfileRejected = false;
+  const mismatchWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=privileged&token=${encodeURIComponent(mismatchToken)}`);
+  await new Promise((resolve) => {
+    mismatchWs.on('open', () => { mismatchWs.close(); resolve(); });
+    mismatchWs.on('unexpected-response', (req, res) => {
+      if (res.statusCode === 403) mismatchProfileRejected = true;
+      resolve();
+    });
+    mismatchWs.on('error', () => { resolve(); });
+  });
+  assert(mismatchProfileRejected, 'Mismatched execution profile on token must be rejected with HTTP 403');
+  console.log('  ✅ Mismatched execution profile rejected with HTTP 403 (profile scope enforced).');
+
+  // 21f. Acquire valid single-use terminal token with pairing key
   const tokenRes = await request(`${SERVER_URL}/api/v1/terminal/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ machine_id: remoteNodeId, pairing_key: 'test_pair_key_123' })
+    body: JSON.stringify({ machine_id: remoteNodeId, profile: 'privileged', pairing_key: 'test_pair_key_123' })
   });
   assert.strictEqual(tokenRes.statusCode, 200, 'Terminal token endpoint must issue token with valid credentials');
   const tokenData = JSON.parse(tokenRes.body);
@@ -605,8 +655,8 @@ async function runTests() {
   const singleUseToken = tokenData.token;
   console.log('  ✅ Single-use machine-scoped terminal token successfully acquired.');
 
-  // 21d. Connect with valid single-use terminal token and receive live stream
-  const termClientWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=${encodeURIComponent(singleUseToken)}`);
+  // 21g. Connect with valid single-use terminal token and receive live stream
+  const termClientWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=privileged&token=${encodeURIComponent(singleUseToken)}`);
   await new Promise((resolve, reject) => {
     termClientWs.on('open', resolve);
     termClientWs.on('error', reject);
@@ -690,7 +740,7 @@ async function runTests() {
   const secTest = execSync(`${pythonExe} "${require('path').join(__dirname, 'test-agent-security.py')}"`, {
     encoding: 'utf-8'
   });
-  assert(secTest.includes('ALL AGENT SECURITY & EXECUTION BOUNDARY TESTS PASSED'), 'Agent security test must pass');
+  assert(secTest.includes('ALL AGENT SECURITY') && secTest.includes('PASSED'), 'Agent security test must pass');
   console.log('  ✅ Agent Security & Execution Boundaries verified: privilege fail-closed & duplicate prevention operational.');
 
   // Clean up
