@@ -1777,6 +1777,156 @@ class CyberVPSAgent:
             })
 
     # =========================================================================
+    def _start_windows_terminal_proc(self, shell_cmd_list, want_standard_token, is_elevated):
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        CREATE_NO_WINDOW = 0x08000000
+
+        # Normal launch if unprivileged asking for standard, or elevated asking for elevated
+        if not (is_elevated and want_standard_token):
+            return subprocess.Popen(
+                shell_cmd_list,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+                creationflags=CREATE_NO_WINDOW,
+                startupinfo=startupinfo
+            )
+
+        # Elevated process requested genuine Standard User (de-elevated token)
+        import ctypes
+        from ctypes import wintypes
+        advapi32 = ctypes.windll.advapi32
+        kernel32 = ctypes.windll.kernel32
+
+        SAFER_SCOPEID_USER = 1
+        SAFER_LEVELID_NORMALUSER = 0x20000
+        SAFER_LEVEL_OPEN = 1
+
+        hLevel = wintypes.HANDLE()
+        hToken = wintypes.HANDLE()
+        token_acquired = False
+
+        if advapi32.SaferCreateLevel(SAFER_SCOPEID_USER, SAFER_LEVELID_NORMALUSER, SAFER_LEVEL_OPEN, ctypes.byref(hLevel), None):
+            if advapi32.SaferComputeTokenFromLevel(hLevel, None, ctypes.byref(hToken), 0, None):
+                token_acquired = True
+            advapi32.SaferCloseLevel(hLevel)
+
+        if not token_acquired or not hToken.value:
+            raise PermissionError("Failed to acquire genuine standard-user de-elevation token from elevated process.")
+
+        TOKEN_ALL_ACCESS = 0xF01FF
+        SecurityImpersonation = 2
+        TokenPrimary = 1
+        hDupToken = wintypes.HANDLE()
+        advapi32.DuplicateTokenEx(hToken, TOKEN_ALL_ACCESS, None, SecurityImpersonation, TokenPrimary, ctypes.byref(hDupToken))
+        kernel32.CloseHandle(hToken)
+
+        if not hDupToken.value:
+            raise PermissionError("Failed to duplicate standard-user primary token.")
+
+        class SECURITY_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", wintypes.LPVOID), ("bInheritHandle", wintypes.BOOL)]
+
+        sa = SECURITY_ATTRIBUTES()
+        sa.nLength = ctypes.sizeof(SECURITY_ATTRIBUTES)
+        sa.bInheritHandle = True
+        sa.lpSecurityDescriptor = None
+
+        hStdInRead = wintypes.HANDLE()
+        hStdInWrite = wintypes.HANDLE()
+        hStdOutRead = wintypes.HANDLE()
+        hStdOutWrite = wintypes.HANDLE()
+
+        if not kernel32.CreatePipe(ctypes.byref(hStdInRead), ctypes.byref(hStdInWrite), ctypes.byref(sa), 0):
+            kernel32.CloseHandle(hDupToken)
+            raise PermissionError("CreatePipe failed for stdin.")
+
+        if not kernel32.CreatePipe(ctypes.byref(hStdOutRead), ctypes.byref(hStdOutWrite), ctypes.byref(sa), 0):
+            kernel32.CloseHandle(hStdInRead)
+            kernel32.CloseHandle(hStdInWrite)
+            kernel32.CloseHandle(hDupToken)
+            raise PermissionError("CreatePipe failed for stdout.")
+
+        class STARTUPINFO_W(ctypes.Structure):
+            _fields_ = [
+                ('cb', wintypes.DWORD), ('lpReserved', wintypes.LPWSTR), ('lpDesktop', wintypes.LPWSTR),
+                ('lpTitle', wintypes.LPWSTR), ('dwX', wintypes.DWORD), ('dwY', wintypes.DWORD),
+                ('dwXSize', wintypes.DWORD), ('dwYSize', wintypes.DWORD), ('dwXCountChars', wintypes.DWORD),
+                ('dwYCountChars', wintypes.DWORD), ('dwFillAttribute', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
+                ('wShowWindow', wintypes.WORD), ('cbReserved2', wintypes.WORD), ('lpReserved2', ctypes.POINTER(wintypes.BYTE)),
+                ('hStdInput', wintypes.HANDLE), ('hStdOutput', wintypes.HANDLE), ('hStdError', wintypes.HANDLE)
+            ]
+
+        class PROCESS_INFORMATION_W(ctypes.Structure):
+            _fields_ = [('hProcess', wintypes.HANDLE), ('hThread', wintypes.HANDLE), ('dwProcessId', wintypes.DWORD), ('dwThreadId', wintypes.DWORD)]
+
+        si = STARTUPINFO_W()
+        si.cb = ctypes.sizeof(STARTUPINFO_W)
+        si.dwFlags = 0x00000100 | 0x00000001 # STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW
+        si.wShowWindow = 0 # SW_HIDE
+        si.hStdInput = hStdInRead
+        si.hStdOutput = hStdOutWrite
+        si.hStdError = hStdOutWrite
+
+        pi = PROCESS_INFORMATION_W()
+        cmd_line = " ".join(subprocess.list2cmdline([x]) for x in shell_cmd_list)
+
+        try:
+            success = advapi32.CreateProcessWithTokenW(
+                hDupToken,
+                0,
+                None,
+                cmd_line,
+                CREATE_NO_WINDOW,
+                None,
+                None,
+                ctypes.byref(si),
+                ctypes.byref(pi)
+            )
+
+            kernel32.CloseHandle(hStdInRead)
+            kernel32.CloseHandle(hStdOutWrite)
+
+            if not success:
+                err = kernel32.GetLastError()
+                kernel32.CloseHandle(hStdInWrite)
+                kernel32.CloseHandle(hStdOutRead)
+                raise PermissionError(f"CreateProcessWithTokenW failed with Win32 error {err}")
+
+            import msvcrt
+            stdin_fd = msvcrt.open_osfhandle(hStdInWrite.value, 0)
+            stdout_fd = msvcrt.open_osfhandle(hStdOutRead.value, 0)
+            stdin_file = open(stdin_fd, "wb", buffering=0)
+            stdout_file = open(stdout_fd, "rb", buffering=0)
+
+            class TokenProcess:
+                def __init__(self, hProcess, pid, stdin_f, stdout_f):
+                    self.hProcess = hProcess
+                    self.pid = pid
+                    self.stdin = stdin_f
+                    self.stdout = stdout_f
+                    self.returncode = None
+                def poll(self):
+                    if self.returncode is not None:
+                        return self.returncode
+                    code = wintypes.DWORD()
+                    if kernel32.GetExitCodeProcess(self.hProcess, ctypes.byref(code)):
+                        if code.value != 259: # STILL_ACTIVE
+                            self.returncode = code.value
+                            return self.returncode
+                    return None
+                def kill(self):
+                    kernel32.TerminateProcess(self.hProcess, 1)
+
+            kernel32.CloseHandle(pi.hThread)
+            return TokenProcess(pi.hProcess, pi.dwProcessId, stdin_file, stdout_file)
+        finally:
+            kernel32.CloseHandle(hDupToken)
+
+    # =========================================================================
     # Terminal Session Handling
     # =========================================================================
     def start_terminal_session(self, session_id, cols=80, rows=24, shell=None, profile=None):
@@ -1793,18 +1943,34 @@ class CyberVPSAgent:
                 is_elevated = False
 
             current_user = os.environ.get("USERNAME", "User")
-            if is_elevated and p_pref in ["user", "standard"]:
-                active_profile = "standard"
-                active_user = current_user
-                profile_desc = f"Standard User ({current_user})"
-            elif is_elevated:
+            is_system = (current_user.upper() == "SYSTEM" or "SYSTEM" in os.environ.get("USERDOMAIN", "").upper())
+
+            if p_pref in ["root", "privileged", "admin"]:
+                if not is_elevated:
+                    self.send_agent_event({
+                        "type": "TerminalOutput",
+                        "payload": {
+                            "session_id": session_id,
+                            "data": f"\r\n[!] Security Policy: Privileged Administrator profile requested, but agent is running as unprivileged user '{current_user}'. Elevation cannot be bypassed without host administrative privileges.\r\n"
+                        }
+                    })
+                    self.send_agent_event({"type": "TerminalExit", "payload": {"session_id": session_id, "exit_code": 1}})
+                    return
                 active_profile = "privileged"
-                active_user = f"Administrator ({current_user})" if current_user.lower() != "system" else "NT AUTHORITY\\SYSTEM"
-                profile_desc = f"Administrator (Elevated)"
+                active_user = f"Administrator ({current_user})" if not is_system else "NT AUTHORITY\\SYSTEM"
+                profile_desc = "Administrator (Elevated)" if not is_system else "NT AUTHORITY\\SYSTEM (Elevated)"
+                want_standard_token = False
             else:
-                active_profile = "standard"
-                active_user = current_user
-                profile_desc = f"Standard User ({current_user})"
+                if is_elevated:
+                    active_profile = "standard"
+                    active_user = current_user
+                    profile_desc = f"Standard User ({current_user})"
+                    want_standard_token = True
+                else:
+                    active_profile = "standard"
+                    active_user = current_user
+                    profile_desc = f"Standard User ({current_user})"
+                    want_standard_token = False
 
             shell_choice = (shell or "powershell").lower().strip()
             if "cmd" in shell_choice:
@@ -1817,22 +1983,8 @@ class CyberVPSAgent:
                 shell_cmd_list = ["powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"]
                 backend_label = "powershell.exe"
 
-            # Guaranteed 100% hidden background process (ABSOLUTELY ZERO DESKTOP POPUP)
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            CREATE_NO_WINDOW = 0x08000000
-
             try:
-                p = subprocess.Popen(
-                    shell_cmd_list,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    bufsize=0,
-                    creationflags=CREATE_NO_WINDOW,
-                    startupinfo=startupinfo
-                )
+                p = self._start_windows_terminal_proc(shell_cmd_list, want_standard_token, is_elevated)
                 with self.lock:
                     self.active_terminals[session_id] = {"proc": p, "type": "pipe"}
 
@@ -1856,8 +2008,9 @@ class CyberVPSAgent:
                     "type": "TerminalOutput",
                     "payload": {"session_id": session_id, "data": f"\r\n[!] Failed to start background terminal: {e}\r\n"}
                 })
+                self.send_agent_event({"type": "TerminalExit", "payload": {"session_id": session_id, "exit_code": 1}})
         else:
-            import pty
+            import pty, pwd
             master, slave = pty.openpty()
 
             is_root = False
@@ -1869,9 +2022,26 @@ class CyberVPSAgent:
             current_user = os.environ.get("USER", "root" if is_root else "user")
             shell_cmd = shell or ("/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh")
 
-            if is_root:
-                if p_pref in ["user", "standard"]:
-                    active_profile = "standard"
+            if p_pref in ["root", "privileged", "admin"]:
+                if not is_root:
+                    os.close(slave)
+                    os.close(master)
+                    self.send_agent_event({
+                        "type": "TerminalOutput",
+                        "payload": {
+                            "session_id": session_id,
+                            "data": f"\r\n[!] Security Policy: Root profile requested, but agent is running as unprivileged user '{current_user}' (UID: {os.geteuid()}). Refusing to launch non-root shell as root.\r\n"
+                        }
+                    })
+                    self.send_agent_event({"type": "TerminalExit", "payload": {"session_id": session_id, "exit_code": 1}})
+                    return
+                active_profile = "privileged"
+                active_user = "root"
+                profile_desc = "Root (Elevated)"
+                preexec_fn = os.setsid
+                child_env = os.environ.copy()
+            else:
+                if is_root:
                     std_user = os.environ.get("SUDO_USER")
                     if not std_user or std_user == "root":
                         try:
@@ -1884,62 +2054,117 @@ class CyberVPSAgent:
                         except Exception:
                             pass
                     if not std_user or std_user == "root":
-                        std_user = "nobody"
-                    active_user = std_user
-                    profile_desc = f"Standard User ({std_user})"
-                    if shutil.which("runuser"):
-                        shell_cmd_list = ["runuser", "-u", std_user, "--", shell_cmd, "-i"]
-                    elif shutil.which("su"):
-                        shell_cmd_list = ["su", "-", std_user, "-s", shell_cmd]
-                    else:
-                        shell_cmd_list = [shell_cmd, "-i"]
-                else:
-                    active_profile = "privileged"
-                    active_user = "root"
-                    profile_desc = "Root (Elevated)"
-                    shell_cmd_list = [shell_cmd, "-i"]
-            else:
-                active_profile = "standard"
-                active_user = current_user
-                profile_desc = f"Standard User ({current_user})"
-                shell_cmd_list = [shell_cmd, "-i"]
+                        os.close(slave)
+                        os.close(master)
+                        self.send_agent_event({
+                            "type": "TerminalOutput",
+                            "payload": {
+                                "session_id": session_id,
+                                "data": "\r\n[!] Security Policy: Standard user profile requested, but no non-root user account exists on host. Refusing to launch root shell under standard profile.\r\n"
+                            }
+                        })
+                        self.send_agent_event({"type": "TerminalExit", "payload": {"session_id": session_id, "exit_code": 1}})
+                        return
 
-            p = subprocess.Popen(
-                shell_cmd_list,
-                stdin=slave,
-                stdout=slave,
-                stderr=slave,
-                close_fds=True,
-                preexec_fn=os.setsid
-            )
-            os.close(slave)
-            with self.lock:
-                self.active_terminals[session_id] = {"proc": p, "master": master, "type": "pty"}
+                    try:
+                        pw = pwd.getpwnam(std_user)
+                    except Exception as e:
+                        os.close(slave)
+                        os.close(master)
+                        self.send_agent_event({
+                            "type": "TerminalOutput",
+                            "payload": {
+                                "session_id": session_id,
+                                "data": f"\r\n[!] Security Policy: Failed to lookup target standard user '{std_user}': {e}\r\n"
+                            }
+                        })
+                        self.send_agent_event({"type": "TerminalExit", "payload": {"session_id": session_id, "exit_code": 1}})
+                        return
+
+                    target_uid = pw.pw_uid
+                    target_gid = pw.pw_gid
+                    target_dir = pw.pw_dir
+                    target_name = pw.pw_name
+
+                    def demote():
+                        os.setsid()
+                        try:
+                            os.setgid(target_gid)
+                            try:
+                                os.initgroups(target_name, target_gid)
+                            except Exception:
+                                pass
+                            os.setuid(target_uid)
+                            try:
+                                os.chdir(target_dir)
+                            except Exception:
+                                os.chdir("/tmp")
+                        except Exception:
+                            sys.exit(127)
+
+                    preexec_fn = demote
+                    active_profile = "standard"
+                    active_user = target_name
+                    profile_desc = f"Standard User ({target_name})"
+                    child_env = os.environ.copy()
+                    child_env["HOME"] = target_dir
+                    child_env["USER"] = target_name
+                    child_env["LOGNAME"] = target_name
+                    child_env["SHELL"] = pw.pw_shell or shell_cmd
+                else:
+                    active_profile = "standard"
+                    active_user = current_user
+                    profile_desc = f"Standard User ({current_user})"
+                    preexec_fn = os.setsid
+                    child_env = os.environ.copy()
 
             try:
-                import fcntl
-                import termios
-                import struct
-                winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
-                fcntl.ioctl(master, termios.TIOCSWINSZ, winsize)
-            except Exception:
-                pass
+                p = subprocess.Popen(
+                    [shell_cmd, "-i"],
+                    stdin=slave,
+                    stdout=slave,
+                    stderr=slave,
+                    close_fds=True,
+                    preexec_fn=preexec_fn,
+                    env=child_env
+                )
+                os.close(slave)
+                with self.lock:
+                    self.active_terminals[session_id] = {"proc": p, "master": master, "type": "pty"}
 
-            threading.Thread(target=self._pty_terminal_reader, args=(session_id, master), daemon=True).start()
-            self.send_agent_event({
-                "type": "TerminalReady",
-                "payload": {
-                    "session_id": session_id,
-                    "backend": f"PTY [{profile_desc}]",
-                    "shell": shell_cmd,
-                    "pid": p.pid,
-                    "cols": cols,
-                    "rows": rows,
-                    "profile": active_profile,
-                    "user": active_user,
-                    "is_elevated": is_root and (active_profile == "privileged")
-                }
-            })
+                try:
+                    import fcntl
+                    import termios
+                    import struct
+                    winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, winsize)
+                except Exception:
+                    pass
+
+                threading.Thread(target=self._pty_terminal_reader, args=(session_id, master), daemon=True).start()
+                self.send_agent_event({
+                    "type": "TerminalReady",
+                    "payload": {
+                        "session_id": session_id,
+                        "backend": f"PTY [{profile_desc}]",
+                        "shell": shell_cmd,
+                        "pid": p.pid,
+                        "cols": cols,
+                        "rows": rows,
+                        "profile": active_profile,
+                        "user": active_user,
+                        "is_elevated": is_root and (active_profile == "privileged")
+                    }
+                })
+            except Exception as e:
+                os.close(slave)
+                try: os.close(master)
+                except Exception: pass
+                self.send_agent_event({
+                    "type": "TerminalOutput",
+                    "payload": {"session_id": session_id, "data": f"\r\n[!] Failed to start background terminal: {e}\r\n"}
+                })
+                self.send_agent_event({"type": "TerminalExit", "payload": {"session_id": session_id, "exit_code": 1}})
 
     def _pty_terminal_reader(self, session_id, master_fd):
         try:
@@ -2290,14 +2515,54 @@ class CyberVPSAgent:
             }
         })
 
+    def is_pid_alive(self, pid):
+        if not pid or pid <= 0:
+            return False
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                STILL_ACTIVE = 259
+                h_proc = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                if h_proc:
+                    exit_code = ctypes.c_ulong()
+                    active = False
+                    if ctypes.windll.kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code)):
+                        active = (exit_code.value == STILL_ACTIVE)
+                    ctypes.windll.kernel32.CloseHandle(h_proc)
+                    return active
+            except Exception:
+                pass
+            try:
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
+        else:
+            try:
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
+
     def run(self):
         pid_file = os.path.join(os.path.expanduser("~"), ".cybervps", "run", "agent.pid")
         try:
+            if os.path.exists(pid_file):
+                with open(pid_file, "r") as f:
+                    content = f.read().strip()
+                if content.isdigit():
+                    existing_pid = int(content)
+                    if existing_pid != os.getpid() and self.is_pid_alive(existing_pid):
+                        print(f"[!] Another CyberVPS agent instance is already active (PID {existing_pid}). Exiting to prevent duplicate running instances.", flush=True)
+                        sys.exit(0)
             os.makedirs(os.path.dirname(pid_file), exist_ok=True)
             with open(pid_file, "w") as f:
                 f.write(str(os.getpid()))
-        except Exception:
-            pass
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[!] Warning checking PID file: {e}", flush=True)
 
         print(f"[*] CyberVPS Space Station Agent v{PROTOCOL_VERSION} Starting", flush=True)
         print(f"[*] Machine ID: {self.machine_id}", flush=True)
@@ -2448,6 +2713,31 @@ if __name__ == "__main__":
                             mid = c_data["machine_id"]
                 except Exception:
                     pass
+            i += 2
+        elif a in ("--log-dir", "-l") and i + 1 < len(args):
+            l_dir = args[i + 1]
+            try:
+                os.makedirs(l_dir, exist_ok=True)
+                l_path = os.path.join(l_dir, "agent.log")
+                _fp = open(l_path, "a", encoding="utf-8")
+                if hasattr(_fp, "reconfigure"):
+                    _fp.reconfigure(line_buffering=True, write_through=True)
+                sys.stdout = _fp
+                sys.stderr = _fp
+            except Exception:
+                pass
+            i += 2
+        elif a in ("--log-file",) and i + 1 < len(args):
+            l_path = args[i + 1]
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(l_path)), exist_ok=True)
+                _fp = open(l_path, "a", encoding="utf-8")
+                if hasattr(_fp, "reconfigure"):
+                    _fp.reconfigure(line_buffering=True, write_through=True)
+                sys.stdout = _fp
+                sys.stderr = _fp
+            except Exception:
+                pass
             i += 2
         elif not a.startswith("-"):
             if pos_idx == 0:

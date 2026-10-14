@@ -203,64 +203,60 @@ try {
     Write-Warning "Could not verify backend health: $_"
 }
 
-# 7. Configure 24/7 Silent Background Windows Service (Startup Shortcut + Registry Run Key + Task Scheduler)
-Write-Host "[*] Configuring silent background autostart on logon..." -ForegroundColor Cyan
+# 7. Configure 24/7 Silent Background Windows Service (Single Mechanism Supervision)
+Write-Host "[*] Configuring silent background autostart..." -ForegroundColor Cyan
 
-# Generate silent VBScript launcher (SW_HIDE = 0, zero flashing cmd window)
-$VbsScript = Join-Path $BinDir "run-agent.vbs"
-$VbsContent = @"
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "node """ & CreateObject("Scripting.FileSystemObject").GetParentFolderName(WScript.ScriptFullName) & "\cybervps"" start", 0, False
-"@
-Set-Content -Path $VbsScript -Value $VbsContent -Force
-
-# Method A: User Startup Shortcut (Non-Admin & Standard Users)
-try {
-    $StartupDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::Startup)
-    if (Test-Path $StartupDir) {
-        $WshShell = New-Object -ComObject WScript.Shell
-        $Shortcut = $WshShell.CreateShortcut((Join-Path $StartupDir "CyberVPS-Agent.lnk"))
-        $Shortcut.TargetPath = "wscript.exe"
-        $Shortcut.Arguments = "//B //Nologo `"$VbsScript`""
-        $Shortcut.WindowStyle = 7
-        $Shortcut.Save()
-        Write-Host "  ✅ User Startup shortcut registered (Autostart on Logon)." -ForegroundColor Green
-    }
-} catch {}
-
-# Method B: HKCU Run Registry Key (Standard User, zero UAC prompt)
-try {
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Value "wscript.exe //B //Nologo `"$VbsScript`"" -Force
-    Write-Host "  ✅ User Registry autostart key registered (HKCU Run)." -ForegroundColor Green
-} catch {}
-
-# Method C: Autonomous Boot-Start & Logon Task
 $TaskName = "CyberVPS-Space-Station-Agent"
-$IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-$oldEap = $ErrorActionPreference
-$ErrorActionPreference = 'SilentlyContinue'
+$StartupShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Startup)) "CyberVPS-Agent.lnk"
+$AgentScript = Join-Path $InstallDir "agent\universal-agent.py"
+$VbsScript = Join-Path $BinDir "run-agent.vbs"
+
+# Clean up any previously registered startup mechanisms to eliminate duplicate instances
+if (Test-Path $StartupShortcut) {
+    Remove-Item -Path $StartupShortcut -Force -ErrorAction SilentlyContinue
+}
 try {
-    & schtasks.exe /Query /TN $TaskName 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
-    }
-    $TaskRun = "`"wscript.exe`" //B //Nologo `"$VbsScript`""
-    if ($IsElevated) {
-        # Elevated Admin: Start at system boot (autonomous 24/7 service before user login)
+    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Force -ErrorAction SilentlyContinue
+} catch {}
+try {
+    & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
+} catch {}
+
+$IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($IsElevated) {
+    # Elevated Admin: Single Autonomous Boot-Start Scheduled Task running under SYSTEM with HIGHEST privileges
+    $TaskRun = "`"$PythonExe`" -u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`""
+    $oldEap = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
         & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONSTART /RU "SYSTEM" /RL HIGHEST /F 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "  ✅ Elevated Boot-Start Service registered (Starts on Boot via SYSTEM)." -ForegroundColor Green
+            Write-Host "  ✅ Elevated Boot-Start Service registered (Single mechanism: Starts on Boot via SYSTEM)." -ForegroundColor Green
         } else {
             & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONLOGON /RL HIGHEST /F 2>$null | Out-Null
-            Write-Host "  ✅ Elevated Task registered (Starts on Logon with HIGHEST privileges)." -ForegroundColor Green
+            Write-Host "  ✅ Elevated Task registered (Single mechanism: Starts on Logon with HIGHEST privileges)." -ForegroundColor Green
         }
-    } else {
-        # Standard User: Autostart on user logon without UAC prompts
-        & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
-        Write-Host "  ✅ User Scheduled Task registered (Autostart on Logon)." -ForegroundColor Green
+    } finally {
+        $ErrorActionPreference = $oldEap
     }
-} catch {} finally {
-    $ErrorActionPreference = $oldEap
+} else {
+    # Standard User: Single Registry Run Key with silent background VBS launcher (zero console popup)
+    $EscPy = $PythonExe.Replace('"', '""')
+    $EscAgent = $AgentScript.Replace('"', '""')
+    $EscConfig = $ConfigFile.Replace('"', '""')
+    $EscLogs = $LogsDir.Replace('"', '""')
+    $VbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run """$EscPy"" -u ""$EscAgent"" --config ""$EscConfig"" --log-dir ""$EscLogs""", 0, False
+"@
+    Set-Content -Path $VbsScript -Value $VbsContent -Force
+    try {
+        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Value "wscript.exe //B //Nologo `"$VbsScript`"" -Force
+        Write-Host "  ✅ User Registry autostart key registered (Single mechanism: HKCU Run without UAC prompts)." -ForegroundColor Green
+    } catch {
+        Write-Warning "Could not register HKCU Run key: $_"
+    }
 }
 
 # 8. Start Agent in Background Now

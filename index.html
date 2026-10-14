@@ -2769,7 +2769,8 @@
       const wsProtocol = base.startsWith('https') ? 'wss:' : 'ws:';
       const wsHost = base.replace(/^https?:\/\//, '');
       const profilePref = document.getElementById('terminal-profile-select')?.value || 'privileged';
-      const wsUrl = `${wsProtocol}//${wsHost}/api/v1/terminal/stream?machine_id=${encodeURIComponent(machineId)}&cols=${cols}&rows=${rows}&profile=${encodeURIComponent(profilePref)}`;
+      const pairingCred = appConfig.pairingKey || '';
+      const wsUrl = `${wsProtocol}//${wsHost}/api/v1/terminal/stream?machine_id=${encodeURIComponent(machineId)}&cols=${cols}&rows=${rows}&profile=${encodeURIComponent(profilePref)}${pairingCred ? `&token=${encodeURIComponent(pairingCred)}` : ''}`;
 
       try {
         const ws = new WebSocket(wsUrl);

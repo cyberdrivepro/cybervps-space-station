@@ -141,7 +141,7 @@ if [ -n "${SHELL_RC}" ]; then
 fi
 export PATH="${BIN_DIR}:${PATH}"
 
-# 8. Configure 24/7 Background Service (systemd or nohup supervisor)
+# 8. Configure 24/7 Background Service (Single Clean Supervision Mechanism)
 echo "[*] Configuring 24/7 background service..."
 
 SERVICE_MODE="nohup"
@@ -157,7 +157,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_BASE}
-ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE}
+ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR}
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -170,13 +170,34 @@ EOF
   systemctl daemon-reload
   systemctl enable cybervps-agent.service >/dev/null 2>&1 || true
   systemctl restart cybervps-agent.service >/dev/null 2>&1 || true
+  # Remove redundant crontab entry so there is only one supervisor
+  if command -v crontab >/dev/null 2>&1; then
+    (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true) | crontab - >/dev/null 2>&1 || true
+  fi
   SERVICE_MODE="systemd (root)"
-  echo "  ✅ Registered systemd service: ${SERVICE_FILE}"
-elif command -v systemctl >/dev/null 2>&1 && systemctl --user list-units >/dev/null 2>&1; then
-  USER_SERVICE_DIR="${HOME}/.config/systemd/user"
-  USER_SERVICE="${USER_SERVICE_DIR}/cybervps-agent.service"
-  mkdir -p "${USER_SERVICE_DIR}"
-  cat <<EOF > "${USER_SERVICE}"
+  echo "  ✅ Registered systemd service (Single mechanism): ${SERVICE_FILE}"
+else
+  # Non-root installation: check if systemd user unit + linger is truly supported
+  HAS_USER_SYSTEMD=0
+  HAS_LINGER=0
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user list-units >/dev/null 2>&1; then
+    HAS_USER_SYSTEMD=1
+  fi
+
+  if command -v loginctl >/dev/null 2>&1; then
+    loginctl enable-linger "${USER}" >/dev/null 2>&1 || true
+    if loginctl show-user "${USER}" --property=Linger 2>/dev/null | grep -qi "Linger=yes"; then
+      HAS_LINGER=1
+    elif [ -f "/var/lib/systemd/linger/${USER}" ]; then
+      HAS_LINGER=1
+    fi
+  fi
+
+  if [ "$HAS_USER_SYSTEMD" -eq 1 ] && [ "$HAS_LINGER" -eq 1 ]; then
+    USER_SERVICE_DIR="${HOME}/.config/systemd/user"
+    USER_SERVICE="${USER_SERVICE_DIR}/cybervps-agent.service"
+    mkdir -p "${USER_SERVICE_DIR}"
+    cat <<EOF > "${USER_SERVICE}"
 [Unit]
 Description=CyberVPS Space Station Host Agent (User Service)
 After=network.target
@@ -184,7 +205,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_BASE}
-ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE}
+ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR}
 Restart=always
 RestartSec=3s
 StandardOutput=append:${LOG_DIR}/agent.log
@@ -193,28 +214,34 @@ StandardError=append:${LOG_DIR}/agent.log
 [Install]
 WantedBy=default.target
 EOF
-  # Enable user lingering so service persists 24/7 after SSH disconnect
-  loginctl enable-linger "${USER}" 2>/dev/null || true
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
-  systemctl --user enable --now cybervps-agent.service >/dev/null 2>&1 || true
-  SERVICE_MODE="systemd (user linger)"
-  echo "  ✅ Registered systemd user service with 24/7 linger: ${USER_SERVICE}"
-  
-  # Also add crontab autostart as persistent redundancy
-  if command -v crontab >/dev/null 2>&1; then
-    (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true; echo "@reboot ${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} >> ${LOG_DIR}/agent.log 2>&1 &") | crontab - >/dev/null 2>&1 || true
-  fi
-else
-  # Background supervisor via nohup and crontab @reboot
-  pkill -f "universal-agent.py" >/dev/null 2>&1 || true
-  nohup ${PY_CMD} -u "${INSTALL_DIR}/agent/universal-agent.py" --config "${CONFIG_FILE}" >> "${LOG_DIR}/agent.log" 2>&1 &
-  AGENT_PID=$!
-  echo "${AGENT_PID}" > "${RUN_DIR}/agent.pid"
-  SERVICE_MODE="background daemon (PID ${AGENT_PID})"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    systemctl --user enable --now cybervps-agent.service >/dev/null 2>&1 || true
+    # Remove redundant crontab entry so there is only one supervisor
+    if command -v crontab >/dev/null 2>&1; then
+      (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true) | crontab - >/dev/null 2>&1 || true
+    fi
+    SERVICE_MODE="systemd (user linger)"
+    echo "  ✅ Registered systemd user service with 24/7 linger (Single mechanism): ${USER_SERVICE}"
+  else
+    if [ "$HAS_USER_SYSTEMD" -eq 1 ] && [ "$HAS_LINGER" -eq 0 ]; then
+      echo "  ℹ️  User lingering could not be confirmed for '${USER}'."
+      echo "     Using background daemon + crontab @reboot for persistent supervision."
+      systemctl --user stop cybervps-agent.service >/dev/null 2>&1 || true
+      systemctl --user disable cybervps-agent.service >/dev/null 2>&1 || true
+      rm -f "${HOME}/.config/systemd/user/cybervps-agent.service" 2>/dev/null || true
+    fi
 
-  # Setup crontab autostart if available
-  if command -v crontab >/dev/null 2>&1; then
-    (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true; echo "@reboot ${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} >> ${LOG_DIR}/agent.log 2>&1 &") | crontab - >/dev/null 2>&1 || true
+    # Background supervisor via nohup and crontab @reboot (Single fallback mechanism)
+    pkill -f "universal-agent.py" >/dev/null 2>&1 || true
+    nohup ${PY_CMD} -u "${INSTALL_DIR}/agent/universal-agent.py" --config "${CONFIG_FILE}" --log-dir "${LOG_DIR}" >> "${LOG_DIR}/agent.log" 2>&1 &
+    AGENT_PID=$!
+    echo "${AGENT_PID}" > "${RUN_DIR}/agent.pid"
+    SERVICE_MODE="background daemon (PID ${AGENT_PID})"
+
+    if command -v crontab >/dev/null 2>&1; then
+      (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true; echo "@reboot ${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR} >> ${LOG_DIR}/agent.log 2>&1 &") | crontab - >/dev/null 2>&1 || true
+      echo "  ✅ Registered crontab @reboot autostart (Single mechanism)."
+    fi
   fi
 fi
 

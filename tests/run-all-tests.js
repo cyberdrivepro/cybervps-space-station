@@ -48,7 +48,7 @@ async function runTests() {
   if (!healthCheck || healthCheck.statusCode !== 200) {
     console.log('[*] Starting local Space Station Control Plane for testing...');
     serverProcess = spawn(process.execPath, [require('path').join(__dirname, '../services/server.js')], {
-      env: { ...process.env, ENABLE_TUNNEL: 'false' },
+      env: { ...process.env, ENABLE_TUNNEL: 'false', PAIRING_KEY: 'test_pair_key_123' },
       stdio: 'ignore'
     });
     await wait(1200);
@@ -557,14 +557,56 @@ async function runTests() {
   console.log(`  ✅ SFTP gateway status: ${sftpData.status} on port ${sftpData.port}`);
 
   // TEST 21: Live Interactive Terminal WebSocket Streaming & Offline Vendor Assets
-  console.log('\n[TEST 21] Testing Live Terminal WebSocket Streaming & Offline Assets...');
+  // TEST 21: Remote Terminal Authentication, WebSocket Streaming & Fail-Closed Security
+  console.log('\n[TEST 21] Testing Remote Terminal Security, Authentication & WebSocket Streaming...');
   const xtermJsRes = await request(`${SERVER_URL}/vendor/xterm/xterm.min.js`);
   assert.strictEqual(xtermJsRes.statusCode, 200, 'xterm.min.js vendor asset must be available');
   const xtermCssRes = await request(`${SERVER_URL}/vendor/xterm/xterm.min.css`);
   assert.strictEqual(xtermCssRes.statusCode, 200, 'xterm.min.css vendor asset must be available');
   console.log('  ✅ Offline xterm.js vendor bundles verified with 200 OK.');
 
-  const termClientWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24`);
+  // 21a. Unauthenticated connection must be rejected with HTTP 401
+  let unauthRejected = false;
+  const unauthWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24`);
+  await new Promise((resolve) => {
+    unauthWs.on('open', () => { unauthWs.close(); resolve(); });
+    unauthWs.on('unexpected-response', (req, res) => {
+      if (res.statusCode === 401) unauthRejected = true;
+      resolve();
+    });
+    unauthWs.on('error', () => { resolve(); });
+  });
+  assert(unauthRejected, 'Unauthenticated WebSocket connection to terminal must be rejected with HTTP 401');
+  console.log('  ✅ Unauthenticated terminal stream connection rejected with HTTP 401.');
+
+  // 21b. Agent enrollment token cannot be used for browser terminal authorization
+  let enrollRejected = false;
+  const enrollWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=cvps_enroll_master_token`);
+  await new Promise((resolve) => {
+    enrollWs.on('open', () => { enrollWs.close(); resolve(); });
+    enrollWs.on('unexpected-response', (req, res) => {
+      if (res.statusCode === 401) enrollRejected = true;
+      resolve();
+    });
+    enrollWs.on('error', () => { resolve(); });
+  });
+  assert(enrollRejected, 'Enrollment token must NOT authorize terminal WebSocket stream (strictly rejected with HTTP 401)');
+  console.log('  ✅ Agent enrollment token strictly rejected for browser terminal access (HTTP 401).');
+
+  // 21c. Acquire single-use terminal token with pairing key
+  const tokenRes = await request(`${SERVER_URL}/api/v1/terminal/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, pairing_key: 'test_pair_key_123' })
+  });
+  assert.strictEqual(tokenRes.statusCode, 200, 'Terminal token endpoint must issue token with valid credentials');
+  const tokenData = JSON.parse(tokenRes.body);
+  assert(tokenData.success && tokenData.token, 'Token endpoint must return a valid token');
+  const singleUseToken = tokenData.token;
+  console.log('  ✅ Single-use machine-scoped terminal token successfully acquired.');
+
+  // 21d. Connect with valid single-use terminal token and receive live stream
+  const termClientWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=${encodeURIComponent(singleUseToken)}`);
   await new Promise((resolve, reject) => {
     termClientWs.on('open', resolve);
     termClientWs.on('error', reject);
@@ -588,6 +630,20 @@ async function runTests() {
   termClientWs.close();
   console.log('  ✅ Live Terminal WebSocket Stream verified: bi-directional interactive PTY/ConPTY streaming operational.');
 
+  // 21e. Replay attack prevention: single-use token cannot be reused
+  let replayedTokenRejected = false;
+  const replayWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=${encodeURIComponent(singleUseToken)}`);
+  await new Promise((resolve) => {
+    replayWs.on('open', () => { replayWs.close(); resolve(); });
+    replayWs.on('unexpected-response', (req, res) => {
+      if (res.statusCode === 401) replayedTokenRejected = true;
+      resolve();
+    });
+    replayWs.on('error', () => { resolve(); });
+  });
+  assert(replayedTokenRejected, 'Replayed single-use token must be rejected with HTTP 401');
+  console.log('  ✅ Replayed single-use token rejected (single-use consumption verified).');
+
   // TEST 15: Durable State Persistence Across Server Restarts
   console.log('\n[TEST 15] Testing Durable State Persistence Across Process Restarts...');
   // Wait for debounced write
@@ -597,7 +653,7 @@ async function runTests() {
     serverProcess.kill('SIGTERM');
     await wait(800);
     serverProcess = spawn(process.execPath, [require('path').join(__dirname, '../services/server.js')], {
-      env: { ...process.env, ENABLE_TUNNEL: 'false' },
+      env: { ...process.env, ENABLE_TUNNEL: 'false', PAIRING_KEY: 'test_pair_key_123' },
       stdio: 'ignore'
     });
     let postRestartMachines = null;
@@ -628,6 +684,15 @@ async function runTests() {
     console.log('  ✅ Windows Background Terminal verified: zero desktop popups, persistent state & live streaming operational.');
   }
 
+  // TEST 23: Agent Security Boundaries & Execution Identity Isolation
+  console.log('\n[TEST 23] Testing Agent Security Boundaries & Privilege Isolation...');
+  const pythonExe = process.env.PYTHON || 'python';
+  const secTest = execSync(`${pythonExe} "${require('path').join(__dirname, 'test-agent-security.py')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(secTest.includes('ALL AGENT SECURITY & EXECUTION BOUNDARY TESTS PASSED'), 'Agent security test must pass');
+  console.log('  ✅ Agent Security & Execution Boundaries verified: privilege fail-closed & duplicate prevention operational.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -635,7 +700,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 22 ADVANCED UNIVERSAL BRIDGE, DEVICE INTEL, FILE MANAGER, TERMINAL & PERSISTENCE TESTS PASSED!');
+  console.log('🎉 ALL 23 ADVANCED SECURITY, CONTROL PLANE, BRIDGE, AGENT & TERMINAL TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

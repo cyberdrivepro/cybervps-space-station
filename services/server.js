@@ -14,7 +14,7 @@ const TunnelManager = require('./tunnel-manager');
 
 const PORT = process.env.PORT || 8080;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
-const tunnelManager = new TunnelManager({ port: PORT });
+const tunnelManager = new TunnelManager({ port: PORT, pairingKey: process.env.PAIRING_KEY });
 
 // Daemon file logging support
 if (process.env.CYBERVPS_LOG_FILE) {
@@ -79,6 +79,7 @@ const db = {
   tunnelStreams: new Map(), // stream_id -> { res, req, buffer, isWsUpgrade, ... }
   bridgeStreamSockets: new Map(), // stream_id -> { clientWs, agentWs }
   terminalSessions: new Map(), // session_id -> { machine_id, wsBrowser }
+  terminalAuthTokens: new Map(), // token -> { machine_id, profile, expires_at }
   pendingRequests: new Map(), // request_id -> { resolve, reject, timer }
   telemetrySubscribers: new Set() // active SSE client responses for 2-second real-time fan-out
 };
@@ -462,6 +463,54 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Invalid pairing key' }));
         }
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/terminal/token' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id, pairing_key, session_token, profile } = payload;
+        
+        // Authenticate client identity
+        const isKeyValid = pairing_key && (pairing_key === tunnelManager.pairingKey);
+        const isSessionValid = session_token && tunnelManager.isValidSession(session_token);
+        
+        if (!isKeyValid && !isSessionValid) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: Valid pairing key or session token required' }));
+          return;
+        }
+        
+        if (!machine_id || !db.machines.has(machine_id)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
+          return;
+        }
+
+        const termToken = 'term_tok_' + crypto.randomBytes(16).toString('hex');
+        db.terminalAuthTokens.set(termToken, {
+          machine_id,
+          profile: profile || 'default',
+          created_at: Date.now(),
+          expires_at: Date.now() + 60000 // 60s single-use token
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          token: termToken,
+          machine_id,
+          profile: profile || 'default',
+          expires_in: 60
+        }));
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
@@ -1141,6 +1190,66 @@ const server = http.createServer(async (req, res) => {
 const wssRelay = new WebSocketServer({ noServer: true });
 const wssTerminal = new WebSocketServer({ noServer: true });
 
+function verifyTerminalAuthorization(request, parsedUrl) {
+  const machineId = parsedUrl.searchParams.get('machine_id');
+  if (!machineId || !db.machines.has(machineId)) {
+    return { authorized: false, error: 'Machine not found in fleet', status: 404 };
+  }
+
+  // 1. Extract credential from query params or headers
+  let cred = parsedUrl.searchParams.get('token') ||
+             parsedUrl.searchParams.get('session_token') ||
+             parsedUrl.searchParams.get('pairing_key') ||
+             parsedUrl.searchParams.get('pair');
+
+  if (!cred && request.headers) {
+    cred = request.headers['x-session-token'] ||
+           request.headers['x-cvps-pairing-key'] ||
+           request.headers['x-pairing-key'];
+    if (!cred && request.headers['authorization']) {
+      const parts = request.headers['authorization'].split(' ');
+      if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') {
+        cred = parts[1];
+      }
+    }
+  }
+
+  if (!cred) {
+    return { authorized: false, error: 'Unauthorized: Missing terminal authentication credentials', status: 401 };
+  }
+
+  // Guard: Agent enrollment token MUST NOT be accepted as browser authorization
+  const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
+  if (cred === configuredMaster || db.enrollmentTokens.has(cred)) {
+    return { authorized: false, error: 'Unauthorized: Agent enrollment token cannot be used for terminal authorization', status: 401 };
+  }
+
+  // 2. Validate single-use machine-scoped terminal token
+  if (db.terminalAuthTokens.has(cred)) {
+    const record = db.terminalAuthTokens.get(cred);
+    db.terminalAuthTokens.delete(cred); // Single-use consumption
+    if (Date.now() > record.expires_at) {
+      return { authorized: false, error: 'Unauthorized: Terminal token expired', status: 401 };
+    }
+    if (record.machine_id !== machineId) {
+      return { authorized: false, error: 'Unauthorized: Token not authorized for this machine', status: 403 };
+    }
+    return { authorized: true, user: 'browser-authenticated', machineId, profile: record.profile };
+  }
+
+  // 3. Validate session token from pairing
+  if (tunnelManager.isValidSession(cred)) {
+    return { authorized: true, user: 'session-authenticated', machineId };
+  }
+
+  // 4. Validate direct pairing key
+  if (tunnelManager.pairingKey && cred === tunnelManager.pairingKey) {
+    return { authorized: true, user: 'pairing-key-authenticated', machineId };
+  }
+
+  return { authorized: false, error: 'Unauthorized: Invalid terminal credentials', status: 401 };
+}
+
 server.on('upgrade', (request, socket, head) => {
   const parsedUrl = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
   const pathname = parsedUrl.pathname;
@@ -1150,7 +1259,17 @@ server.on('upgrade', (request, socket, head) => {
       wssRelay.emit('connection', ws, request);
     });
   } else if (pathname === '/api/v1/terminal/stream') {
+    const auth = verifyTerminalAuthorization(request, parsedUrl);
+    if (!auth.authorized) {
+      const statusCode = auth.status || 401;
+      const statusText = statusCode === 404 ? 'Not Found' : (statusCode === 403 ? 'Forbidden' : 'Unauthorized');
+      socket.write(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n{"error":"${auth.error}"}\r\n`);
+      socket.destroy();
+      return;
+    }
+
     wssTerminal.handleUpgrade(request, socket, head, (ws) => {
+      ws._terminalAuth = auth;
       wssTerminal.emit('connection', ws, request);
     });
   } else if (pathname.startsWith('/tunnel/')) {
@@ -1202,9 +1321,22 @@ wssRelay.on('connection', (ws, request) => {
 wssTerminal.on('connection', (ws, request) => {
   const parsed = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
   const machineId = parsed.searchParams.get('machine_id');
+  const auth = ws._terminalAuth || verifyTerminalAuthorization(request, parsed);
+
+  if (!auth || !auth.authorized) {
+    ws.send(JSON.stringify({ error: auth ? auth.error : 'Unauthorized' }));
+    ws.close(4001, 'Unauthorized');
+    return;
+  }
+
   const sessionId = 'term_' + crypto.randomUUID().slice(0, 8);
   const shellPref = parsed.searchParams.get('shell') || null;
-  const profilePref = parsed.searchParams.get('profile') || null;
+  let profilePref = parsed.searchParams.get('profile') || null;
+
+  if (auth.profile && auth.profile !== 'default') {
+    profilePref = auth.profile;
+  }
+
   const cols = parseInt(parsed.searchParams.get('cols') || '80', 10);
   const rows = parseInt(parsed.searchParams.get('rows') || '24', 10);
 
@@ -1214,8 +1346,8 @@ wssTerminal.on('connection', (ws, request) => {
     return;
   }
 
-  db.terminalSessions.set(sessionId, { machine_id: machineId, wsBrowser: ws });
-  logAudit('terminal_opened', 'user', machineId, `Terminal session ${sessionId} opened (profile: ${profilePref || 'default'})`);
+  db.terminalSessions.set(sessionId, { machine_id: machineId, wsBrowser: ws, auth });
+  logAudit('terminal_opened', auth.user || 'user', machineId, `Terminal session ${sessionId} opened (profile: ${profilePref || 'default'})`);
 
   sendServerCommand(machineId, {
     type: 'TerminalStart',
