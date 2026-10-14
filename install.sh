@@ -82,14 +82,14 @@ fi
 # 5. Check Runtime (Python 3 or Node.js)
 PY_CMD=""
 if command -v python3 >/dev/null 2>&1; then
-  PY_CMD="python3"
+  PY_CMD="$(command -v python3)"
 elif command -v python >/dev/null 2>&1; then
-  PY_CMD="python"
+  PY_CMD="$(command -v python)"
 fi
 
 NODE_CMD=""
 if command -v node >/dev/null 2>&1; then
-  NODE_CMD="node"
+  NODE_CMD="$(command -v node)"
 fi
 
 if [ -z "$PY_CMD" ] && [ -z "$NODE_CMD" ]; then
@@ -148,6 +148,10 @@ hash -r 2>/dev/null || rehash 2>/dev/null || true
 # 8. Configure 24/7 Background Service (Single Clean Supervision Mechanism)
 echo "[*] Configuring 24/7 background service..."
 
+# Stop any pre-existing agent processes to ensure clean restart without PID collisions
+pkill -f "universal-agent.py" >/dev/null 2>&1 || true
+rm -f "${RUN_DIR}/agent.pid" 2>/dev/null || true
+
 SERVICE_MODE="nohup"
 SYSTEMD_CONFIGURED=0
 
@@ -176,6 +180,7 @@ EOF
   if systemctl daemon-reload >/dev/null 2>&1 && \
      systemctl enable cybervps-agent.service >/dev/null 2>&1 && \
      systemctl restart cybervps-agent.service >/dev/null 2>&1 && \
+     sleep 1 && \
      systemctl is-active --quiet cybervps-agent.service 2>/dev/null; then
     SYSTEMD_CONFIGURED=1
     SERVICE_MODE="systemd (root)"
@@ -265,29 +270,29 @@ fi
 # 9. Verify Enrollment with Central Backend
 echo "[*] Connecting and registering host with control plane..."
 
-# Send immediate Auth registration from installer to prevent race conditions
+# Send immediate Auth registration from installer non-blocking in background
 if [ "$DOWNLOAD_TOOL" = "curl" ]; then
-  curl -4 -s -X POST -H "Content-Type: application/json" -H "X-Machine-ID: ${MACHINE_ID}" -H "X-Enrollment-Token: ${TOKEN}" \
+  (curl -4 --connect-timeout 2 --max-time 4 -s -X POST -H "Content-Type: application/json" -H "X-Machine-ID: ${MACHINE_ID}" -H "X-Enrollment-Token: ${TOKEN}" \
     -d "{\"type\":\"Auth\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"hostname\":\"${HOSTNAME}\",\"username\":\"${USER_NAME}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\"}}" \
     "${SERVER_URL}/api/v1/relay/event" >/dev/null 2>&1 || \
-  curl -s -X POST -H "Content-Type: application/json" -H "X-Machine-ID: ${MACHINE_ID}" -H "X-Enrollment-Token: ${TOKEN}" \
+   curl --connect-timeout 2 --max-time 4 -s -X POST -H "Content-Type: application/json" -H "X-Machine-ID: ${MACHINE_ID}" -H "X-Enrollment-Token: ${TOKEN}" \
     -d "{\"type\":\"Auth\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"hostname\":\"${HOSTNAME}\",\"username\":\"${USER_NAME}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\"}}" \
-    "${SERVER_URL}/api/v1/relay/event" >/dev/null 2>&1 || true
+    "${SERVER_URL}/api/v1/relay/event" >/dev/null 2>&1 || true) &
 elif [ "$DOWNLOAD_TOOL" = "wget" ]; then
-  wget -qO- --post-data="{\"type\":\"Auth\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"hostname\":\"${HOSTNAME}\",\"username\":\"${USER_NAME}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\"}}" \
+  (wget -T 4 -t 1 -qO- --post-data="{\"type\":\"Auth\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"hostname\":\"${HOSTNAME}\",\"username\":\"${USER_NAME}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\"}}" \
     --header="Content-Type: application/json" --header="X-Machine-ID: ${MACHINE_ID}" --header="X-Enrollment-Token: ${TOKEN}" \
-    "${SERVER_URL}/api/v1/relay/event" >/dev/null 2>&1 || true
+    "${SERVER_URL}/api/v1/relay/event" >/dev/null 2>&1 || true) &
 fi
 
 echo "[*] Waiting for fleet enrollment confirmation (up to 20s)..."
 
 ENROLLED=0
 for i in $(seq 1 10); do
-  sleep 2
+  sleep 1.5
   if [ "$DOWNLOAD_TOOL" = "curl" ]; then
-    ENROLL_CHECK="$(curl -4 --connect-timeout 3 --max-time 6 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || curl --connect-timeout 3 --max-time 6 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
+    ENROLL_CHECK="$(curl -4 --connect-timeout 2 --max-time 3 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || curl --connect-timeout 2 --max-time 3 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
   else
-    ENROLL_CHECK="$(wget -T 6 -t 1 -qO- "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
+    ENROLL_CHECK="$(wget -T 3 -t 1 -qO- "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
   fi
 
   if echo "${ENROLL_CHECK}" | grep -q "${MACHINE_ID}"; then
