@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#040814" />
+      <stop offset="40%" stop-color="#071126" />
+      <stop offset="100%" stop-color="#02040a" />
+    </linearGradient>
+
+    <!-- Neon Cyan Gradient -->
+    <linearGradient id="cyan-glow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00f5ff" />
+      <stop offset="50%" stop-color="#00d2ff" />
+      <stop offset="100%" stop-color="#00ff88" />
+    </linearGradient>
+
+    <!-- Accent Violet Gradient -->
+    <linearGradient id="violet-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#b026ff" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+
+    <!-- Grid Pattern -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#00f5ff" stroke-width="0.75" stroke-opacity="0.08" />
+    </pattern>
+
+    <!-- Radial Mask for Grid Depth -->
+    <radialGradient id="grid-mask" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#fff" stop-opacity="0.65" />
+      <stop offset="70%" stop-color="#fff" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#000" stop-opacity="0" />
+    </radialGradient>
+
+    <mask id="grid-fade">
+      <rect width="1200" height="420" fill="url(#grid-mask)" />
+    </mask>
+
+    <!-- Glow Filter -->
+    <filter id="neon-blur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur" />
+      <feMerge>
+        <feMergeNode in="coloredBlur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <filter id="subtle-glow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <style>
+    .title-text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Ubuntu', 'SF Pro Display', sans-serif; font-weight: 900; letter-spacing: 4px; }
+    .mono-text { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Source Code Pro', monospace; }
+    .status-badge { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
+    @keyframes pulse {
+      0% { opacity: 0.4; }
+      50% { opacity: 0.9; }
+      100% { opacity: 0.4; }
+    }
+    @keyframes orbit {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .pulsing-light { animation: pulse 3s infinite ease-in-out; }
+  </style>
+
+  <!-- Deep Backdrop -->
+  <rect width="1200" height="420" fill="url(#bg-grad)" />
+
+  <!-- Cyber Grid Layer -->
+  <rect width="1200" height="420" fill="url(#grid)" mask="url(#grid-fade)" />
+
+  <!-- Atmospheric Glow Orbs -->
+  <circle cx="220" cy="190" r="140" fill="#00f5ff" opacity="0.12" filter="url(#neon-blur)" />
+  <circle cx="980" cy="230" r="160" fill="#b026ff" opacity="0.10" filter="url(#neon-blur)" />
+  <circle cx="600" cy="80" r="180" fill="#00ff88" opacity="0.06" filter="url(#neon-blur)" />
+
+  <!-- Top Cyber Border Line -->
+  <line x1="60" y1="20" x2="1140" y2="20" stroke="#00f5ff" stroke-width="1.5" stroke-opacity="0.3" />
+  <circle cx="60" cy="20" r="3" fill="#00f5ff" />
+  <circle cx="1140" cy="20" r="3" fill="#00f5ff" />
+  <line x1="520" y1="20" x2="680" y2="20" stroke="#00ff88" stroke-width="3" filter="url(#subtle-glow)" />
+
+  <!-- Station Radar / Satellite Icon (Left Graphic) -->
+  <g transform="translate(140, 195)">
+    <!-- Concentric Scanning Rings -->
+    <circle cx="0" cy="0" r="85" fill="none" stroke="#00f5ff" stroke-width="1" stroke-opacity="0.2" stroke-dasharray="6,6" />
+    <circle cx="0" cy="0" r="65" fill="none" stroke="#b026ff" stroke-width="1.2" stroke-opacity="0.35" />
+    <circle cx="0" cy="0" r="45" fill="none" stroke="#00f5ff" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="14,4" />
+    <circle cx="0" cy="0" r="25" fill="#00f5ff" fill-opacity="0.08" stroke="#00ff88" stroke-width="2" />
+
+    <!-- Center Satellite Core -->
+    <polygon points="0,-16 14,0 0,16 -14,0" fill="#00f5ff" filter="url(#subtle-glow)" />
+    <circle cx="0" cy="0" r="4" fill="#071126" />
+
+    <!-- Orbital Nodes -->
+    <circle cx="65" cy="0" r="4" fill="#00ff88" filter="url(#subtle-glow)" />
+    <circle cx="-46" cy="-46" r="3.5" fill="#b026ff" filter="url(#subtle-glow)" />
+    <circle cx="32" cy="56" r="3" fill="#00f5ff" />
+
+    <!-- Crosshair Ticks -->
+    <line x1="-95" y1="0" x2="-80" y2="0" stroke="#00f5ff" stroke-width="2" stroke-opacity="0.7" />
+    <line x1="80" y1="0" x2="95" y2="0" stroke="#00f5ff" stroke-width="2" stroke-opacity="0.7" />
+    <line x1="0" y1="-95" x2="0" y2="-80" stroke="#00f5ff" stroke-width="2" stroke-opacity="0.7" />
+    <line x1="0" y1="80" x2="0" y2="95" stroke="#00f5ff" stroke-width="2" stroke-opacity="0.7" />
+
+    <!-- Scanning Radar Sweep Line -->
+    <line x1="0" y1="0" x2="52" y2="-52" stroke="#00ff88" stroke-width="2" stroke-opacity="0.8" filter="url(#subtle-glow)" />
+  </g>
+
+  <!-- Mission Control Status Pill (Top Left) -->
+  <g transform="translate(290, 75)">
+    <rect x="0" y="0" width="220" height="26" rx="13" fill="#00f5ff" fill-opacity="0.08" stroke="#00f5ff" stroke-width="1" stroke-opacity="0.4" />
+    <circle cx="14" cy="13" r="4.5" fill="#00ff88" class="pulsing-light" />
+    <text x="28" y="17" fill="#00f5ff" class="status-badge">MISSION CONTROL ONLINE</text>
+  </g>
+
+  <!-- Security Protocol Pill (Top Right) -->
+  <g transform="translate(525, 75)">
+    <rect x="0" y="0" width="235" height="26" rx="13" fill="#b026ff" fill-opacity="0.08" stroke="#b026ff" stroke-width="1" stroke-opacity="0.4" />
+    <text x="14" y="17" fill="#c084fc" class="status-badge">OUTBOUND TLS ✦ ZERO-INGRESS</text>
+  </g>
+
+  <!-- Main Headline: CYBERVPS -->
+  <g transform="translate(290, 155)">
+    <text x="0" y="0" fill="url(#cyan-glow)" class="title-text" font-size="52" filter="url(#subtle-glow)">CYBERVPS</text>
+    <text x="325" y="0" fill="#ffffff" class="title-text" font-size="52">SPACE STATION</text>
+  </g>
+
+  <!-- Subtitle Tagline -->
+  <g transform="translate(292, 195)">
+    <text x="0" y="0" fill="#94a3b8" class="mono-text" font-size="16" letter-spacing="0.5">
+      Universal Remote Fleet Control &bull; All-Port Network Bridge &bull; Virtual Mesh Network
+    </text>
+  </g>
+
+  <!-- Problem & Mission Description -->
+  <g transform="translate(292, 230)">
+    <text x="0" y="0" fill="#cbd5e1" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="14.5" opacity="0.9" line-height="1.5">
+      Break remote services out of localhost confinement. Forward ANY port (1–65535) behind strict NAT,
+    </text>
+    <text x="0" y="22" fill="#cbd5e1" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="14.5" opacity="0.9">
+      restricted firewalls, and cloud sandboxes directly to your Windows PC with zero open inbound ports.
+    </text>
+  </g>
+
+  <!-- Architecture Capability Badges (Bottom Row) -->
+  <g transform="translate(290, 290)">
+    <!-- Badge 1: Port Bridge -->
+    <g transform="translate(0, 0)">
+      <rect width="180" height="34" rx="6" fill="#071126" stroke="#00f5ff" stroke-width="1" stroke-opacity="0.4" />
+      <text x="14" y="21" fill="#00f5ff" class="mono-text" font-size="12" font-weight="700">⚡ MODE A: PORT BRIDGE</text>
+    </g>
+
+    <!-- Badge 2: 10.77.0.0/24 Mesh -->
+    <g transform="translate(195, 0)">
+      <rect width="170" height="34" rx="6" fill="#071126" stroke="#00ff88" stroke-width="1" stroke-opacity="0.4" />
+      <text x="14" y="21" fill="#00ff88" class="mono-text" font-size="12" font-weight="700">🪐 10.77.0.0/24 MESH</text>
+    </g>
+
+    <!-- Badge 3: Multi-OS Terminal -->
+    <g transform="translate(380, 0)">
+      <rect width="205" height="34" rx="6" fill="#071126" stroke="#b026ff" stroke-width="1" stroke-opacity="0.4" />
+      <text x="14" y="21" fill="#c084fc" class="mono-text" font-size="12" font-weight="700">💻 CONPTY / PTY SHELL</text>
+    </g>
+
+    <!-- Badge 4: Zero Egress Blocker -->
+    <g transform="translate(600, 0)">
+      <rect width="205" height="34" rx="6" fill="#071126" stroke="#38bdf8" stroke-width="1" stroke-opacity="0.4" />
+      <text x="14" y="21" fill="#38bdf8" class="mono-text" font-size="12" font-weight="700">🛡️ FAIL-CLOSED ISOLATION</text>
+    </g>
+  </g>
+
+  <!-- Bottom Cyber Terminal Footer Line -->
+  <line x1="60" y1="395" x2="1140" y2="395" stroke="#00f5ff" stroke-width="1" stroke-opacity="0.25" />
+  <circle cx="60" cy="395" r="2.5" fill="#00ff88" />
+  <circle cx="1140" cy="395" r="2.5" fill="#00ff88" />
+  <text x="75" y="407" fill="#64748b" class="mono-text" font-size="10.5">NODE_TRANSPORT: WSS / TLS 1.3 // CIDR: 10.77.0.0/24 // PORT_SPECTRUM: 1-65535 // SECURITY: SINGLE-USE TOKEN</text>
+  <text x="1060" y="407" fill="#00ff88" class="mono-text" font-size="10.5">v1.0.0 ACTIVE</text>
+</svg>

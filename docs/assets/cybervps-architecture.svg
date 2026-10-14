@@ -1,0 +1,206 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 640" width="100%" height="100%">
+  <defs>
+    <linearGradient id="arch-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#040813" />
+      <stop offset="50%" stop-color="#071224" />
+      <stop offset="100%" stop-color="#020409" />
+    </linearGradient>
+
+    <linearGradient id="hub-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f2b48" />
+      <stop offset="100%" stop-color="#08182b" />
+    </linearGradient>
+
+    <linearGradient id="card-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0c1a30" />
+      <stop offset="100%" stop-color="#060e1c" />
+    </linearGradient>
+
+    <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <pattern id="arch-grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#00f5ff" stroke-width="0.5" stroke-opacity="0.06" />
+    </pattern>
+
+    <marker id="arrow-cyan" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#00f5ff" />
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#00ff88" />
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#c084fc" />
+    </marker>
+  </defs>
+
+  <style>
+    .mono { font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; }
+    .sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .glow-cyan { filter: url(#neon-glow); }
+  </style>
+
+  <!-- Background -->
+  <rect width="1100" height="640" fill="url(#arch-bg)" />
+  <rect width="1100" height="640" fill="url(#arch-grid)" />
+
+  <!-- Title Header -->
+  <g transform="translate(50, 40)">
+    <text x="0" y="0" fill="#00f5ff" class="sans" font-size="20" font-weight="800" letter-spacing="2">CYBERVPS SPACE STATION</text>
+    <text x="290" y="0" fill="#94a3b8" class="mono" font-size="14">// ARCHITECTURAL DATA FLOW &amp; ISOLATION TOPOLOGY</text>
+    <line x1="0" y1="14" x2="1000" y2="14" stroke="#00f5ff" stroke-width="1" stroke-opacity="0.3" />
+  </g>
+
+  <!-- ==================== TOP: MISSION CONTROL HUB ==================== -->
+  <g transform="translate(50, 80)">
+    <!-- Container Box -->
+    <rect width="1000" height="175" rx="10" fill="url(#hub-grad)" stroke="#00f5ff" stroke-width="1.5" stroke-opacity="0.7" />
+    <rect width="1000" height="32" rx="10" fill="#07192f" stroke="#00f5ff" stroke-width="1" stroke-opacity="0.4" />
+    <circle cx="20" cy="16" r="5" fill="#ef4444" />
+    <circle cx="36" cy="16" r="5" fill="#eab308" />
+    <circle cx="52" cy="16" r="5" fill="#22c55e" />
+    <text x="75" y="21" fill="#00f5ff" class="mono" font-size="12" font-weight="700">CENTRAL CONTROL PLANE &amp; RELAY CORE [services/server.js] (Railway / Self-Hosted)</text>
+    <text x="860" y="21" fill="#00ff88" class="mono" font-size="11">PORT: 8080 / TLS 1.3</text>
+
+    <!-- Sub-module 1: Web Dashboard & Static Gateway -->
+    <g transform="translate(30, 52)">
+      <rect width="210" height="100" rx="6" fill="#071426" stroke="#38bdf8" stroke-width="1" stroke-opacity="0.5" />
+      <text x="14" y="24" fill="#38bdf8" class="sans" font-size="13" font-weight="700">Mission Control UI</text>
+      <text x="14" y="44" fill="#94a3b8" class="mono" font-size="10.5">Standalone Web App</text>
+      <text x="14" y="62" fill="#cbd5e1" class="mono" font-size="10">GitHub Pages / Static</text>
+      <text x="14" y="82" fill="#00ff88" class="mono" font-size="10">xterm.js + Live SSE</text>
+    </g>
+
+    <!-- Sub-module 2: WebSocket Relay Core -->
+    <g transform="translate(265, 52)">
+      <rect width="220" height="100" rx="6" fill="#071426" stroke="#00f5ff" stroke-width="1.2" stroke-opacity="0.7" />
+      <text x="14" y="24" fill="#00f5ff" class="sans" font-size="13" font-weight="700">WebSocket Relay Hub</text>
+      <text x="14" y="44" fill="#94a3b8" class="mono" font-size="10.5">/api/v1/relay/connect</text>
+      <text x="14" y="62" fill="#cbd5e1" class="mono" font-size="10">Bi-directional Multiplex</text>
+      <text x="14" y="82" fill="#38bdf8" class="mono" font-size="10">Keepalive &amp; Auto-Reconn</text>
+    </g>
+
+    <!-- Sub-module 3: Security & Terminal Token Gate -->
+    <g transform="translate(510, 52)">
+      <rect width="220" height="100" rx="6" fill="#071426" stroke="#c084fc" stroke-width="1.2" stroke-opacity="0.7" />
+      <text x="14" y="24" fill="#c084fc" class="sans" font-size="13" font-weight="700">Security &amp; Token Gate</text>
+      <text x="14" y="44" fill="#94a3b8" class="mono" font-size="10.5">POST /api/v1/terminal/token</text>
+      <text x="14" y="62" fill="#cbd5e1" class="mono" font-size="10">Single-Use (60s Expire)</text>
+      <text x="14" y="82" fill="#e879f9" class="mono" font-size="10">Strict Origin Whitelist</text>
+    </g>
+
+    <!-- Sub-module 4: Virtual Subnet & Tunnel Router -->
+    <g transform="translate(755, 52)">
+      <rect width="215" height="100" rx="6" fill="#071426" stroke="#00ff88" stroke-width="1.2" stroke-opacity="0.7" />
+      <text x="14" y="24" fill="#00ff88" class="sans" font-size="13" font-weight="700">Virtual Net &amp; Public Proxy</text>
+      <text x="14" y="44" fill="#94a3b8" class="mono" font-size="10.5">CIDR: 10.77.0.0/24</text>
+      <text x="14" y="62" fill="#cbd5e1" class="mono" font-size="10">Route /tunnel/:id/:port</text>
+      <text x="14" y="82" fill="#4ade80" class="mono" font-size="10">Zero-IP Tunnel Fallback</text>
+    </g>
+  </g>
+
+  <!-- ==================== MIDDLE: ENCRYPTED OUTBOUND CHANNELS ==================== -->
+  <g transform="translate(50, 270)">
+    <!-- Connection Lines from Hub to Nodes -->
+    <!-- Node 1 Line -->
+    <path d="M 180 0 L 180 75" fill="none" stroke="#00f5ff" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow-cyan)" />
+    <!-- Node 2 Line -->
+    <path d="M 500 0 L 500 75" fill="none" stroke="#00ff88" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow-green)" />
+    <!-- Node 3 Line -->
+    <path d="M 820 0 L 820 75" fill="none" stroke="#c084fc" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow-purple)" />
+
+    <!-- Center Label Box -->
+    <rect x="250" y="20" width="500" height="34" rx="17" fill="#030816" stroke="#00f5ff" stroke-width="1" stroke-opacity="0.5" />
+    <text x="270" y="42" fill="#00f5ff" class="mono" font-size="11.5" font-weight="700">🔒 PERSISTENT OUTBOUND TLS WEBSOCKETS (NO INBOUND PORTS OPEN)</text>
+  </g>
+
+  <!-- ==================== BOTTOM: DISTRIBUTED NODES ==================== -->
+  <!-- Node 1: Windows Client PC -->
+  <g transform="translate(50, 360)">
+    <rect width="310" height="240" rx="8" fill="url(#card-grad)" stroke="#00f5ff" stroke-width="1.3" stroke-opacity="0.8" />
+    <rect width="310" height="30" rx="8" fill="#08182b" stroke="#00f5ff" stroke-width="0.8" stroke-opacity="0.3" />
+    <text x="14" y="20" fill="#00f5ff" class="mono" font-size="11.5" font-weight="700">🪟 WINDOWS PC (Local Host)</text>
+    <text x="220" y="20" fill="#38bdf8" class="mono" font-size="10.5">VIP: 10.77.0.1</text>
+
+    <!-- Node 1 Components -->
+    <g transform="translate(15, 42)">
+      <text x="0" y="16" fill="#f8fafc" class="sans" font-size="12" font-weight="700">⚡ Mode A Port Bridge</text>
+      <text x="0" y="32" fill="#94a3b8" class="mono" font-size="10">127.0.0.1:16767 &lt;---&gt; Remote 6767</text>
+      <text x="0" y="48" fill="#38bdf8" class="mono" font-size="10">Conflict-Safe Ephemeral Fallback</text>
+
+      <line x1="0" y1="60" x2="280" y2="60" stroke="#1e293b" stroke-width="1" />
+
+      <text x="0" y="78" fill="#f8fafc" class="sans" font-size="12" font-weight="700">💻 Native ConPTY Terminal</text>
+      <text x="0" y="94" fill="#94a3b8" class="mono" font-size="10">PowerShell 5.1 / 7+ &amp; CMD</text>
+      <text x="0" y="110" fill="#00ff88" class="mono" font-size="10">TokenProcess Medium Integrity</text>
+      <text x="0" y="126" fill="#e2e8f0" class="mono" font-size="10">Zero Unwanted Window Popups</text>
+
+      <line x1="0" y1="138" x2="280" y2="138" stroke="#1e293b" stroke-width="1" />
+
+      <text x="0" y="156" fill="#f8fafc" class="sans" font-size="12" font-weight="700">🛡️ Background Supervisor</text>
+      <text x="0" y="172" fill="#94a3b8" class="mono" font-size="10">User Startup Shortcut / HKCU Run</text>
+      <text x="0" y="188" fill="#38bdf8" class="mono" font-size="10">Unified CLI: `cybervps`</text>
+    </g>
+  </g>
+
+  <!-- Node 2: Remote Ubuntu / Debian VPS -->
+  <g transform="translate(395, 360)">
+    <rect width="310" height="240" rx="8" fill="url(#card-grad)" stroke="#00ff88" stroke-width="1.3" stroke-opacity="0.8" />
+    <rect width="310" height="30" rx="8" fill="#07201c" stroke="#00ff88" stroke-width="0.8" stroke-opacity="0.3" />
+    <text x="14" y="20" fill="#00ff88" class="mono" font-size="11.5" font-weight="700">🐧 REMOTE VPS (Ubuntu / Debian)</text>
+    <text x="220" y="20" fill="#4ade80" class="mono" font-size="10.5">VIP: 10.77.0.2</text>
+
+    <!-- Node 2 Components -->
+    <g transform="translate(15, 42)">
+      <text x="0" y="16" fill="#f8fafc" class="sans" font-size="12" font-weight="700">🔍 Universal Port Discovery</text>
+      <text x="0" y="32" fill="#94a3b8" class="mono" font-size="10">Full Spectrum Scan (1–65535)</text>
+      <text x="0" y="48" fill="#4ade80" class="mono" font-size="10">PID, Socket, HTTP Title Probing</text>
+
+      <line x1="0" y1="60" x2="280" y2="60" stroke="#1e293b" stroke-width="1" />
+
+      <text x="0" y="78" fill="#f8fafc" class="sans" font-size="12" font-weight="700">💻 Dual-Profile Linux PTY</text>
+      <text x="0" y="94" fill="#94a3b8" class="mono" font-size="10">Root Shell (UID 0) vs User Shell</text>
+      <text x="0" y="110" fill="#00ff88" class="mono" font-size="10">Fail-Closed Authorization</text>
+      <text x="0" y="126" fill="#e2e8f0" class="mono" font-size="10">xterm-256color Native Streaming</text>
+
+      <line x1="0" y1="138" x2="280" y2="138" stroke="#1e293b" stroke-width="1" />
+
+      <text x="0" y="156" fill="#f8fafc" class="sans" font-size="12" font-weight="700">🛡️ 24/7 Service Daemon</text>
+      <text x="0" y="172" fill="#94a3b8" class="mono" font-size="10">systemd service + loginctl linger</text>
+      <text x="0" y="188" fill="#00ff88" class="mono" font-size="10">Fallback: agent-watchdog.sh</text>
+    </g>
+  </g>
+
+  <!-- Node 3: Cloud Sandbox / Restricted Shell -->
+  <g transform="translate(740, 360)">
+    <rect width="310" height="240" rx="8" fill="url(#card-grad)" stroke="#c084fc" stroke-width="1.3" stroke-opacity="0.8" />
+    <rect width="310" height="30" rx="8" fill="#1b122e" stroke="#c084fc" stroke-width="0.8" stroke-opacity="0.3" />
+    <text x="14" y="20" fill="#c084fc" class="mono" font-size="11.5" font-weight="700">🪐 CLOUD SANDBOX (Daytona / NAT)</text>
+    <text x="220" y="20" fill="#e879f9" class="mono" font-size="10.5">VIP: 10.77.0.3</text>
+
+    <!-- Node 3 Components -->
+    <g transform="translate(15, 42)">
+      <text x="0" y="16" fill="#f8fafc" class="sans" font-size="12" font-weight="700">🌐 Loopback Services Trapped</text>
+      <text x="0" y="32" fill="#94a3b8" class="mono" font-size="10">Dev Servers (127.0.0.1:3000)</text>
+      <text x="0" y="48" fill="#e879f9" class="mono" font-size="10">APIs: 6767, DBs: 5432, Web: 8080</text>
+
+      <line x1="0" y1="60" x2="280" y2="60" stroke="#1e293b" stroke-width="1" />
+
+      <text x="0" y="78" fill="#f8fafc" class="sans" font-size="12" font-weight="700">🚀 Zero-IP Public Bridge</text>
+      <text x="0" y="94" fill="#94a3b8" class="mono" font-size="10">Daytona Proxy / Pinggy / Cloudflare</text>
+      <text x="0" y="110" fill="#c084fc" class="mono" font-size="10">Auto-Generates Reachable Link</text>
+      <text x="0" y="126" fill="#e2e8f0" class="mono" font-size="10">One-Click Dashboard Pairing</text>
+
+      <line x1="0" y1="138" x2="280" y2="138" stroke="#1e293b" stroke-width="1" />
+
+      <text x="0" y="156" fill="#f8fafc" class="sans" font-size="12" font-weight="700">📁 File &amp; Process RPCs</text>
+      <text x="0" y="172" fill="#94a3b8" class="mono" font-size="10">Safe Non-Blocking File Browser</text>
+      <text x="0" y="188" fill="#e879f9" class="mono" font-size="10">Strict Root Deletion Guard</text>
+    </g>
+  </g>
+</svg>

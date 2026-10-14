@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" width="100%" height="100%">
+  <defs>
+    <linearGradient id="term-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#050a17" />
+      <stop offset="100%" stop-color="#020409" />
+    </linearGradient>
+
+    <filter id="cursor-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <style>
+    .mono { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Source Code Pro', monospace; font-size: 13.5px; }
+    .term-title { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 12px; font-weight: 600; fill: #94a3b8; }
+    .prompt { fill: #00f5ff; font-weight: bold; }
+    .cmd { fill: #ffffff; font-weight: 600; }
+    .green { fill: #00ff88; font-weight: 600; }
+    .cyan { fill: #00f5ff; }
+    .yellow { fill: #facc15; }
+    .purple { fill: #c084fc; }
+    .gray { fill: #64748b; }
+    .dim { fill: #475569; }
+
+    @keyframes blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+    .cursor { animation: blink 1s infinite; fill: #00ff88; }
+
+    @keyframes fadeStep1 { 0% { opacity: 0; } 5% { opacity: 1; } 100% { opacity: 1; } }
+    @keyframes fadeStep2 { 0%, 12% { opacity: 0; } 18% { opacity: 1; } 100% { opacity: 1; } }
+    @keyframes fadeStep3 { 0%, 28% { opacity: 0; } 35% { opacity: 1; } 100% { opacity: 1; } }
+    @keyframes fadeStep4 { 0%, 45% { opacity: 0; } 52% { opacity: 1; } 100% { opacity: 1; } }
+    @keyframes fadeStep5 { 0%, 65% { opacity: 0; } 72% { opacity: 1; } 100% { opacity: 1; } }
+
+    .step-1 { animation: fadeStep1 8s infinite; }
+    .step-2 { animation: fadeStep2 8s infinite; }
+    .step-3 { animation: fadeStep3 8s infinite; }
+    .step-4 { animation: fadeStep4 8s infinite; }
+    .step-5 { animation: fadeStep5 8s infinite; }
+  </style>
+
+  <!-- Outer Window Shadow & Border -->
+  <rect x="5" y="5" width="890" height="510" rx="10" fill="#020409" stroke="#00f5ff" stroke-width="1.2" stroke-opacity="0.4" />
+  
+  <!-- Terminal Window Body -->
+  <rect x="6" y="6" width="888" height="508" rx="9" fill="url(#term-bg)" />
+
+  <!-- Terminal Title Bar -->
+  <path d="M 6 6 L 894 6 A 9 9 0 0 1 894 40 L 6 40 Z" fill="#081426" />
+  <line x1="6" y1="40" x2="894" y2="40" stroke="#00f5ff" stroke-width="1" stroke-opacity="0.2" />
+
+  <!-- Window Control Dots -->
+  <circle cx="28" cy="23" r="6" fill="#ef4444" />
+  <circle cx="48" cy="23" r="6" fill="#eab308" />
+  <circle cx="68" cy="23" r="6" fill="#22c55e" />
+
+  <!-- Terminal Title -->
+  <text x="450" y="27" text-anchor="middle" class="term-title">cvps-terminal: mission-control@space-station (bash / conpty)</text>
+  <rect x="790" y="14" width="84" height="18" rx="4" fill="#00ff88" fill-opacity="0.12" stroke="#00ff88" stroke-width="0.8" />
+  <text x="832" y="27" text-anchor="middle" fill="#00ff88" class="mono" font-size="10.5">TLS 1.3</text>
+
+  <!-- ==================== TERMINAL CONTENTS ==================== -->
+  <g transform="translate(30, 72)" class="mono">
+    
+    <!-- STEP 1: Command 1: cybervps status -->
+    <g class="step-1">
+      <text x="0" y="0"><tspan class="prompt">station:~$</tspan> <tspan class="cmd">cybervps status</tspan></text>
+      <text x="0" y="22" class="cyan">🛰️  CYBERVPS SPACE STATION — HOST AGENT STATUS</text>
+      <text x="0" y="42" class="gray">─────────────────────────────────────────────────────────────────</text>
+      <text x="0" y="64"><tspan class="gray">  Host Name       :</tspan> <tspan class="white">vps-ubuntu-eu-01 (Linux x86_64)</tspan></text>
+      <text x="0" y="84"><tspan class="gray">  Agent Status    :</tspan> <tspan class="green">● ACTIVE (PID: 4231)</tspan> <tspan class="dim">[24/7 Background Daemon]</tspan></text>
+      <text x="0" y="104"><tspan class="gray">  Virtual IP      :</tspan> <tspan class="cyan">10.77.0.2</tspan> <tspan class="dim">(Subnet: 10.77.0.0/24)</tspan></text>
+      <text x="0" y="124"><tspan class="gray">  Server Target   :</tspan> <tspan class="purple">https://cybervps-space-station.up.railway.app</tspan></text>
+      <text x="0" y="144"><tspan class="gray">  Fleet Machine ID:</tspan> <tspan class="yellow">cvps_ubuntu_e2a91f</tspan></text>
+      <text x="0" y="164"><tspan class="gray">  Discovered Sockets :</tspan> <tspan class="white">4 Active [ :22 (ssh), :3000 (node), :6767 (api), :8080 (web) ]</tspan></text>
+    </g>
+
+    <!-- STEP 2: Command 2: Port Bridge Mapping -->
+    <g class="step-2" transform="translate(0, 196)">
+      <text x="0" y="0"><tspan class="prompt">station:~$</tspan> <tspan class="cmd">cybervps bridge map --remote 6767 --local 16767</tspan></text>
+      <text x="0" y="22" class="green">⚡ [PORT BRIDGE ACTIVE] Local 127.0.0.1:16767 &lt;═══&gt; Remote [cvps_ubuntu_e2a91f]:6767</text>
+      <text x="0" y="42" class="gray">   Mode: Transparent TCP Stream (Userspace Outbound TLS Relay)</text>
+      <text x="0" y="62" class="cyan">   Dashboard Ready: https://cyberdrivepro.github.io/cybervps-space-station/</text>
+    </g>
+
+    <!-- STEP 3: Verification Curl -->
+    <g class="step-3" transform="translate(0, 290)">
+      <text x="0" y="0"><tspan class="prompt">station:~$</tspan> <tspan class="cmd">curl -s http://127.0.0.1:16767/api/v1/health</tspan></text>
+      <text x="0" y="22" class="white">{ "status": "ok", "service": "internal-api", "host": "127.0.0.1", "port": 6767 }</text>
+    </g>
+
+    <!-- STEP 4: Terminal Security Verification -->
+    <g class="step-4" transform="translate(0, 344)">
+      <text x="0" y="0"><tspan class="prompt">station:~$</tspan> <tspan class="cmd">cybervps doctor --security</tspan></text>
+      <text x="0" y="22" class="green">  ✔ WebSocket Origin Verification: Strict Allowlist Enforced (CSWSH Protected)</text>
+      <text x="0" y="42" class="green">  ✔ Terminal Token Auth: Single-Use 60s Machine Scope Verified</text>
+      <text x="0" y="62" class="green">  ✔ Windows TokenProcess: Medium Integrity 0x2000 (De-elevation Active)</text>
+    </g>
+
+    <!-- Blinking Cursor Prompt at Bottom -->
+    <g class="step-5" transform="translate(0, 428)">
+      <text x="0" y="0"><tspan class="prompt">station:~$</tspan> <rect x="98" y="-12" width="8" height="15" class="cursor" filter="url(#cursor-glow)" /></text>
+    </g>
+
+  </g>
+</svg>
