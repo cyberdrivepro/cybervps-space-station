@@ -1044,7 +1044,7 @@
                 </div>
               </div>
               <div>
-                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">OS Hostname</span>
+                <span style="color:var(--text-muted); font-size:0.75rem; text-transform:uppercase;">Host System &amp; Local User</span>
                 <div class="copy-block" style="margin-top:2px; padding:0.4rem 0.6rem;"><code id="ts-hostname">—</code><button class="btn btn-secondary" onclick="copyText('ts-hostname')" style="padding:0.2rem 0.5rem; font-size:0.7rem;">Copy</button></div>
               </div>
               <div>
@@ -1123,7 +1123,7 @@
         <div class="card" style="margin-bottom:1rem;">
           <div class="card-header" style="flex-wrap:wrap; gap:0.75rem;">
             <div style="display:flex; align-items:center; gap:0.75rem; flex:1; min-width:300px;">
-              <select id="fm-machine-select" class="form-control" style="min-width:220px;" onchange="initFileManager(this.value)">
+              <select id="fm-machine-select" class="form-control" style="min-width:220px;" onchange="onFmMachineChange(this.value)">
                 <option value="">Select Target Machine...</option>
               </select>
               <div id="fm-sftp-pill" class="badge badge-subtle" style="font-family:var(--font-mono); font-size:0.72rem; cursor:pointer;" onclick="copySftpCommand()" title="Click to copy SFTP connection command">
@@ -1974,6 +1974,7 @@
       fitAddon: null,
       selectedMachineId: null,
       selectedDeviceProfile: null,
+      machineFmPaths: {},
       currentFmPath: '',
       currentFmItems: [],
       showHiddenFiles: false,
@@ -2226,7 +2227,12 @@
           </td>
           <td><code style="color:var(--accent-violet);">${escapeHtml(m.virtual_ip || '10.77.0.?')}</code></td>
           <td>
-            ${m.capabilities?.is_root ? '<span class="badge badge-success">ROOT</span>' : '<span class="badge badge-subtle">USER</span>'}
+            ${(() => {
+              const u = m.username || m.capabilities?.username || m.capabilities?.user || m.profile?.username || (m.capabilities?.is_root ? 'root' : (m.os === 'Windows' ? 'expert' : 'user'));
+              const badgeClass = m.capabilities?.is_root ? 'badge-success' : 'badge-subtle';
+              return `<span class="badge ${badgeClass}" title="Local System User: ${escapeHtml(u)}">👤 ${escapeHtml(u)}</span>`;
+            })()}
+            ${m.capabilities?.is_root ? '<span class="badge badge-success">ROOT</span>' : ''}
             ${m.capabilities?.pty_supported ? '<span class="badge badge-cyan">PTY</span>' : ''}
             ${isDaytona ? '<span class="badge badge-violet">DAYTONA</span>' : ''}
           </td>
@@ -2608,11 +2614,15 @@
     function updateTerminalPromptPrefix(machineObj) {
       const promptEl = document.getElementById('terminal-prompt-prefix');
       if (!promptEl) return;
-      if (machineObj && machineObj.os === 'Windows') {
-        promptEl.innerText = 'PS >';
+      if (!machineObj) {
+        promptEl.innerText = '$ ';
+        return;
+      }
+      const host = machineObj.hostname || machineObj.id || 'space-station';
+      const user = machineObj.username || machineObj.capabilities?.username || machineObj.capabilities?.user || machineObj.profile?.username || (machineObj.capabilities?.is_root ? 'root' : (machineObj.os === 'Windows' ? 'expert' : 'user'));
+      if (machineObj.os === 'Windows') {
+        promptEl.innerText = `PS [${user}]> `;
       } else {
-        const host = machineObj ? (machineObj.hostname || machineObj.id) : 'space-station';
-        const user = host.includes('daytona') ? 'daytona' : 'root';
         promptEl.innerText = `${user}@${host.slice(0, 15)}:~$ `;
       }
     }
@@ -3380,7 +3390,10 @@
       } else if (viewName === 'files') {
         const select = document.getElementById('fm-machine-select');
         const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
-        if (mId) initFileManager(mId, appState.currentFmPath || '');
+        if (mId) {
+          const target = (appState.machineFmPaths && appState.machineFmPaths[mId]) || '';
+          initFileManager(mId, target);
+        }
       } else if (viewName === 'services') {
         const select = document.getElementById('services-machine-select');
         const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
@@ -3617,7 +3630,7 @@
       const diskPct = t.disk_percent || (diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0);
       const uptimeSec = t.uptime_seconds || 0;
 
-      const user = p.user || (isDaytona ? 'daytona' : (isWindows ? 'Suraj' : 'root'));
+      const user = p.username || p.user || p.capabilities?.username || p.capabilities?.user || p.profile?.username || (isDaytona ? 'daytona' : (p.capabilities?.is_root ? 'root' : (isWindows ? 'expert' : 'user')));
       const host = p.hostname || p.id;
       const cpuModel = p.hardware?.cpu_model || p.cpu_model || 'Standard CPU';
       const cpuCores = p.hardware?.cpu_cores || p.cpu_cores || 1;
@@ -3674,8 +3687,9 @@
     }
 
     function renderTailscaleIdentity(p) {
+      const user = p.username || p.user || p.capabilities?.username || p.capabilities?.user || p.profile?.username || (p.capabilities?.is_root ? 'root' : (p.os === 'Windows' ? 'expert' : 'user'));
       document.getElementById('ts-friendly-name').value = p.friendly_name || p.hostname || '';
-      document.getElementById('ts-hostname').innerText = p.hostname || p.id;
+      document.getElementById('ts-hostname').innerText = `${user}@${p.hostname || p.id}`;
       document.getElementById('ts-machine-id').innerText = p.id;
       document.getElementById('ts-created').innerText = formatTime(p.first_seen || p.created_at || new Date());
       document.getElementById('ts-last-seen').innerText = formatTime(p.last_seen);
@@ -3804,7 +3818,15 @@
       navigate('files');
       const sel = document.getElementById('fm-machine-select');
       if (sel) sel.value = machineId;
-      initFileManager(machineId, path);
+      const target = path || (appState.machineFmPaths && appState.machineFmPaths[machineId]) || '';
+      initFileManager(machineId, target);
+    }
+
+    function onFmMachineChange(machineId) {
+      if (!machineId) return;
+      appState.selectedMachineId = machineId;
+      const target = (appState.machineFmPaths && appState.machineFmPaths[machineId]) || '';
+      initFileManager(machineId, target);
     }
 
     async function initFileManager(machineId, targetPath = '') {
@@ -3816,7 +3838,11 @@
         return;
       }
       appState.selectedMachineId = machineId;
+      if (!targetPath && appState.machineFmPaths && appState.machineFmPaths[machineId]) {
+        targetPath = appState.machineFmPaths[machineId];
+      }
       const sel = document.getElementById('fm-machine-select');
+      if (sel && sel.value !== machineId) sel.value = machineId;
       const tbody = document.getElementById('fm-table-body');
       if (tbody) {
         if (!tbody.children.length || tbody.innerText.includes('No machines') || tbody.innerText.includes('Empty folder')) {
@@ -3843,6 +3869,8 @@
 
       const data = res.data;
       appState.currentFmPath = data.current_path;
+      if (!appState.machineFmPaths) appState.machineFmPaths = {};
+      appState.machineFmPaths[machineId] = data.current_path;
       appState.currentFmItems = data.items || [];
       document.getElementById('fm-path-input').value = data.current_path;
 
@@ -3970,11 +3998,15 @@
     }
 
     function fmGoHome() {
+      if (appState.selectedMachineId && appState.machineFmPaths) {
+        delete appState.machineFmPaths[appState.selectedMachineId];
+      }
       initFileManager(appState.selectedMachineId, '');
     }
 
     function fmRefresh() {
-      initFileManager(appState.selectedMachineId, appState.currentFmPath);
+      const p = (appState.selectedMachineId && appState.machineFmPaths && appState.machineFmPaths[appState.selectedMachineId]) || appState.currentFmPath || '';
+      initFileManager(appState.selectedMachineId, p);
     }
 
     function fmNavigateTo(path) {
@@ -3994,18 +4026,20 @@
       renderFileManagerTable();
     }
 
-    function openSftpModal() {
-      const m = appState.machines.find(x => x.id === appState.selectedMachineId);
-      const name = m?.hostname || m?.friendly_name || m?.id || 'target_machine';
+    function openSftpModal(machineId) {
+      const targetId = machineId || appState.selectedMachineId || (appState.machines[0]?.id);
+      const m = appState.machines.find(x => x.id === targetId) || appState.machines[0];
+      const name = m?.friendly_name || m?.hostname || m?.id || 'target_machine';
       const vip = m?.virtual_ip || '10.77.0.x';
+      const user = m?.username || m?.capabilities?.username || m?.capabilities?.user || m?.profile?.username || (m?.capabilities?.is_root ? 'root' : (m?.os === 'Windows' ? 'expert' : 'user'));
       const title = document.getElementById('modal-sftp-title');
       if (title) title.innerText = `SFTP & File Transfer Access [${name}]`;
       const bridgeCmdEl = document.getElementById('sftp-bridge-cmd');
       if (bridgeCmdEl) bridgeCmdEl.innerText = `cybervps bridge ${name} 22 2222`;
       const connectCmdEl = document.getElementById('sftp-connect-cmd');
-      if (connectCmdEl) connectCmdEl.innerText = `sftp -P 2222 user@127.0.0.1`;
+      if (connectCmdEl) connectCmdEl.innerText = `sftp -P 2222 ${user}@127.0.0.1`;
       const meshIpEl = document.getElementById('sftp-mesh-ip');
-      if (meshIpEl) meshIpEl.innerText = `${vip}:22`;
+      if (meshIpEl) meshIpEl.innerText = `${vip}:22 (${user})`;
       document.getElementById('modal-sftp').style.display = 'flex';
     }
 

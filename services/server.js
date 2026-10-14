@@ -535,7 +535,8 @@ const server = http.createServer(async (req, res) => {
     const list = Array.from(db.machines.values()).map(m => {
       const status = getMachineStatus(m);
       const virtualIp = vpnPool.allocated.get(m.id) || null;
-      return { ...m, status, virtual_ip: virtualIp };
+      const username = m.username || m.capabilities?.username || m.capabilities?.user || m.profile?.username || (m.capabilities?.is_root ? 'root' : (m.os === 'Windows' ? 'expert' : 'user'));
+      return { ...m, username, status, virtual_ip: virtualIp };
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(list));
@@ -971,18 +972,19 @@ const server = http.createServer(async (req, res) => {
     const ports = db.ports.get(machineId) || [];
     const hasSsh = ports.some(p => p.port === 22 || p.process_name?.toLowerCase().includes('ssh'));
     const host = vpnPool.allocated.get(machineId) || m.hostname;
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      status: 'ready',
-      available: hasSsh || true,
-      protocol: 'SFTP / SSH',
-      port: 22,
-      host,
-      username: m.capabilities?.is_root ? 'root' : 'user',
-      encryption: 'AES-256-GCM / ChaCha20-Poly1305 (TLS Bridged)',
-      command: `sftp -P 22 user@${host}`,
-      sftp_command: `sftp -P 22 user@${host}`
-    }));
+      const username = m.username || m.capabilities?.username || m.capabilities?.user || m.profile?.username || (m.capabilities?.is_root ? 'root' : (m.os === 'Windows' ? 'expert' : 'user'));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ready',
+        available: hasSsh || true,
+        protocol: 'SFTP / SSH',
+        port: 22,
+        host,
+        username,
+        encryption: 'AES-256-GCM / ChaCha20-Poly1305 (TLS Bridged)',
+        command: `sftp -P 22 ${username}@${host}`,
+        sftp_command: `sftp -P 22 ${username}@${host}`
+      }));
     return;
   }
 
@@ -1463,7 +1465,7 @@ function handleAgentMessage(ws, msg) {
   const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
 
   if (type === 'Auth') {
-    const { machine_id, token, agent_version, hostname, os, arch, capabilities } = payload;
+    const { machine_id, token, agent_version, hostname, os, arch, capabilities, username } = payload;
     if (!machine_id) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Missing machine_id' } }));
       return { success: false, error: 'Missing machine_id' };
@@ -1476,11 +1478,13 @@ function handleAgentMessage(ws, msg) {
 
     // Auto-allocate Virtual IP for Mode B
     const virtualIp = vpnPool.allocate(machine_id);
+    const detectedUsername = username || capabilities?.username || capabilities?.user || payload.profile?.username || (capabilities?.is_root ? 'root' : (os === 'Windows' ? 'expert' : 'user'));
 
     const machineInfo = {
       id: machine_id,
       hostname: hostname || machine_id,
       friendly_name: hostname || machine_id,
+      username: detectedUsername,
       os: os || 'Linux',
       os_version: payload.profile?.os_full || payload.os_version || 'standard',
       arch: arch || 'x86_64',
@@ -1561,6 +1565,7 @@ function handleAgentMessage(ws, msg) {
     if (profile) {
       m.profile = profile;
       if (profile.os_full) m.os_version = profile.os_full;
+      if (profile.username) m.username = profile.username;
     }
     logAudit('ports_discovered', 'agent', machine_id, `Reported ${(ports || []).length} active ports & system profile`);
     broadcastTelemetry(m);

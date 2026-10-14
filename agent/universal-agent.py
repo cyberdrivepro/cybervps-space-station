@@ -26,6 +26,8 @@ import io
 import ssl
 import struct
 import urllib.parse
+import re
+import getpass
 
 # Guard against None stdio streams on Windows (e.g. under pythonw or windowless subsystems)
 if sys.stdout is None:
@@ -364,6 +366,7 @@ class RelayWebSocket:
                 "token": self.agent.token,
                 "agent_version": PROTOCOL_VERSION,
                 "hostname": socket.gethostname(),
+                "username": self.agent.username,
                 "os": platform.system(),
                 "os_version": self.agent.device_profile.get("os_full", platform.release()),
                 "arch": platform.machine(),
@@ -493,6 +496,7 @@ class CyberVPSAgent:
             "agent.pid"
         )
         self.running = True
+        self.username = self._detect_local_username()
         self.active_terminals = {}
         self.active_tunnel_streams = {}
         self.lock = threading.Lock()
@@ -504,6 +508,23 @@ class CyberVPSAgent:
         self.ws_connected = False
         self._drives_cache = {"data": [], "timestamp": 0}
         self._disk_cache = {}
+
+    def _detect_local_username(self):
+        user = os.environ.get("USERNAME") or os.environ.get("USER") or os.environ.get("LOGNAME")
+        if not user:
+            try:
+                user = getpass.getuser()
+            except Exception:
+                pass
+        if not user:
+            try:
+                if hasattr(os, "getlogin"):
+                    user = os.getlogin()
+            except Exception:
+                pass
+        if not user:
+            user = "root" if (hasattr(os, "geteuid") and os.geteuid() == 0) else "user"
+        return str(user).strip()
 
     def generate_machine_id(self):
         home = os.path.expanduser("~")
@@ -681,6 +702,7 @@ class CyberVPSAgent:
             "node:virtualization": virtualization,
             "node:provider": provider,
             "node:agentVersion": PROTOCOL_VERSION,
+            "node:localUser": self.username,
             "node:publicIp": public_ip,
             "node:localIps": ", ".join(ip_endpoints) if ip_endpoints else "127.0.0.1",
             "node:tailscaleCompatible": "true"
@@ -693,6 +715,7 @@ class CyberVPSAgent:
         neofetch_summary = {
             "os": os_full,
             "host": f"{hostname} ({motherboard})",
+            "user": f"{self.username}@{hostname}",
             "kernel": f"{kernel_rel} ({arch})",
             "uptime_seconds": int(time.time() - self.uptime_start),
             "shell": "PowerShell 5.1 / cmd.exe" if sys_os == "Windows" else ("/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh"),
@@ -705,6 +728,8 @@ class CyberVPSAgent:
         }
 
         self.device_profile = {
+            "username": self.username,
+            "user": self.username,
             "os_full": os_full,
             "product_name": product_name,
             "display_version": display_version,
@@ -758,6 +783,8 @@ class CyberVPSAgent:
         shell = "powershell.exe" if platform.system() == "Windows" else ("/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh")
 
         return {
+            "username": self.username,
+            "user": self.username,
             "is_root": is_root,
             "is_admin": is_admin,
             "is_elevated": is_admin,
@@ -1002,7 +1029,16 @@ class CyberVPSAgent:
         p = str(target_path).strip()
         if "\0" in p:
             raise ValueError("Path contains invalid null byte")
-        if platform.system() == "Windows":
+
+        # Cross-platform sanity checks:
+        # If Linux/macOS agent receives a Windows drive letter path (e.g. "C:/Users/...", "C:\..."):
+        if platform.system() != "Windows":
+            if len(p) >= 2 and p[1] == ":" and p[0].isalpha():
+                return os.path.abspath(os.path.expanduser("~"))
+        else:
+            # If Windows agent receives a POSIX root path (e.g. "/home/...", "/etc", "/var", "/usr", "/root"):
+            if re.match(r"^/(home|root|etc|var|usr|opt|bin|sbin|tmp)", p, re.IGNORECASE):
+                return os.path.abspath(os.path.expanduser("~"))
             if p in ["/", "\\"]:
                 return "C:\\"
             if len(p) == 2 and p[1] == ":":
@@ -1010,6 +1046,7 @@ class CyberVPSAgent:
             if len(p) >= 3 and p[1] == ":" and p[2] in ["/", "\\"]:
                 norm_p = p[:2].upper() + "\\" + p[3:].replace("/", "\\")
                 return os.path.abspath(norm_p)
+
         expanded = os.path.expanduser(p)
         resolved = os.path.abspath(expanded)
         return resolved
@@ -1077,9 +1114,21 @@ class CyberVPSAgent:
         try:
             target_path = self._sanitize_path(raw_path)
             if not os.path.exists(target_path):
-                raise FileNotFoundError(f"Directory not found: {target_path}")
+                # Graceful recovery: Fall back to user home directory or system root instead of failing with 404
+                home_fallback = os.path.abspath(os.path.expanduser("~"))
+                if os.path.exists(home_fallback) and os.path.isdir(home_fallback):
+                    target_path = home_fallback
+                else:
+                    root_fallback = "C:\\" if platform.system() == "Windows" else "/"
+                    if os.path.exists(root_fallback) and os.path.isdir(root_fallback):
+                        target_path = root_fallback
+                    else:
+                        raise FileNotFoundError(f"Directory not found: {raw_path}")
+
             if not os.path.isdir(target_path):
                 target_path = os.path.dirname(target_path)
+                if not os.path.exists(target_path) or not os.path.isdir(target_path):
+                    target_path = os.path.abspath(os.path.expanduser("~"))
 
             entries = []
             try:
@@ -2684,6 +2733,7 @@ class CyberVPSAgent:
                 "token": self.token,
                 "agent_version": PROTOCOL_VERSION,
                 "hostname": socket.gethostname(),
+                "username": self.username,
                 "os": platform.system(),
                 "os_version": profile.get("os_full", platform.release()),
                 "arch": platform.machine(),
