@@ -136,7 +136,7 @@
   <!-- Subtitle Tagline -->
   <g transform="translate(292, 195)">
     <text x="0" y="0" fill="#94a3b8" class="mono-text" font-size="16" letter-spacing="0.5">
-      Universal Remote Fleet Control &bull; All-Port Network Bridge &bull; Virtual Mesh Network
+      Universal Remote Fleet Control &#8226; All-Port Network Bridge &#8226; Virtual Mesh Network
     </text>
   </g>
 
