@@ -1924,6 +1924,7 @@ class CyberVPSAgent:
                     if kernel32.GetExitCodeProcess(self.hProcess, ctypes.byref(code)):
                         if code.value != 259: # STILL_ACTIVE
                             self.returncode = code.value
+                            self._cleanup_handles()
                             return self.returncode
                     return None
 
@@ -1938,18 +1939,26 @@ class CyberVPSAgent:
                     if kernel32.GetExitCodeProcess(self.hProcess, ctypes.byref(code)):
                         if code.value != 259:
                             self.returncode = code.value
+                            self._cleanup_handles()
                             return self.returncode
                     return self.poll()
 
                 def terminate(self):
                     if self.returncode is None and self.hProcess:
-                        kernel32.TerminateProcess(self.hProcess, 1)
-                        kernel32.WaitForSingleObject(self.hProcess, 1000)
+                        ok = kernel32.TerminateProcess(self.hProcess, 1)
+                        if ok:
+                            kernel32.WaitForSingleObject(self.hProcess, 1500)
                     self.poll()
-                    self._cleanup_handles()
+                    if self.returncode is not None:
+                        self._cleanup_handles()
 
                 def kill(self):
-                    self.terminate()
+                    if self.returncode is None and self.hProcess:
+                        kernel32.TerminateProcess(self.hProcess, 1)
+                        kernel32.WaitForSingleObject(self.hProcess, 2000)
+                    self.poll()
+                    if self.returncode is not None:
+                        self._cleanup_handles()
 
                 def _cleanup_handles(self):
                     if self._closed:
@@ -2356,8 +2365,12 @@ class CyberVPSAgent:
                         if pid and self.is_pid_alive(pid):
                             try:
                                 proc.kill()
+                                if hasattr(proc, "wait"):
+                                    proc.wait(timeout=1.0)
                             except Exception:
                                 pass
+                        if pid and self.is_pid_alive(pid):
+                            print(f"[!] Warning: Child process PID {pid} is still active after kill attempt", flush=True)
                         exit_code = getattr(proc, "returncode", 0) or 0
             except Exception as e:
                 print(f"[!] Error stopping terminal {session_id}: {e}", flush=True)

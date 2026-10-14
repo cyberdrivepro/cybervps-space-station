@@ -1206,24 +1206,43 @@ function verifyTerminalAuthorization(request, parsedUrl) {
     return { authorized: false, error: 'Machine not found in fleet', status: 404 };
   }
 
-  // 1. Browser Origin verification: block untrusted cross-origin terminal hijack attempts
+  // 1. Browser Origin verification: block untrusted cross-origin terminal hijack attempts (CSWSH)
   const origin = request.headers['origin'];
   if (origin) {
     try {
       const originUrl = new URL(origin);
-      const hostHeader = (request.headers.host || '').split(':')[0].toLowerCase();
-      const originHost = originUrl.hostname.toLowerCase();
-      const isAllowed = 
-        originHost === hostHeader ||
-        originHost === 'localhost' ||
-        originHost === '127.0.0.1' ||
-        originHost.endsWith('.github.io') ||
-        originHost.endsWith('.up.railway.app');
-      if (!isAllowed) {
-        return { authorized: false, error: 'Forbidden: Untrusted WebSocket Origin', status: 403 };
+      const hostHeader = (request.headers.host || '').toLowerCase();
+      const originHost = originUrl.host.toLowerCase();
+      const originHostname = originUrl.hostname.toLowerCase();
+
+      // Explicit trusted origins: exact deployed dashboard, exact deployed backend, and local dev
+      const explicitTrustedOrigins = new Set([
+        'cyberdrivepro.github.io',
+        'cybervps-space-station.up.railway.app',
+        hostHeader,
+        hostHeader.split(':')[0]
+      ]);
+
+      if (process.env.ALLOWED_ORIGINS) {
+        process.env.ALLOWED_ORIGINS.split(',').forEach(o => explicitTrustedOrigins.add(o.trim().toLowerCase()));
+      }
+
+      const isExplicitMatch = explicitTrustedOrigins.has(originHost) || explicitTrustedOrigins.has(originHostname);
+      const isLocalhost = (originHostname === 'localhost' || originHostname === '127.0.0.1');
+
+      if (!isExplicitMatch && !isLocalhost) {
+        return { authorized: false, error: 'Forbidden: Untrusted WebSocket Origin. Terminal access restricted to authorized Space Station dashboard.', status: 403 };
       }
     } catch (_) {
-      return { authorized: false, error: 'Forbidden: Invalid Origin header', status: 403 };
+      return { authorized: false, error: 'Forbidden: Malformed Origin header', status: 403 };
+    }
+  } else {
+    // Deliberate policy for requests without Origin:
+    // Non-browser clients (native CLIs, test suites) do not transmit Origin headers.
+    // However, if browser-specific headers are detected without an Origin, reject as suspicious.
+    const hasSecFetch = Boolean(request.headers['sec-fetch-site'] || request.headers['sec-fetch-mode']);
+    if (hasSecFetch && !origin) {
+      return { authorized: false, error: 'Forbidden: Browser WebSocket upgrade missing Origin header', status: 403 };
     }
   }
 

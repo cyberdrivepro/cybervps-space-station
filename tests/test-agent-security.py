@@ -92,19 +92,85 @@ try:
         advapi32.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
         advapi32.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
 
-        def get_token_integrity_rid(hProc):
+        advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_wchar_p)]
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+
+        def inspect_windows_process_token(proc):
+            hProcess = getattr(proc, "hProcess", None) or getattr(proc, "_handle", None)
+            opened_handle = False
+            if not hProcess:
+                kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                kernel32.OpenProcess.restype = ctypes.c_void_p
+                # PROCESS_QUERY_LIMITED_INFORMATION (0x1000) | PROCESS_QUERY_INFORMATION (0x0400)
+                hProcess = kernel32.OpenProcess(0x1400, False, proc.pid)
+                opened_handle = True
+
+            assert hProcess, f"Failed to acquire valid process handle for PID {proc.pid}"
+
             hToken = wintypes.HANDLE()
-            if not advapi32.OpenProcessToken(hProc, 0x0008, ctypes.byref(hToken)):
-                return None
+            ok = advapi32.OpenProcessToken(hProcess, 0x0008, ctypes.byref(hToken)) # TOKEN_QUERY
+            if opened_handle:
+                kernel32.CloseHandle(hProcess)
+
+            assert ok, f"OpenProcessToken failed with Win32 error {kernel32.GetLastError()}"
+
             try:
+                # 1. Query TokenIntegrityLevel (25)
                 dwLen = wintypes.DWORD()
                 advapi32.GetTokenInformation(hToken, 25, None, 0, ctypes.byref(dwLen))
                 buf = (ctypes.c_byte * dwLen.value)()
-                if advapi32.GetTokenInformation(hToken, 25, buf, dwLen.value, ctypes.byref(dwLen)):
-                    pSid = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p)).contents.value
-                    count = advapi32.GetSidSubAuthorityCount(pSid).contents.value
-                    return advapi32.GetSidSubAuthority(pSid, count - 1).contents.value
-                return None
+                ok = advapi32.GetTokenInformation(hToken, 25, buf, dwLen.value, ctypes.byref(dwLen))
+                assert ok, f"GetTokenInformation(TokenIntegrityLevel) failed with Win32 error {kernel32.GetLastError()}"
+                pSid = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p)).contents.value
+                count = advapi32.GetSidSubAuthorityCount(pSid).contents.value
+                integrity_rid = advapi32.GetSidSubAuthority(pSid, count - 1).contents.value
+
+                # 2. Query TokenElevation (20)
+                class TOKEN_ELEVATION(ctypes.Structure):
+                    _fields_ = [("TokenIsElevated", wintypes.DWORD)]
+                elev = TOKEN_ELEVATION()
+                dwLenElev = wintypes.DWORD(ctypes.sizeof(TOKEN_ELEVATION))
+                ok = advapi32.GetTokenInformation(hToken, 20, ctypes.byref(elev), dwLenElev.value, ctypes.byref(dwLenElev))
+                is_token_elevated = (elev.TokenIsElevated != 0) if ok else False
+
+                # 3. Query TokenUser (1)
+                advapi32.GetTokenInformation(hToken, 1, None, 0, ctypes.byref(dwLen))
+                bufUser = (ctypes.c_byte * dwLen.value)()
+                ok = advapi32.GetTokenInformation(hToken, 1, bufUser, dwLen.value, ctypes.byref(dwLen))
+                user_sid_str = ""
+                if ok:
+                    pUserSid = ctypes.cast(bufUser, ctypes.POINTER(ctypes.c_void_p)).contents.value
+                    pStr = ctypes.c_wchar_p()
+                    if advapi32.ConvertSidToStringSidW(pUserSid, ctypes.byref(pStr)):
+                        user_sid_str = pStr.value
+                        kernel32.LocalFree(pStr)
+
+                # 4. Check whether Administrators group (S-1-5-32-544) is active
+                has_admin_group = False
+                advapi32.GetTokenInformation(hToken, 2, None, 0, ctypes.byref(dwLen))
+                if dwLen.value > 0:
+                    bufGroups = (ctypes.c_byte * dwLen.value)()
+                    if advapi32.GetTokenInformation(hToken, 2, bufGroups, dwLen.value, ctypes.byref(dwLen)):
+                        group_count = ctypes.cast(bufGroups, ctypes.POINTER(wintypes.DWORD)).contents.value
+                        class SID_AND_ATTRIBUTES(ctypes.Structure):
+                            _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wintypes.DWORD)]
+                        pArr = ctypes.cast(ctypes.byref(bufGroups, 8), ctypes.POINTER(SID_AND_ATTRIBUTES * group_count)).contents
+                        for g in pArr:
+                            pStr = ctypes.c_wchar_p()
+                            if advapi32.ConvertSidToStringSidW(g.Sid, ctypes.byref(pStr)):
+                                sid_val = pStr.value
+                                kernel32.LocalFree(pStr)
+                                if sid_val == "S-1-5-32-544":
+                                    SE_GROUP_ENABLED = 0x00000004
+                                    if (g.Attributes & SE_GROUP_ENABLED) != 0:
+                                        has_admin_group = True
+
+                return {
+                    "integrity_rid": integrity_rid,
+                    "is_elevated": is_token_elevated,
+                    "user_sid": user_sid_str,
+                    "has_admin_group": has_admin_group
+                }
             finally:
                 kernel32.CloseHandle(hToken)
 
@@ -117,13 +183,17 @@ try:
             proc = agent._start_windows_terminal_proc(["cmd.exe"], want_standard_token=True, is_elevated=True)
             try:
                 assert proc.pid > 0, "Child process must have valid PID"
-                child_rid = get_token_integrity_rid(proc.hProcess)
-                print(f"  [*] Child process PID {proc.pid} Token Integrity RID: {hex(child_rid) if child_rid else 'Unknown'}")
+                token_info = inspect_windows_process_token(proc)
+                print(f"  [*] De-elevated Child Token: Integrity={hex(token_info['integrity_rid'])}, Elevated={token_info['is_elevated']}, UserSID={token_info['user_sid']}")
                 # SECURITY_MANDATORY_MEDIUM_RID = 0x2000 (standard user)
-                assert child_rid == 0x2000, f"De-elevated child process must have Medium Integrity RID 0x2000, got: {hex(child_rid)}"
+                assert token_info["integrity_rid"] == 0x2000, f"De-elevated child process must have Medium Integrity RID 0x2000, got: {hex(token_info['integrity_rid'])}"
+                assert token_info["is_elevated"] is False, "De-elevated child process must NOT have elevated token"
+                assert token_info["has_admin_group"] is False, "De-elevated child process must NOT have enabled Administrators group"
                 print("  ✅ Verified: Elevated agent successfully spawned genuine Medium Integrity standard user process.")
             finally:
                 proc.terminate()
+                assert proc.wait(2.0) is not None, "Child process must exit after terminate()"
+                assert agent.is_pid_alive(proc.pid) is False, f"Child PID {proc.pid} must be terminated"
         else:
             # Standard Agent: test fail-closed on privileged profile request
             events.clear()
@@ -139,17 +209,22 @@ try:
             assert session_id not in agent.active_terminals, "Failed session must not remain registered"
             print("  ✅ Fail-closed verified: Unprivileged agent strictly refused privileged profile with code 1.")
 
-            # Standard Agent: test standard profile starts with Medium Integrity (0x2000)
+            # Standard Agent: test standard profile starts with Medium Integrity (0x2000) and verify identity
             proc = agent._start_windows_terminal_proc(["cmd.exe"], want_standard_token=False, is_elevated=False)
             try:
-                assert proc.pid > 0
-                child_rid = get_token_integrity_rid(int(proc.pid))
-                print(f"  [*] Standard child process PID {proc.pid} Integrity RID: {hex(child_rid) if child_rid else 'Medium'}")
-                if child_rid:
-                    assert child_rid == 0x2000, f"Standard user process must be Medium integrity (0x2000), got {hex(child_rid)}"
-                print("  ✅ Verified: Standard user process confirmed at Medium integrity level.")
+                assert proc.pid > 0, "Child process must have valid PID"
+                token_info = inspect_windows_process_token(proc)
+                print(f"  [*] Standard Child Token: Integrity={hex(token_info['integrity_rid'])}, Elevated={token_info['is_elevated']}, UserSID={token_info['user_sid']}")
+                assert token_info["integrity_rid"] == 0x2000, f"Standard user process must have Medium integrity (0x2000), got {hex(token_info['integrity_rid'])}"
+                assert token_info["is_elevated"] is False, "Standard user process must NOT be elevated"
+                assert len(token_info["user_sid"]) > 0, "Standard user process must have valid user SID"
+                assert token_info["has_admin_group"] is False, "Standard user process must NOT have active admin group"
+                print("  ✅ Verified: Standard user process confirmed at Medium integrity level with genuine standard identity.")
             finally:
                 proc.terminate()
+                if hasattr(proc, "wait"):
+                    assert proc.wait(2.0) is not None, "Child process must exit after terminate()"
+                assert agent.is_pid_alive(proc.pid) is False, f"Child PID {proc.pid} must be terminated"
     else:
         # Linux / POSIX: test UID and group separation
         is_root = (os.geteuid() == 0)
