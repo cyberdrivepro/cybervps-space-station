@@ -1519,8 +1519,38 @@ function handleAgentMessage(ws, msg) {
 
   else if (type === 'Heartbeat' || type === 'TelemetryHeartbeat') {
     const { machine_id, uptime_seconds, cpu_usage, memory_used_bytes, memory_total_bytes, disk_used_bytes, disk_total_bytes, telemetry } = payload;
-    if (!machine_id || !db.machines.has(machine_id)) {
-      return { success: false, error: 'Machine not found. Must enroll via Auth first.' };
+    if (!machine_id) {
+      return { success: false, error: 'Missing machine_id' };
+    }
+    if (!db.machines.has(machine_id)) {
+      const virtualIp = vpnPool.allocate(machine_id);
+      const detectedUsername = payload.username || telemetry?.username || telemetry?.profile?.username || (payload.os === 'Windows' ? 'expert' : 'root');
+      const machineInfo = {
+        id: machine_id,
+        hostname: payload.hostname || telemetry?.hostname || machine_id,
+        friendly_name: payload.hostname || telemetry?.hostname || machine_id,
+        username: detectedUsername,
+        os: payload.os || telemetry?.os || (payload.platform && payload.platform.includes('win') ? 'Windows' : 'Linux'),
+        os_version: telemetry?.profile?.os_full || payload.os_version || 'standard',
+        arch: payload.arch || 'x86_64',
+        agent_version: payload.agent_version || '1.0.0',
+        status: 'online',
+        virtual_ip: virtualIp,
+        created_at: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+        uptime_seconds: uptime_seconds || 0,
+        cpu_usage: cpu_usage || 0.0,
+        memory_used_bytes: memory_used_bytes || 0,
+        memory_total_bytes: memory_total_bytes || (1024 * 1024 * 1024),
+        disk_used_bytes: disk_used_bytes || 0,
+        disk_total_bytes: disk_total_bytes || (10 * 1024 * 1024 * 1024),
+        capabilities: payload.capabilities || telemetry?.capabilities || {},
+        profile: telemetry?.profile || payload.profile || {},
+        tags: ['universal-bridge', ((payload.os || telemetry?.os || 'linux')).toLowerCase()]
+      };
+      db.machines.set(machine_id, machineInfo);
+      logAudit('agent_auto_enrolled', 'agent', machine_id, `Auto-enrolled from Heartbeat [${machineInfo.hostname}] -> Virtual IP: ${virtualIp}`);
+      broadcastTelemetry(machineInfo);
     }
     const m = db.machines.get(machine_id);
     m.last_seen = new Date().toISOString();
@@ -1530,6 +1560,15 @@ function handleAgentMessage(ws, msg) {
     if (memory_total_bytes !== undefined) m.memory_total_bytes = memory_total_bytes;
     if (disk_used_bytes !== undefined) m.disk_used_bytes = disk_used_bytes;
     if (disk_total_bytes !== undefined) m.disk_total_bytes = disk_total_bytes;
+    if (payload.username && (!m.username || m.username === 'root' || m.username === 'expert' || m.username === 'user')) {
+      m.username = payload.username;
+    }
+    if (payload.hostname && (!m.hostname || m.hostname === machine_id)) {
+      m.hostname = payload.hostname;
+      if (!m.friendly_name || m.friendly_name === machine_id) {
+        m.friendly_name = payload.hostname;
+      }
+    }
 
     if (telemetry) {
       m.telemetry = { ...(m.telemetry || {}), ...telemetry };
@@ -1556,16 +1595,46 @@ function handleAgentMessage(ws, msg) {
 
   else if (type === 'DiscoveryReport') {
     const { machine_id, ports, profile } = payload;
-    if (!machine_id || !db.machines.has(machine_id)) {
-      return { success: false, error: 'Machine not found' };
+    if (!machine_id) {
+      return { success: false, error: 'Missing machine_id' };
+    }
+    if (!db.machines.has(machine_id)) {
+      const virtualIp = vpnPool.allocate(machine_id);
+      const machineInfo = {
+        id: machine_id,
+        hostname: profile?.hostname || machine_id,
+        friendly_name: profile?.hostname || machine_id,
+        username: profile?.username || 'root',
+        os: profile?.os || 'Linux',
+        os_version: profile?.os_full || 'standard',
+        arch: profile?.arch || 'x86_64',
+        agent_version: '1.0.0',
+        status: 'online',
+        virtual_ip: virtualIp,
+        created_at: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+        capabilities: {},
+        profile: profile || {},
+        tags: ['universal-bridge', (profile?.os || 'linux').toLowerCase()]
+      };
+      db.machines.set(machine_id, machineInfo);
+      broadcastTelemetry(machineInfo);
     }
     db.ports.set(machine_id, ports || []);
     const m = db.machines.get(machine_id);
     m.last_seen = new Date().toISOString();
     if (profile) {
-      m.profile = profile;
+      m.profile = { ...(m.profile || {}), ...profile };
       if (profile.os_full) m.os_version = profile.os_full;
-      if (profile.username) m.username = profile.username;
+      if (profile.username && (!m.username || m.username === 'root' || m.username === 'expert' || m.username === 'user')) {
+        m.username = profile.username;
+      }
+      if (profile.hostname && (!m.hostname || m.hostname === machine_id)) {
+        m.hostname = profile.hostname;
+        if (!m.friendly_name || m.friendly_name === machine_id) {
+          m.friendly_name = profile.hostname;
+        }
+      }
     }
     logAudit('ports_discovered', 'agent', machine_id, `Reported ${(ports || []).length} active ports & system profile`);
     broadcastTelemetry(m);

@@ -122,24 +122,28 @@ EOF
 echo "[*] Configuration written to ${CONFIG_FILE}"
 
 # 7. Setup CLI in PATH
-chmod +x "${INSTALL_DIR}/bin/cybervps"
+chmod +x "${INSTALL_DIR}/bin/cybervps"* 2>/dev/null || true
 ln -sf "${INSTALL_DIR}/bin/cybervps" "${BIN_DIR}/cybervps"
 
-SHELL_RC=""
-if [ -f "${HOME}/.bashrc" ]; then
-  SHELL_RC="${HOME}/.bashrc"
-elif [ -f "${HOME}/.zshrc" ]; then
-  SHELL_RC="${HOME}/.zshrc"
-elif [ -f "${HOME}/.profile" ]; then
-  SHELL_RC="${HOME}/.profile"
+# Symlink into system-wide standard PATH locations if root or writable
+if [ "$(id -u)" = "0" ] || [ -w "/usr/local/bin" ]; then
+  mkdir -p /usr/local/bin 2>/dev/null || true
+  ln -sf "${INSTALL_DIR}/bin/cybervps" "/usr/local/bin/cybervps" 2>/dev/null || true
+fi
+if [ "$(id -u)" = "0" ] || [ -w "/usr/bin" ]; then
+  ln -sf "${INSTALL_DIR}/bin/cybervps" "/usr/bin/cybervps" 2>/dev/null || true
 fi
 
-if [ -n "${SHELL_RC}" ]; then
-  if ! grep -q "${BIN_DIR}" "${SHELL_RC}" 2>/dev/null; then
-    echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "${SHELL_RC}"
+# Append to all present shell rc files (so bash, zsh, and profile have it)
+for rc in "${HOME}/.bashrc" "${HOME}/.zshrc" "${HOME}/.profile"; do
+  if [ -f "$rc" ] || [ "$rc" = "${HOME}/.bashrc" ]; then
+    if ! grep -q "${BIN_DIR}" "$rc" 2>/dev/null; then
+      echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "$rc"
+    fi
   fi
-fi
-export PATH="${BIN_DIR}:${PATH}"
+done
+export PATH="${BIN_DIR}:/usr/local/bin:${PATH}"
+hash -r 2>/dev/null || rehash 2>/dev/null || true
 
 # 8. Configure 24/7 Background Service (Single Clean Supervision Mechanism)
 echo "[*] Configuring 24/7 background service..."
@@ -259,13 +263,29 @@ if [ "$SYSTEMD_CONFIGURED" -eq 0 ]; then
 fi
 
 # 9. Verify Enrollment with Central Backend
+echo "[*] Connecting and registering host with control plane..."
+
+# Send immediate Auth registration from installer to prevent race conditions
+if [ "$DOWNLOAD_TOOL" = "curl" ]; then
+  curl -4 -s -X POST -H "Content-Type: application/json" -H "X-Machine-ID: ${MACHINE_ID}" -H "X-Enrollment-Token: ${TOKEN}" \
+    -d "{\"type\":\"Auth\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"hostname\":\"${HOSTNAME}\",\"username\":\"${USER_NAME}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\"}}" \
+    "${SERVER_URL}/api/v1/relay/event" >/dev/null 2>&1 || \
+  curl -s -X POST -H "Content-Type: application/json" -H "X-Machine-ID: ${MACHINE_ID}" -H "X-Enrollment-Token: ${TOKEN}" \
+    -d "{\"type\":\"Auth\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"hostname\":\"${HOSTNAME}\",\"username\":\"${USER_NAME}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\"}}" \
+    "${SERVER_URL}/api/v1/relay/event" >/dev/null 2>&1 || true
+elif [ "$DOWNLOAD_TOOL" = "wget" ]; then
+  wget -qO- --post-data="{\"type\":\"Auth\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"hostname\":\"${HOSTNAME}\",\"username\":\"${USER_NAME}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\"}}" \
+    --header="Content-Type: application/json" --header="X-Machine-ID: ${MACHINE_ID}" --header="X-Enrollment-Token: ${TOKEN}" \
+    "${SERVER_URL}/api/v1/relay/event" >/dev/null 2>&1 || true
+fi
+
 echo "[*] Waiting for fleet enrollment confirmation (up to 20s)..."
 
 ENROLLED=0
 for i in $(seq 1 10); do
   sleep 2
   if [ "$DOWNLOAD_TOOL" = "curl" ]; then
-    ENROLL_CHECK="$(curl --connect-timeout 3 --max-time 6 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
+    ENROLL_CHECK="$(curl -4 --connect-timeout 3 --max-time 6 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || curl --connect-timeout 3 --max-time 6 -fsSL "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
   else
     ENROLL_CHECK="$(wget -T 6 -t 1 -qO- "${SERVER_URL}/api/v1/machines" 2>/dev/null || true)"
   fi

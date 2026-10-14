@@ -272,6 +272,27 @@ class ConPTYTerminal:
             self.w_out = None
 
 
+def _safe_create_connection(address, timeout=8.0):
+    host, port = address
+    # Resolve IPv4 first to avoid 8-second IPv6 timeouts on cloud containers without IPv6 routes
+    try:
+        for res in socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM):
+            af, socktype, proto, canonname, sa = res
+            sock = None
+            try:
+                sock = socket.socket(af, socktype, proto)
+                sock.settimeout(timeout)
+                sock.connect(sa)
+                return sock
+            except Exception:
+                if sock is not None:
+                    try: sock.close()
+                    except Exception: pass
+    except Exception:
+        pass
+    return socket.create_connection(address, timeout=timeout)
+
+
 class RelayWebSocket:
     def __init__(self, agent, target_url):
         self.agent = agent
@@ -318,7 +339,7 @@ class RelayWebSocket:
         if parsed.query:
             path += "?" + parsed.query
 
-        raw_s = socket.create_connection((host, port), timeout=8.0)
+        raw_s = _safe_create_connection((host, port), timeout=8.0)
         if parsed.scheme == "wss":
             ctx = ssl.create_default_context()
             s = ctx.wrap_socket(raw_s, server_hostname=host)
@@ -2570,7 +2591,7 @@ class CyberVPSAgent:
                 },
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with urllib.request.urlopen(req, timeout=8) as resp:
                 pass
         except urllib.error.HTTPError as e:
             if e.code == 401:
@@ -2589,7 +2610,7 @@ class CyberVPSAgent:
                     "X-Enrollment-Token": self.token
                 }
             )
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for cmd in data.get("commands", []):
                     self.dispatch_server_command(cmd)
@@ -2755,6 +2776,7 @@ class CyberVPSAgent:
 
         last_hb = 0
         last_disc = 0
+        last_auth = time.time()
 
         try:
             # Fast 2-second telemetry loop
@@ -2774,10 +2796,19 @@ class CyberVPSAgent:
                                 "memory_used_bytes": metrics["memory_used_bytes"],
                                 "memory_total_bytes": metrics["memory_total_bytes"],
                                 "disk_used_bytes": metrics["disk_used_bytes"],
-                                "disk_total_bytes": metrics["disk_total_bytes"]
+                                "disk_total_bytes": metrics["disk_total_bytes"],
+                                "hostname": socket.gethostname(),
+                                "username": self.username,
+                                "os": platform.system(),
+                                "agent_version": PROTOCOL_VERSION
                             }
                         })
                         last_hb = now
+
+                    # Periodically retry Auth via HTTP if WebSocket is not authenticated yet
+                    if (not self.ws_connected or not getattr(self.ws_relay, "authenticated", False)) and (now - last_auth > 10.0):
+                        self.send_agent_event(auth_payload)
+                        last_auth = now
 
                     if now - last_disc > 60:
                         self.send_discovery_report()
