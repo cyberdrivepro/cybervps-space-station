@@ -1204,6 +1204,7 @@ wssTerminal.on('connection', (ws, request) => {
   const machineId = parsed.searchParams.get('machine_id');
   const sessionId = 'term_' + crypto.randomUUID().slice(0, 8);
   const shellPref = parsed.searchParams.get('shell') || null;
+  const profilePref = parsed.searchParams.get('profile') || null;
   const cols = parseInt(parsed.searchParams.get('cols') || '80', 10);
   const rows = parseInt(parsed.searchParams.get('rows') || '24', 10);
 
@@ -1214,7 +1215,7 @@ wssTerminal.on('connection', (ws, request) => {
   }
 
   db.terminalSessions.set(sessionId, { machine_id: machineId, wsBrowser: ws });
-  logAudit('terminal_opened', 'user', machineId, `Terminal session ${sessionId} opened`);
+  logAudit('terminal_opened', 'user', machineId, `Terminal session ${sessionId} opened (profile: ${profilePref || 'default'})`);
 
   sendServerCommand(machineId, {
     type: 'TerminalStart',
@@ -1223,7 +1224,8 @@ wssTerminal.on('connection', (ws, request) => {
       cols,
       rows,
       shell: shellPref,
-      shell_preference: shellPref
+      shell_preference: shellPref,
+      profile: profilePref
     }
   });
 

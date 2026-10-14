@@ -1447,8 +1447,12 @@
                 <svg viewBox="0 0 24 24" style="width:1.25rem; height:1.25rem; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
                 <div class="card-title" style="margin:0;">Browser Web Terminal</div>
               </div>
-              <select id="terminal-machine-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:240px;" onchange="initTerminalSession(true)">
+              <select id="terminal-machine-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:200px;" onchange="initTerminalSession(true)">
                 <option value="">Select Target Machine...</option>
+              </select>
+              <select id="terminal-profile-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:145px; background:rgba(0,240,255,0.06); border-color:rgba(0,240,255,0.3); color:var(--accent-cyan); font-weight:600;" onchange="initTerminalSession(false)" title="Terminal Execution Profile">
+                <option value="privileged">⚡ Root / Admin</option>
+                <option value="standard">👤 Standard User</option>
               </select>
             </div>
             <div style="display:flex; gap:0.5rem; align-items:center;">
@@ -1480,6 +1484,7 @@
                   <span id="terminal-machine-meta" style="color:var(--text-muted); font-size:0.72rem; padding: 0.15rem 0.5rem; background:rgba(255,255,255,0.05); border-radius:4px; font-family:var(--font-mono);">No Target</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:0.5rem;">
+                  <span id="terminal-profile-badge" class="badge" style="display:none; font-size:0.7rem; font-weight:700;"></span>
                   <span id="terminal-status-badge" class="badge badge-subtle">Disconnected</span>
                 </div>
               </div>
@@ -2763,7 +2768,8 @@
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       const wsProtocol = base.startsWith('https') ? 'wss:' : 'ws:';
       const wsHost = base.replace(/^https?:\/\//, '');
-      const wsUrl = `${wsProtocol}//${wsHost}/api/v1/terminal/stream?machine_id=${encodeURIComponent(machineId)}&cols=${cols}&rows=${rows}`;
+      const profilePref = document.getElementById('terminal-profile-select')?.value || 'privileged';
+      const wsUrl = `${wsProtocol}//${wsHost}/api/v1/terminal/stream?machine_id=${encodeURIComponent(machineId)}&cols=${cols}&rows=${rows}&profile=${encodeURIComponent(profilePref)}`;
 
       try {
         const ws = new WebSocket(wsUrl);
@@ -2774,9 +2780,9 @@
           badge.className = 'badge badge-warning';
           badge.innerText = 'Starting Shell...';
           if (appState.termInstance) {
-            appState.termInstance.writeln(`\x1b[90m[*] Transport bridge connected. Launching remote shell on host...\x1b[0m\r\n`);
+            appState.termInstance.writeln(`\x1b[90m[*] Transport bridge connected. Launching remote shell on host (${profilePref})...\x1b[0m\r\n`);
           } else {
-            appendTerminalBanner(`[*] Transport bridge connected. Launching remote shell on host...\n`);
+            appendTerminalBanner(`[*] Transport bridge connected. Launching remote shell on host (${profilePref})...\n`);
           }
         };
 
@@ -2793,7 +2799,22 @@
               const backendDisplay = parsed.backend || parsed.shell || (isWin ? 'PowerShell' : 'PTY');
               badge.className = 'badge badge-success';
               badge.innerText = `Ready (${backendDisplay})`;
-              const readyMsg = `\x1b[32m[+] Interactive shell session established [${backendDisplay}${parsed.pid ? ` | PID: ${parsed.pid}` : ''}]. Ready for input.\x1b[0m\r\n\r\n`;
+
+              const profBadge = document.getElementById('terminal-profile-badge');
+              if (profBadge) {
+                profBadge.style.display = 'inline-block';
+                if (parsed.is_elevated || parsed.profile === 'privileged') {
+                  profBadge.className = 'badge badge-warning';
+                  profBadge.innerText = '⚡ Root / Admin';
+                  profBadge.title = `Elevated Execution Context (${parsed.user || 'admin'})`;
+                } else {
+                  profBadge.className = 'badge badge-subtle';
+                  profBadge.innerText = `👤 ${parsed.user || 'Standard'}`;
+                  profBadge.title = `Standard User Context (${parsed.user || 'user'})`;
+                }
+              }
+
+              const readyMsg = `\x1b[32m[+] Interactive shell session established [${backendDisplay} | User: ${parsed.user || 'default'}${parsed.pid ? ` | PID: ${parsed.pid}` : ''}]. Ready for input.\x1b[0m\r\n\r\n`;
               if (appState.termInstance) {
                 appState.termInstance.writeln(readyMsg);
                 appState.termInstance.focus();
@@ -2809,6 +2830,8 @@
             } else if (parsed && parsed.type === 'exit') {
               appState.isTerminalReady = false;
               setQuickChipsEnabled(false);
+              const profBadge = document.getElementById('terminal-profile-badge');
+              if (profBadge) profBadge.style.display = 'none';
               const exitCode = parsed.exit_code !== undefined ? parsed.exit_code : 0;
               badge.className = 'badge badge-subtle';
               badge.innerText = `Exited (${exitCode})`;
@@ -2822,6 +2845,8 @@
             } else if (parsed && parsed.error) {
               appState.isTerminalReady = false;
               setQuickChipsEnabled(false);
+              const profBadge = document.getElementById('terminal-profile-badge');
+              if (profBadge) profBadge.style.display = 'none';
               raw = `\r\n\x1b[31m[!] Remote host error: ${parsed.error}\x1b[0m\r\n`;
             }
           } catch (_) {}
@@ -3683,13 +3708,26 @@
       }
       appState.selectedMachineId = machineId;
       const sel = document.getElementById('fm-machine-select');
-      if (sel) sel.value = machineId;
-
-      document.getElementById('fm-table-body').innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:3rem;"><span class="badge badge-subtle">Listing directory contents...</span></td></tr>';
+      const tbody = document.getElementById('fm-table-body');
+      if (tbody) {
+        if (!tbody.children.length || tbody.innerText.includes('No machines') || tbody.innerText.includes('Empty folder')) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:3rem;"><span class="badge badge-subtle">⚡ Loading directory...</span></td></tr>';
+        } else {
+          tbody.style.opacity = '0.5';
+          tbody.style.pointerEvents = 'none';
+        }
+      }
 
       const res = await apiRequest(`/api/v1/files/list?machine_id=${encodeURIComponent(machineId)}&path=${encodeURIComponent(targetPath || '')}&show_hidden=${appState.showHiddenFiles}`);
+      if (tbody) {
+        tbody.style.opacity = '1';
+        tbody.style.pointerEvents = 'auto';
+      }
+
       if (!res.ok) {
-        document.getElementById('fm-table-body').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--status-danger); padding:3rem;">Error loading path: ${escapeHtml(res.error || 'Server error')}</td></tr>`;
+        if (tbody) {
+          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--status-danger); padding:3rem;">Error loading path: ${escapeHtml(res.error || 'Server error')}</td></tr>`;
+        }
         showToast('File manager error: ' + res.error, 'error');
         return;
       }

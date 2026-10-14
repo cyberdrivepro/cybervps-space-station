@@ -498,6 +498,8 @@ class CyberVPSAgent:
         self.device_profile = {}
         self.ws_relay = None
         self.ws_connected = False
+        self._drives_cache = {"data": [], "timestamp": 0}
+        self._disk_cache = {}
 
     def generate_machine_id(self):
         home = os.path.expanduser("~")
@@ -721,10 +723,21 @@ class CyberVPSAgent:
 
     def get_capabilities(self):
         is_root = False
-        try:
-            is_root = (os.geteuid() == 0)
-        except AttributeError:
-            is_root = False
+        is_admin = False
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+                is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+            except Exception:
+                is_admin = False
+            is_root = is_admin
+        else:
+            try:
+                is_root = (os.geteuid() == 0)
+                is_admin = is_root
+            except AttributeError:
+                is_root = False
+                is_admin = False
 
         has_systemd = os.path.exists("/run/systemd/system")
         writable_fs = False
@@ -742,6 +755,8 @@ class CyberVPSAgent:
 
         return {
             "is_root": is_root,
+            "is_admin": is_admin,
+            "is_elevated": is_admin,
             "has_systemd": has_systemd,
             "writable_fs": writable_fs,
             "pty_supported": pty_supported,
@@ -995,6 +1010,62 @@ class CyberVPSAgent:
         resolved = os.path.abspath(expanded)
         return resolved
 
+    def _get_available_drives(self):
+        if platform.system() != "Windows":
+            return []
+        now = time.time()
+        if now - self._drives_cache.get("timestamp", 0) < 60 and self._drives_cache.get("data"):
+            return self._drives_cache["data"]
+
+        drives = []
+        try:
+            import ctypes
+            # GetLogicalDrives bitmask: bit 0 = A, bit 1 = B, bit 2 = C, etc.
+            # Instantaneous memory-only query without hardware timeouts or sleeping drives
+            bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+            for i in range(26):
+                if bitmask & (1 << i):
+                    drives.append(f"{chr(65 + i)}:\\")
+        except Exception:
+            for d in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+                dp = f"{d}:\\"
+                try:
+                    if os.path.exists(dp):
+                        drives.append(dp)
+                except Exception:
+                    pass
+        self._drives_cache = {"data": drives, "timestamp": now}
+        return drives
+
+    def _get_disk_info(self, target_path):
+        now = time.time()
+        root_key = os.path.splitdrive(target_path)[0] + "\\" if platform.system() == "Windows" else "/"
+        if not root_key or root_key == "\\":
+            root_key = target_path
+        cached = self._disk_cache.get(root_key)
+        if cached and (now - cached.get("timestamp", 0) < 30):
+            return cached.get("data", {})
+
+        disk_info = {}
+        try:
+            du = shutil.disk_usage(target_path)
+            total_gb = round(du.total / (1024**3), 1)
+            free_gb = round(du.free / (1024**3), 1)
+            used_gb = round(du.used / (1024**3), 1)
+            disk_info = {
+                "total_gb": total_gb,
+                "free_gb": free_gb,
+                "used_gb": used_gb,
+                "total_bytes": du.total,
+                "used_bytes": du.used,
+                "free_bytes": du.free,
+                "percent_used": round((du.used / du.total) * 100, 1) if du.total > 0 else 0
+            }
+            self._disk_cache[root_key] = {"data": disk_info, "timestamp": now}
+        except Exception:
+            pass
+        return disk_info
+
     def handle_file_list(self, payload):
         req_id = payload.get("request_id")
         raw_path = payload.get("path")
@@ -1011,18 +1082,17 @@ class CyberVPSAgent:
                 with os.scandir(target_path) as it:
                     for entry in it:
                         try:
-                            is_hidden = entry.name.startswith(".")
-                            if not is_hidden and platform.system() == "Windows":
-                                try:
-                                    is_hidden = bool(entry.stat().st_file_attributes & 2)
-                                except Exception:
-                                    pass
-                            if is_hidden and not show_hidden:
-                                continue
-
+                            # Single stat call with follow_symlinks=False prevents double I/O overhead
                             st = entry.stat(follow_symlinks=False)
                             is_dir = entry.is_dir(follow_symlinks=False)
                             is_symlink = entry.is_symlink()
+
+                            is_hidden = entry.name.startswith(".")
+                            if not is_hidden and platform.system() == "Windows":
+                                is_hidden = bool(getattr(st, "st_file_attributes", 0) & 2)
+                            if is_hidden and not show_hidden:
+                                continue
+
                             size = st.st_size if not is_dir else 0
                             mtime_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime))
                             mode_str = oct(st.st_mode)[-3:] if hasattr(st, "st_mode") else "755"
@@ -1059,30 +1129,8 @@ class CyberVPSAgent:
 
             entries.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
 
-            disk_info = {}
-            try:
-                du = shutil.disk_usage(target_path)
-                total_gb = round(du.total / (1024**3), 1)
-                free_gb = round(du.free / (1024**3), 1)
-                used_gb = round(du.used / (1024**3), 1)
-                disk_info = {
-                    "total_gb": total_gb,
-                    "free_gb": free_gb,
-                    "used_gb": used_gb,
-                    "total_bytes": du.total,
-                    "used_bytes": du.used,
-                    "free_bytes": du.free,
-                    "percent_used": round((du.used / du.total) * 100, 1) if du.total > 0 else 0
-                }
-            except Exception:
-                pass
-
-            drives = []
-            if platform.system() == "Windows":
-                for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-                    dp = f"{d}:\\"
-                    if os.path.exists(dp):
-                        drives.append(dp)
+            disk_info = self._get_disk_info(target_path)
+            drives = self._get_available_drives()
 
             parent = os.path.dirname(target_path)
             if parent == target_path:
@@ -1731,10 +1779,33 @@ class CyberVPSAgent:
     # =========================================================================
     # Terminal Session Handling
     # =========================================================================
-    def start_terminal_session(self, session_id, cols=80, rows=24, shell=None):
+    def start_terminal_session(self, session_id, cols=80, rows=24, shell=None, profile=None):
         cols = int(cols or 80)
         rows = int(rows or 24)
+        p_pref = (profile or "").lower().strip()
+
         if platform.system() == "Windows":
+            is_elevated = False
+            try:
+                import ctypes
+                is_elevated = bool(ctypes.windll.shell32.IsUserAnAdmin())
+            except Exception:
+                is_elevated = False
+
+            current_user = os.environ.get("USERNAME", "User")
+            if is_elevated and p_pref in ["user", "standard"]:
+                active_profile = "standard"
+                active_user = current_user
+                profile_desc = f"Standard User ({current_user})"
+            elif is_elevated:
+                active_profile = "privileged"
+                active_user = f"Administrator ({current_user})" if current_user.lower() != "system" else "NT AUTHORITY\\SYSTEM"
+                profile_desc = f"Administrator (Elevated)"
+            else:
+                active_profile = "standard"
+                active_user = current_user
+                profile_desc = f"Standard User ({current_user})"
+
             shell_choice = (shell or "powershell").lower().strip()
             if "cmd" in shell_choice:
                 shell_cmd_list = ["cmd.exe"]
@@ -1770,11 +1841,14 @@ class CyberVPSAgent:
                     "type": "TerminalReady",
                     "payload": {
                         "session_id": session_id,
-                        "backend": f"Background ({backend_label})",
+                        "backend": f"{profile_desc} [{backend_label}]",
                         "shell": backend_label,
                         "pid": p.pid,
                         "cols": cols,
-                        "rows": rows
+                        "rows": rows,
+                        "profile": active_profile,
+                        "user": active_user,
+                        "is_elevated": is_elevated and (active_profile == "privileged")
                     }
                 })
             except Exception as e:
@@ -1785,9 +1859,53 @@ class CyberVPSAgent:
         else:
             import pty
             master, slave = pty.openpty()
+
+            is_root = False
+            try:
+                is_root = (os.geteuid() == 0)
+            except Exception:
+                is_root = False
+
+            current_user = os.environ.get("USER", "root" if is_root else "user")
             shell_cmd = shell or ("/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh")
+
+            if is_root:
+                if p_pref in ["user", "standard"]:
+                    active_profile = "standard"
+                    std_user = os.environ.get("SUDO_USER")
+                    if not std_user or std_user == "root":
+                        try:
+                            with open("/etc/passwd", "r") as pf:
+                                for line in pf:
+                                    parts = line.strip().split(":")
+                                    if len(parts) >= 3 and 1000 <= int(parts[2]) < 65534:
+                                        std_user = parts[0]
+                                        break
+                        except Exception:
+                            pass
+                    if not std_user or std_user == "root":
+                        std_user = "nobody"
+                    active_user = std_user
+                    profile_desc = f"Standard User ({std_user})"
+                    if shutil.which("runuser"):
+                        shell_cmd_list = ["runuser", "-u", std_user, "--", shell_cmd, "-i"]
+                    elif shutil.which("su"):
+                        shell_cmd_list = ["su", "-", std_user, "-s", shell_cmd]
+                    else:
+                        shell_cmd_list = [shell_cmd, "-i"]
+                else:
+                    active_profile = "privileged"
+                    active_user = "root"
+                    profile_desc = "Root (Elevated)"
+                    shell_cmd_list = [shell_cmd, "-i"]
+            else:
+                active_profile = "standard"
+                active_user = current_user
+                profile_desc = f"Standard User ({current_user})"
+                shell_cmd_list = [shell_cmd, "-i"]
+
             p = subprocess.Popen(
-                [shell_cmd, "-i"],
+                shell_cmd_list,
                 stdin=slave,
                 stdout=slave,
                 stderr=slave,
@@ -1812,11 +1930,14 @@ class CyberVPSAgent:
                 "type": "TerminalReady",
                 "payload": {
                     "session_id": session_id,
-                    "backend": "PTY",
+                    "backend": f"PTY [{profile_desc}]",
                     "shell": shell_cmd,
                     "pid": p.pid,
                     "cols": cols,
-                    "rows": rows
+                    "rows": rows,
+                    "profile": active_profile,
+                    "user": active_user,
+                    "is_elevated": is_root and (active_profile == "privileged")
                 }
             })
 
@@ -2109,7 +2230,8 @@ class CyberVPSAgent:
                 payload.get("session_id"),
                 payload.get("cols", 80),
                 payload.get("rows", 24),
-                payload.get("shell") or payload.get("shell_preference")
+                payload.get("shell") or payload.get("shell_preference"),
+                payload.get("profile")
             )
         elif c_type == "TerminalInput":
             self.write_terminal_input(payload.get("session_id"), payload.get("data", ""))

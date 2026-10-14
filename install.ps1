@@ -234,8 +234,9 @@ try {
     Write-Host "  ✅ User Registry autostart key registered (HKCU Run)." -ForegroundColor Green
 } catch {}
 
-# Method C: Scheduled Task (If elevated admin privileges available)
+# Method C: Autonomous Boot-Start & Logon Task
 $TaskName = "CyberVPS-Space-Station-Agent"
+$IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $oldEap = $ErrorActionPreference
 $ErrorActionPreference = 'SilentlyContinue'
 try {
@@ -244,7 +245,20 @@ try {
         & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
     }
     $TaskRun = "`"wscript.exe`" //B //Nologo `"$VbsScript`""
-    & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
+    if ($IsElevated) {
+        # Elevated Admin: Start at system boot (autonomous 24/7 service before user login)
+        & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONSTART /RU "SYSTEM" /RL HIGHEST /F 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  ✅ Elevated Boot-Start Service registered (Starts on Boot via SYSTEM)." -ForegroundColor Green
+        } else {
+            & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONLOGON /RL HIGHEST /F 2>$null | Out-Null
+            Write-Host "  ✅ Elevated Task registered (Starts on Logon with HIGHEST privileges)." -ForegroundColor Green
+        }
+    } else {
+        # Standard User: Autostart on user logon without UAC prompts
+        & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
+        Write-Host "  ✅ User Scheduled Task registered (Autostart on Logon)." -ForegroundColor Green
+    }
 } catch {} finally {
     $ErrorActionPreference = $oldEap
 }

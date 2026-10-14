@@ -150,15 +150,17 @@ if [ "$(id -u)" = "0" ] && [ -d "/etc/systemd/system" ] && command -v systemctl 
   cat <<EOF > "${SERVICE_FILE}"
 [Unit]
 Description=CyberVPS Space Station Host Agent
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_BASE}
-ExecStart=${PY_CMD} ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE}
+ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE}
 Restart=always
-RestartSec=5s
+RestartSec=3s
+LimitNOFILE=65535
 StandardOutput=append:${LOG_DIR}/agent.log
 StandardError=append:${LOG_DIR}/agent.log
 
@@ -170,30 +172,38 @@ EOF
   systemctl restart cybervps-agent.service >/dev/null 2>&1 || true
   SERVICE_MODE="systemd (root)"
   echo "  ✅ Registered systemd service: ${SERVICE_FILE}"
-elif [ -d "${HOME}/.config/systemd/user" ] && command -v systemctl >/dev/null 2>&1; then
-  USER_SERVICE="${HOME}/.config/systemd/user/cybervps-agent.service"
-  mkdir -p "${HOME}/.config/systemd/user"
+elif command -v systemctl >/dev/null 2>&1 && systemctl --user list-units >/dev/null 2>&1; then
+  USER_SERVICE_DIR="${HOME}/.config/systemd/user"
+  USER_SERVICE="${USER_SERVICE_DIR}/cybervps-agent.service"
+  mkdir -p "${USER_SERVICE_DIR}"
   cat <<EOF > "${USER_SERVICE}"
 [Unit]
-Description=CyberVPS Space Station Host Agent
+Description=CyberVPS Space Station Host Agent (User Service)
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_BASE}
-ExecStart=${PY_CMD} ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE}
+ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE}
 Restart=always
-RestartSec=5s
+RestartSec=3s
 StandardOutput=append:${LOG_DIR}/agent.log
 StandardError=append:${LOG_DIR}/agent.log
 
 [Install]
 WantedBy=default.target
 EOF
+  # Enable user lingering so service persists 24/7 after SSH disconnect
+  loginctl enable-linger "${USER}" 2>/dev/null || true
   systemctl --user daemon-reload >/dev/null 2>&1 || true
   systemctl --user enable --now cybervps-agent.service >/dev/null 2>&1 || true
-  SERVICE_MODE="systemd (user)"
-  echo "  ✅ Registered systemd user service: ${USER_SERVICE}"
+  SERVICE_MODE="systemd (user linger)"
+  echo "  ✅ Registered systemd user service with 24/7 linger: ${USER_SERVICE}"
+  
+  # Also add crontab autostart as persistent redundancy
+  if command -v crontab >/dev/null 2>&1; then
+    (crontab -l 2>/dev/null | grep -v "universal-agent.py" || true; echo "@reboot ${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} >> ${LOG_DIR}/agent.log 2>&1 &") | crontab - >/dev/null 2>&1 || true
+  fi
 else
   # Background supervisor via nohup and crontab @reboot
   pkill -f "universal-agent.py" >/dev/null 2>&1 || true
