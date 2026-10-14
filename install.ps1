@@ -12,6 +12,12 @@ param (
 
 $ErrorActionPreference = 'Stop'
 
+# Enforce TLS 1.2
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+} catch {}
+$ProgressPreference = 'SilentlyContinue'
+
 $RepoUrl = "https://github.com/cyberdrivepro/cybervps-space-station.git"
 $ZipUrl = "https://github.com/cyberdrivepro/cybervps-space-station/archive/refs/heads/main.zip"
 $InstallBase = Join-Path $HOME ".cybervps"
@@ -23,42 +29,18 @@ $ConfigFile = Join-Path $InstallBase "config.json"
 $MachineIdFile = Join-Path $InstallBase "machine_id"
 
 Write-Host "================================================================" -ForegroundColor Cyan
-Write-Host "🛰️  CYBERVPS SPACE STATION - WINDOWS HOST AGENT INSTALLER" -ForegroundColor Cyan
+Write-Host "   CYBERVPS SPACE STATION - WINDOWS HOST AGENT INSTALLER        " -ForegroundColor Cyan
 Write-Host "================================================================" -ForegroundColor Cyan
 
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$ProgressPreference = 'SilentlyContinue'
-
-# 1. Detect Runtimes (Node.js LTS and Python 3)
 function Refresh-EnvPath {
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $env:Path = "$machinePath;$userPath"
 }
 
-# 1a. Detect Node.js
-$NodeCmd = Get-Command node -ErrorAction SilentlyContinue
-if (-not $NodeCmd) {
-    $WingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($WingetCmd) {
-        Write-Host "[*] Node.js not detected. Auto-installing Node.js LTS via WinGet..." -ForegroundColor Cyan
-        try {
-            & winget install -e --id OpenJS.NodeJS.LTS --scope currentuser --silent --accept-source-agreements --accept-package-agreements | Out-Null
-            Refresh-EnvPath
-            $NodeCmd = Get-Command node -ErrorAction SilentlyContinue
-        } catch {}
-    }
-}
+# 1. Detect Python 3 (Primary Runtime for Universal Host Agent)
+Write-Host "[*] Detecting Python runtime..." -ForegroundColor Cyan
 
-if (-not $NodeCmd) {
-    Write-Host "❌ Error: Node.js (v18+) is required to run CyberVPS Space Station CLI." -ForegroundColor Red
-    Write-Host "👉 Install Node.js LTS from: https://nodejs.org/en/download" -ForegroundColor Yellow
-    exit 1
-}
-$NodeVer = & node -v
-Write-Host "[*] Active Node.js runtime: $NodeVer" -ForegroundColor Green
-
-# 1b. Detect Python 3 (Excluding WindowsApps placeholder)
 function Find-RealPython {
     try {
         $raw = where.exe python 2>$null
@@ -76,38 +58,80 @@ function Find-RealPython {
         $pyVer = & py -3 --version 2>&1
         if ($pyVer -like "*Python 3*") { return "py" }
     } catch {}
+
+    $candidates = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+        "C:\Python3*\python.exe",
+        "C:\Program Files\Python3*\python.exe",
+        "$InstallBase\python\python.exe"
+    )
+    foreach ($pat in $candidates) {
+        $found = Get-Item $pat -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found -and (Test-Path $found.FullName)) {
+            return $found.FullName
+        }
+    }
     return $null
 }
 
 $PythonExe = Find-RealPython
+
 if (-not $PythonExe) {
-    $WingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    Write-Host "[!] Python 3 not detected. Auto-installing Python 3.12 (standalone)..." -ForegroundColor Yellow
+    $WingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
     if ($WingetCmd) {
-        Write-Host "[*] Python 3 not detected. Auto-installing Python 3.12 via WinGet..." -ForegroundColor Cyan
+        Write-Host "[*] Attempting installation via WinGet..." -ForegroundColor Cyan
         try {
-            & winget install -e --id Python.Python.3.12 --scope currentuser --silent --accept-source-agreements --accept-package-agreements | Out-Null
+            & winget install -e --id Python.Python.3.12 --scope currentuser --accept-source-agreements --accept-package-agreements
             Refresh-EnvPath
             $PythonExe = Find-RealPython
         } catch {}
     }
+    
+    if (-not $PythonExe) {
+        Write-Host "[*] Downloading official Python 3.12 installer directly from python.org..." -ForegroundColor Cyan
+        $PyInstaller = Join-Path $env:TEMP "python-installer.exe"
+        $PyUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
+        try {
+            Invoke-WebRequest -Uri $PyUrl -OutFile $PyInstaller -UseBasicParsing
+            Write-Host "[*] Installing Python 3.12 (silent user-level install)..." -ForegroundColor Cyan
+            $p = Start-Process -FilePath $PyInstaller -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0" -Wait -PassThru
+            Remove-Item $PyInstaller -Force -ErrorAction SilentlyContinue
+            Refresh-EnvPath
+            $PythonExe = Find-RealPython
+        } catch {
+            Write-Host "[!] Direct Python download failed: $_" -ForegroundColor Yellow
+        }
+    }
 }
 
 if (-not $PythonExe) {
-    Write-Host "❌ Error: Python 3 runtime is required to run the CyberVPS Host Agent." -ForegroundColor Red
-    Write-Host "👉 Download and install Python 3 (check 'Add to PATH'): https://www.python.org/downloads/windows/" -ForegroundColor Yellow
+    Write-Host "[X] Error: Python 3 is required to run the CyberVPS Host Agent." -ForegroundColor Red
+    Write-Host "    Please install Python 3 (check 'Add python.exe to PATH'):" -ForegroundColor Yellow
+    Write-Host "    https://www.python.org/downloads/windows/" -ForegroundColor White
     exit 1
 }
-$PyVer = & $PythonExe --version 2>&1
-Write-Host "[*] Active Python runtime: $PyVer" -ForegroundColor Green
 
-# 2. Prepare Directories
+$PyVer = & $PythonExe --version 2>&1
+Write-Host "[+] Python runtime active: $PyVer ($PythonExe)" -ForegroundColor Green
+
+# 2. Check Node.js (Optional, used for full CLI)
+$NodeCmd = Get-Command node.exe -ErrorAction SilentlyContinue
+if ($NodeCmd) {
+    $NodeVer = & node -v
+    Write-Host "[+] Node.js runtime active: $NodeVer" -ForegroundColor Green
+} else {
+    Write-Host "[*] Node.js not detected (optional). Host agent will operate in pure Python mode." -ForegroundColor Gray
+}
+
+# 3. Prepare Directories
 New-Item -ItemType Directory -Path $InstallBase -Force | Out-Null
 New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null
 New-Item -ItemType Directory -Path $RunDir -Force | Out-Null
 
-# 3. Clone or Download Codebase
-$GitCmd = Get-Command git -ErrorAction SilentlyContinue
+# 4. Clone or Download Codebase
+$GitCmd = Get-Command git.exe -ErrorAction SilentlyContinue
 if (Test-Path (Join-Path $InstallDir ".git")) {
     Write-Host "[*] Existing installation found in $InstallDir. Updating..." -ForegroundColor Yellow
     Push-Location $InstallDir
@@ -118,43 +142,54 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
     }
     Pop-Location
 } elseif ($GitCmd) {
-    Write-Host "[*] Cloning repository via Git..." -ForegroundColor Cyan
+    Write-Host "[*] Downloading repository via Git..." -ForegroundColor Cyan
     if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
     try {
         & git clone --depth 1 $RepoUrl $InstallDir
     } catch {
-        Write-Host "❌ Git clone failed. Stopping installation." -ForegroundColor Red
+        Write-Host "[X] Git clone failed. Stopping installation." -ForegroundColor Red
         exit 1
     }
 } else {
-    Write-Host "[*] Git not found. Downloading repository archive from GitHub..." -ForegroundColor Cyan
+    Write-Host "[*] Downloading repository archive from GitHub..." -ForegroundColor Cyan
     $ZipPath = Join-Path $InstallBase "cybervps.zip"
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -UseBasicParsing
-    
-    if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
-    Expand-Archive -Path $ZipPath -DestinationPath $InstallBase -Force
-    $ExtractedDir = Join-Path $InstallBase "cybervps-space-station-main"
-    if (Test-Path $ExtractedDir) {
-        Rename-Item -Path $ExtractedDir -NewName "space-station"
+    try {
+        Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -UseBasicParsing
+        if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
+        Expand-Archive -Path $ZipPath -DestinationPath $InstallBase -Force
+        $ExtractedDir = Join-Path $InstallBase "cybervps-space-station-main"
+        if (Test-Path $ExtractedDir) {
+            Rename-Item -Path $ExtractedDir -NewName "space-station"
+        }
+        Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "[X] Failed to download repository archive: $_" -ForegroundColor Red
+        exit 1
     }
-    Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
 }
 
-# 4. Setup Configuration & Persistent Machine ID
+# 5. Setup Configuration & Persistent Machine ID
 $MachineId = ""
 if (Test-Path $MachineIdFile) {
-    $MachineId = (Get-Content $MachineIdFile -Raw).Trim()
+    $rawId = (Get-Content $MachineIdFile -Raw)
+    $clean = ($rawId -replace '[^a-zA-Z0-9_\-]', '').Trim()
+    if ($clean.Length -ge 4) {
+        $MachineId = $clean
+    }
 }
-if (-not $MachineId -and (Test-Path $ConfigFile)) {
+if (($MachineId.Length -lt 4) -and (Test-Path $ConfigFile)) {
     try {
         $ExistingCfg = Get-Content $ConfigFile -Raw | ConvertFrom-Json
-        if ($ExistingCfg.machine_id) { $MachineId = $ExistingCfg.machine_id }
+        $cleanCfg = ($ExistingCfg.machine_id -replace '[^a-zA-Z0-9_\-]', '').Trim()
+        if ($cleanCfg.Length -ge 4) {
+            $MachineId = $cleanCfg
+        }
     } catch {}
 }
-if (-not $MachineId) {
+if ($MachineId.Length -lt 4) {
     $RandSuffix = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
-    $MachineId = "cvps_$($env:COMPUTERNAME)_$RandSuffix"
+    $cleanHost = ($env:COMPUTERNAME -replace '[^a-zA-Z0-9_]', '').ToLower()
+    $MachineId = "cvps_${cleanHost}_$RandSuffix"
 }
 Set-Content -Path $MachineIdFile -Value $MachineId -Force
 
@@ -166,21 +201,14 @@ $ConfigObj = [ordered]@{
 }
 $ConfigJson = $ConfigObj | ConvertTo-Json -Depth 4
 Set-Content -Path $ConfigFile -Value $ConfigJson -Force
-Write-Host "[*] Saved host configuration in $ConfigFile" -ForegroundColor Green
+Write-Host "[+] Saved host configuration in $ConfigFile" -ForegroundColor Green
 
-# 5. Copy CLI to BinDir and Add to PATH
+# 6. Copy CLI to BinDir and Add to PATH
 Copy-Item (Join-Path $InstallDir "bin\*") $BinDir -Force -Recurse
 
 try {
     Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction SilentlyContinue
 } catch {}
-
-# Create cybervps.cmd wrapper for universal Command Prompt & PowerShell compatibility
-$CmdWrapper = @"
-@echo off
-node "%~dp0cybervps" %*
-"@
-Set-Content -Path (Join-Path $BinDir "cybervps.cmd") -Value $CmdWrapper -Force
 
 $UserPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
 if ($UserPath -notlike "*$BinDir*") {
@@ -189,7 +217,7 @@ if ($UserPath -notlike "*$BinDir*") {
     $env:Path = "$env:Path;$BinDir"
 }
 
-# 6. Verify Outbound Connectivity to Central Backend
+# 7. Verify Outbound Connectivity to Central Backend
 Write-Host "[*] Verifying connectivity to Central Backend ($Server)..." -ForegroundColor Cyan
 $HealthOk = $false
 try {
@@ -197,13 +225,13 @@ try {
     $HealthRes = Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 5 -ErrorAction Stop
     if ($HealthRes.status -eq 'OK' -or $HealthRes.status -eq 'ok') {
         $HealthOk = $true
-        Write-Host "  ✅ Backend reached successfully ($HealthUrl)" -ForegroundColor Green
+        Write-Host "  [OK] Backend reached successfully ($HealthUrl)" -ForegroundColor Green
     }
 } catch {
     Write-Warning "Could not verify backend health: $_"
 }
 
-# 7. Configure 24/7 Silent Background Windows Service (Single Mechanism Supervision)
+# 8. Configure 24/7 Silent Background Windows Service (Single Mechanism Supervision)
 Write-Host "[*] Configuring silent background autostart..." -ForegroundColor Cyan
 
 $TaskName = "CyberVPS-Space-Station-Agent"
@@ -211,7 +239,7 @@ $StartupShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialF
 $AgentScript = Join-Path $InstallDir "agent\universal-agent.py"
 $VbsScript = Join-Path $BinDir "run-agent.vbs"
 
-# Clean up any previously registered startup mechanisms to eliminate duplicate instances
+# Clean up any duplicate mechanisms
 if (Test-Path $StartupShortcut) {
     Remove-Item -Path $StartupShortcut -Force -ErrorAction SilentlyContinue
 }
@@ -225,23 +253,23 @@ try {
 $IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if ($IsElevated) {
-    # Elevated Admin: Single Autonomous Boot-Start Scheduled Task running under SYSTEM with HIGHEST privileges
+    # Elevated Admin: Scheduled Task running under SYSTEM
     $TaskRun = "`"$PythonExe`" -u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`""
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {
         & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONSTART /RU "SYSTEM" /RL HIGHEST /F 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "  ✅ Elevated Boot-Start Service registered (Single mechanism: Starts on Boot via SYSTEM)." -ForegroundColor Green
+            Write-Host "  [+] Elevated Boot-Start Service registered (Starts on Boot via SYSTEM)." -ForegroundColor Green
         } else {
             & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONLOGON /RL HIGHEST /F 2>$null | Out-Null
-            Write-Host "  ✅ Elevated Task registered (Single mechanism: Starts on Logon with HIGHEST privileges)." -ForegroundColor Green
+            Write-Host "  [+] Elevated Task registered (Starts on Logon with HIGHEST privileges)." -ForegroundColor Green
         }
     } finally {
         $ErrorActionPreference = $oldEap
     }
 } else {
-    # Standard User: Single Registry Run Key with silent background VBS launcher (zero console popup)
+    # Standard User: Silent background VBS launcher via HKCU Run (zero console popup)
     $EscPy = $PythonExe.Replace('"', '""')
     $EscAgent = $AgentScript.Replace('"', '""')
     $EscConfig = $ConfigFile.Replace('"', '""')
@@ -253,25 +281,38 @@ WshShell.Run """$EscPy"" -u ""$EscAgent"" --config ""$EscConfig"" --log-dir ""$E
     Set-Content -Path $VbsScript -Value $VbsContent -Force
     try {
         Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Value "wscript.exe //B //Nologo `"$VbsScript`"" -Force
-        Write-Host "  ✅ User Registry autostart key registered (Single mechanism: HKCU Run without UAC prompts)." -ForegroundColor Green
+        Write-Host "  [+] User Registry autostart key registered (HKCU Run without UAC prompts)." -ForegroundColor Green
     } catch {
         Write-Warning "Could not register HKCU Run key: $_"
     }
 }
 
-# 8. Start Agent in Background Now
+# 9. Start Agent in Background Now
 Write-Host "[*] Starting CyberVPS Host Agent in background..." -ForegroundColor Cyan
-& node (Join-Path $InstallDir "bin\cybervps") start
 
-# 9. Verify Machine Enrollment with Central Backend
-Write-Host "[*] Waiting for fleet enrollment confirmation (up to 20s)..." -ForegroundColor Cyan
+# Stop existing running agent if any
+$AgentPidFile = Join-Path $RunDir "agent.pid"
+if (Test-Path $AgentPidFile) {
+    try {
+        $oldPid = [int](Get-Content $AgentPidFile -Raw).Trim()
+        Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+    } catch {}
+    Remove-Item $AgentPidFile -Force -ErrorAction SilentlyContinue
+}
+
+$agentProc = Start-Process -FilePath $PythonExe -ArgumentList "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`"" -PassThru -WindowStyle Hidden
+Set-Content -Path $AgentPidFile -Value $agentProc.Id -Force
+Write-Host "  [+] CyberVPS Agent spawned with PID: $($agentProc.Id)" -ForegroundColor Green
+
+# 10. Verify Machine Enrollment with Central Backend
+Write-Host "[*] Waiting for fleet enrollment confirmation (up to 15s)..." -ForegroundColor Cyan
 $Enrolled = $false
 $AssignedVip = "10.77.0.x"
-for ($i = 0; $i -lt 10; $i++) {
+for ($i = 0; $i -lt 8; $i++) {
     Start-Sleep -Seconds 2
     try {
         $MachinesUrl = "$($Server.TrimEnd('/'))/api/v1/machines"
-        $MachinesList = Invoke-RestMethod -Uri $MachinesUrl -TimeoutSec 4 -ErrorAction SilentlyContinue
+        $MachinesList = Invoke-RestMethod -Uri $MachinesUrl -TimeoutSec 3 -ErrorAction SilentlyContinue
         if ($MachinesList) {
             $MyMachine = $MachinesList | Where-Object { $_.id -eq $MachineId }
             if ($MyMachine -and $MyMachine.status -eq 'online') {
@@ -285,36 +326,34 @@ for ($i = 0; $i -lt 10; $i++) {
 }
 Write-Host ""
 
-# 10. Clean Completion Summary
+# 11. Clean Completion Summary
 Write-Host ""
 if ($Enrolled) {
     Write-Host "================================================================" -ForegroundColor Green
-    Write-Host "🛰️  CYBERVPS HOST AGENT - SETUP COMPLETE" -ForegroundColor Green
+    Write-Host "   CYBERVPS HOST AGENT - SETUP COMPLETE" -ForegroundColor Green
     Write-Host "================================================================" -ForegroundColor Green
     Write-Host "Host:        $env:COMPUTERNAME (Windows)" -ForegroundColor White
-    Write-Host "Backend:     $Server (Connected & Verified ✅)" -ForegroundColor White
+    Write-Host "Backend:     $Server (Connected & Verified)" -ForegroundColor White
     Write-Host "Status:      ONLINE (Virtual IP: $AssignedVip)" -ForegroundColor Green
     Write-Host "Service:     Running 24/7 in Background (CyberVPS-Space-Station-Agent)" -ForegroundColor Green
     Write-Host "Startup:     Automatic on Reboot & Logon" -ForegroundColor Green
     Write-Host "Machine ID:  $MachineId" -ForegroundColor White
     Write-Host "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Yellow
     Write-Host "================================================================" -ForegroundColor Green
-    Write-Host "🎉 Setup complete! You can safely close this PowerShell window." -ForegroundColor White
-    Write-Host "👉 The Host Agent will run silently in the background 24/7." -ForegroundColor Gray
+    Write-Host "Setup complete! You can safely close this PowerShell window." -ForegroundColor White
+    Write-Host "The Host Agent will run silently in the background 24/7." -ForegroundColor Gray
 } else {
     Write-Host "================================================================" -ForegroundColor Yellow
-    Write-Host "⚠️  CYBERVPS HOST AGENT - ENROLLMENT PENDING" -ForegroundColor Yellow
+    Write-Host "   CYBERVPS HOST AGENT - AGENT INITIALIZING" -ForegroundColor Yellow
     Write-Host "================================================================" -ForegroundColor Yellow
     Write-Host "Host:        $env:COMPUTERNAME (Windows)" -ForegroundColor White
-    Write-Host "Backend:     $Server (Enrollment Pending / Check Logs ⚠️)" -ForegroundColor Yellow
-    Write-Host "Status:      Awaiting initial heartbeat confirmation" -ForegroundColor Yellow
-    Write-Host "Service:     Running 24/7 in Background (CyberVPS-Space-Station-Agent)" -ForegroundColor White
+    Write-Host "Backend:     $Server" -ForegroundColor Yellow
+    Write-Host "Status:      Agent running in background (PID: $($agentProc.Id))" -ForegroundColor White
     Write-Host "Machine ID:  $MachineId" -ForegroundColor White
     Write-Host "Agent Logs:  $LogsDir\agent.log" -ForegroundColor Cyan
     Write-Host "Check State: cybervps status" -ForegroundColor Cyan
     Write-Host "================================================================" -ForegroundColor Yellow
-    Write-Host "👉 If enrollment takes more than a minute, run: cybervps restart" -ForegroundColor Gray
 }
-Write-Host "👉 Monitor and control this machine anytime at:" -ForegroundColor Cyan
-Write-Host "   https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Cyan
+Write-Host "Monitor and control this machine anytime at:" -ForegroundColor Cyan
+Write-Host "https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Cyan
 Write-Host "================================================================" -ForegroundColor $(if ($Enrolled) { "Green" } else { "Yellow" })

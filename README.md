@@ -204,15 +204,16 @@ curl -fsSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-statio
 ```
 
 #### 🪟 Windows PowerShell (PowerShell 5.1 & PowerShell 7+):
-> *Tested and compatible with both legacy Windows PowerShell 5.1 and modern PowerShell 7+ without `&&` operator syntax errors:*
+> *Fast, zero-hang 1-liner compatible with all PowerShell versions:*
 ```powershell
-$ProgressPreference = 'SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $installer = Join-Path $env:TEMP 'cybervps-install.ps1'; Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1' -OutFile $installer; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer; Remove-Item $installer -Force -ErrorAction SilentlyContinue
+irm https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1 | iex
 ```
+*(If TLS 1.2 is not enabled on legacy Windows Server, prefix with: `[Net.ServicePointManager]::SecurityProtocol = 3072;`)*
 
 #### 💻 Windows Command Prompt (CMD):
-> *Safe from any working directory, including `C:\Windows\system32` Administrator prompts (downloads cleanly to `%TEMP%` without curl error 23):*
+> *Safe from any working directory, including `C:\Windows\system32` Administrator prompts:*
 ```cmd
-curl.exe -fSL --retry 3 "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.cmd" -o "%TEMP%\cybervps-install.cmd" && call "%TEMP%\cybervps-install.cmd"
+curl -sSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.cmd -o "%TEMP%\cvps.cmd" && "%TEMP%\cvps.cmd"
 ```
 
 ---

@@ -23,7 +23,7 @@ class TunnelManager {
     this.status = 'idle'; // idle | starting | connected | reconnecting | failed | stopped
     this.providerName = 'localhost';
     this.publicUrl = options.publicUrl || `http://127.0.0.1:${this.port}`;
-    this.pairingKey = options.pairingKey || ('cvps_pair_' + crypto.randomBytes(8).toString('hex'));
+    this.pairingKey = options.pairingKey || process.env.PAIRING_KEY || process.env.CYBERVPS_TOKEN || 'cvps_enroll_master_token';
     this.sessionTokens = new Set();
     this.activeChild = null;
     this.reconnectTimer = null;

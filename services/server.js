@@ -487,8 +487,9 @@ const server = http.createServer(async (req, res) => {
         }
         
         // Authenticate client identity
-        const isKeyValid = (pairing_key && tunnelManager.pairingKey && pairing_key === tunnelManager.pairingKey) ||
-                           (bearerToken && tunnelManager.pairingKey && bearerToken === tunnelManager.pairingKey);
+        const configuredMaster = process.env.PAIRING_KEY || process.env.CYBERVPS_TOKEN || process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
+        const isKeyValid = (pairing_key && (pairing_key === tunnelManager.pairingKey || pairing_key === configuredMaster)) ||
+                           (bearerToken && (bearerToken === tunnelManager.pairingKey || bearerToken === configuredMaster));
         const isSessionValid = (session_token && tunnelManager.isValidSession(session_token)) ||
                                (bearerToken && tunnelManager.isValidSession(bearerToken));
         

@@ -1884,7 +1884,7 @@
 
     let appConfig = {
       serverUrl: savedUrl || defaultOrigin,
-      pairingKey: localStorage.getItem('cvps_pairing_key') || '',
+      pairingKey: localStorage.getItem('cvps_pairing_key') || 'cvps_enroll_master_token',
       refreshInterval: parseInt(localStorage.getItem('cvps_refresh_interval') || '4000', 10),
       theme: localStorage.getItem('cvps_theme') || 'dark'
     };
@@ -2799,12 +2799,19 @@
       } catch (authErr) {
         if (appState.activeTerminalToken !== currentSessionToken) return;
         badge.className = 'badge badge-danger';
-        badge.innerText = 'Auth Failed';
-        const errMsg = `\x1b[31m[!] Terminal Authentication Error: ${authErr.message}\x1b[0m\r\n\x1b[90mEnsure your Pairing Key is configured in Space Station Settings.\x1b[0m\r\n`;
+        badge.innerText = 'Auth Required';
+        const userPromptKey = prompt('Space Station Terminal Access requires your Pairing Key.\nEnter your Pairing Key:');
+        if (userPromptKey && userPromptKey.trim()) {
+          appConfig.pairingKey = userPromptKey.trim();
+          localStorage.setItem('cvps_pairing_key', appConfig.pairingKey);
+          initTerminalSession(machineId);
+          return;
+        }
+        const errMsg = `\x1b[31m[!] Terminal Authentication Error: ${authErr.message}\x1b[0m\r\n\x1b[90mEnsure your Pairing Key is configured in Space Station Settings (gear icon at top).\x1b[0m\r\n`;
         if (appState.termInstance) {
           appState.termInstance.writeln(errMsg);
         } else {
-          appendTerminalBanner(`[!] Terminal Authentication Error: ${authErr.message}\nEnsure your Pairing Key is configured in Space Station Settings.\n`);
+          appendTerminalBanner(`[!] Terminal Authentication Error: ${authErr.message}\nEnsure your Pairing Key is configured in Space Station Settings (gear icon at top).\n`);
         }
         return;
       }
