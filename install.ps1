@@ -74,33 +74,57 @@ function Find-RealPython {
     return $null
 }
 
+function Exit-WithCode([int]$code = 1) {
+    try {
+        $host.SetShouldExit($code)
+    } catch {}
+    $global:LASTEXITCODE = $code
+}
+
+
 $PythonExe = Find-RealPython
 
 if (-not $PythonExe) {
-    Write-Host "[!] Python 3 not detected. Auto-installing Python 3.12 (standalone)..." -ForegroundColor Yellow
-    $WingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($WingetCmd) {
-        Write-Host "[*] Attempting installation via WinGet..." -ForegroundColor Cyan
-        try {
-            & winget install -e --id Python.Python.3.12 --scope currentuser --accept-source-agreements --accept-package-agreements
-            Refresh-EnvPath
-            $PythonExe = Find-RealPython
-        } catch {}
+    Write-Host "[!] Python 3 not detected on system. Provisioning portable Python 3.12 (~10MB)..." -ForegroundColor Yellow
+    $PyEmbedDir = Join-Path $InstallBase "python"
+    $PyEmbedZip = Join-Path $env:TEMP "python-embed.zip"
+    $PyEmbedUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip"
+    try {
+        New-Item -ItemType Directory -Path $PyEmbedDir -Force | Out-Null
+        Write-Host "[*] Downloading official portable Python 3.12 package from python.org..." -ForegroundColor Cyan
+        Invoke-WebRequest -Uri $PyEmbedUrl -OutFile $PyEmbedZip -UseBasicParsing
+        Write-Host "[*] Extracting portable Python runtime to $PyEmbedDir..." -ForegroundColor Cyan
+        Expand-Archive -Path $PyEmbedZip -DestinationPath $PyEmbedDir -Force
+        Remove-Item $PyEmbedZip -Force -ErrorAction SilentlyContinue
+
+        # Enable site-packages and script paths in embed python
+        $pthFile = Join-Path $PyEmbedDir "python312._pth"
+        if (Test-Path $pthFile) {
+            $pthContent = Get-Content $pthFile
+            $pthContent = $pthContent -replace '^#import site', 'import site'
+            $pthContent += "`n."
+            $pthContent += "`n..`n..\space-station`n..\space-station\agent"
+            Set-Content -Path $pthFile -Value $pthContent -Force
+        }
+
+        $CandidateExe = Join-Path $PyEmbedDir "python.exe"
+        if (Test-Path $CandidateExe) {
+            $PythonExe = $CandidateExe
+            Write-Host "[+] Portable Python 3.12 runtime successfully provisioned." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "[!] Portable Python download failed: $_" -ForegroundColor Yellow
     }
-    
+
     if (-not $PythonExe) {
-        Write-Host "[*] Downloading official Python 3.12 installer directly from python.org..." -ForegroundColor Cyan
-        $PyInstaller = Join-Path $env:TEMP "python-installer.exe"
-        $PyUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
-        try {
-            Invoke-WebRequest -Uri $PyUrl -OutFile $PyInstaller -UseBasicParsing
-            Write-Host "[*] Installing Python 3.12 (silent user-level install)..." -ForegroundColor Cyan
-            $p = Start-Process -FilePath $PyInstaller -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0" -Wait -PassThru
-            Remove-Item $PyInstaller -Force -ErrorAction SilentlyContinue
-            Refresh-EnvPath
-            $PythonExe = Find-RealPython
-        } catch {
-            Write-Host "[!] Direct Python download failed: $_" -ForegroundColor Yellow
+        $WingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if ($WingetCmd) {
+            Write-Host "[*] Attempting installation via WinGet..." -ForegroundColor Cyan
+            try {
+                & winget install -e --id Python.Python.3.12 --scope currentuser --accept-source-agreements --accept-package-agreements
+                Refresh-EnvPath
+                $PythonExe = Find-RealPython
+            } catch {}
         }
     }
 }
@@ -109,7 +133,8 @@ if (-not $PythonExe) {
     Write-Host "[X] Error: Python 3 is required to run the CyberVPS Host Agent." -ForegroundColor Red
     Write-Host "    Please install Python 3 (check 'Add python.exe to PATH'):" -ForegroundColor Yellow
     Write-Host "    https://www.python.org/downloads/windows/" -ForegroundColor White
-    exit 1
+    Exit-WithCode 1
+    return
 }
 
 $PyVer = & $PythonExe --version 2>&1
@@ -148,7 +173,8 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
         & git clone --depth 1 $RepoUrl $InstallDir
     } catch {
         Write-Host "[X] Git clone failed. Stopping installation." -ForegroundColor Red
-        exit 1
+        Exit-WithCode 1
+        return
     }
 } else {
     Write-Host "[*] Downloading repository archive from GitHub..." -ForegroundColor Cyan
@@ -164,7 +190,8 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
         Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
     } catch {
         Write-Host "[X] Failed to download repository archive: $_" -ForegroundColor Red
-        exit 1
+        Exit-WithCode 1
+        return
     }
 }
 
