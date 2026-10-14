@@ -144,6 +144,16 @@ async function main() {
     case 'uninstall':
       handleUninstall();
       break;
+    case 'bridge':
+    case 'tunnel':
+      await handleBridge();
+      break;
+    case 'sftp':
+      await handleBridge(22);
+      break;
+    case 'ssh':
+      await handleBridge(22);
+      break;
     case 'version':
     case '-v':
     case '--version':
@@ -168,6 +178,9 @@ Commands:
   stop            Stop running background Host Agent
   restart         Restart background Host Agent
   status          Show agent health, fleet enrollment, and central dashboard
+  bridge          Bridge remote port to local PC (e.g. cybervps bridge SoloA 22)
+  sftp            Direct SFTP bridge shortcut to remote machine
+  ssh             Direct SSH bridge shortcut to remote machine
   doctor          Run system diagnostics, runtime checks, and egress reachability
   logs            View real-time agent execution and streaming logs
   config          View or update backend target URL and tokens
@@ -178,7 +191,8 @@ Commands:
 
 Examples:
   cybervps status               Inspect agent health and central connection
-  cybervps start                Start agent in 24/7 background mode
+  cybervps bridge SoloA 22 2222 Forward remote port 22 to local 127.0.0.1:2222
+  cybervps sftp SoloA           Start SFTP bridge to SoloA
   cybervps logs                 Display recent output from background agent
   cybervps config set server    Change central backend URL
 ================================================================
@@ -587,6 +601,88 @@ function handleUninstall() {
   }
 
   console.log('✅ Background agent removed cleanly. You can remove ~/.cybervps if desired.');
+}
+
+async function handleBridge(defaultRemotePort = null) {
+  const targetMachine = process.argv[3];
+  const remotePort = parseInt(process.argv[4] || defaultRemotePort || '22', 10);
+  const preferredLocalPort = parseInt(process.argv[5] || (remotePort === 22 ? '2222' : String(remotePort)), 10);
+
+  if (!targetMachine) {
+    console.log(`
+🛰️  CYBERVPS PORT BRIDGE (MODE A)
+================================================================
+Usage: cybervps bridge <machine_name_or_id> [remote_port] [local_port]
+       cybervps sftp   <machine_name_or_id> [local_port]
+       cybervps ssh    <machine_name_or_id> [local_port]
+
+Examples:
+  cybervps bridge SoloA 22 2222         # Bridge SoloA SSH/SFTP (port 22) to 127.0.0.1:2222
+  cybervps sftp SoloA                   # Bridge SoloA port 22 and show SFTP connect command
+  cybervps bridge WIN-IK7N6SD2UBU 80    # Bridge Windows web server port 80 to 127.0.0.1:80
+================================================================
+    `);
+    return;
+  }
+
+  const cfg = loadConfig();
+  const serverUrl = cfg.server_url || 'https://cybervps-space-station.up.railway.app';
+
+  console.log(`[*] Resolving machine '${targetMachine}' via ${serverUrl}...`);
+  let resolvedMachineId = targetMachine;
+  let resolvedHostname = targetMachine;
+  try {
+    const machinesRes = await fetchJson(`${serverUrl}/api/v1/machines`, 5000);
+    if (machinesRes && machinesRes.data && Array.isArray(machinesRes.data)) {
+      const matched = machinesRes.data.find(m =>
+        m.id.toLowerCase() === targetMachine.toLowerCase() ||
+        m.hostname.toLowerCase() === targetMachine.toLowerCase() ||
+        (m.friendly_name && m.friendly_name.toLowerCase() === targetMachine.toLowerCase()) ||
+        m.id.toLowerCase().includes(targetMachine.toLowerCase())
+      );
+      if (matched) {
+        resolvedMachineId = matched.id;
+        resolvedHostname = matched.hostname || matched.friendly_name || matched.id;
+        console.log(`[+] Fleet match: [${resolvedHostname}] (${resolvedMachineId}) - Status: ${matched.status}`);
+      } else {
+        console.log(`[!] Notice: '${targetMachine}' not listed in active fleet. Attempting direct ID...`);
+      }
+    }
+  } catch (_) {}
+
+  const bridgePath = path.join(APP_DIR, 'apps', 'windows-client', 'bridge-daemon.js');
+  if (!fs.existsSync(bridgePath)) {
+    console.error(`[X] Error: Bridge daemon not found at ${bridgePath}`);
+    return;
+  }
+
+  const { WindowsPortBridgeClient } = require(bridgePath);
+  const bridge = new WindowsPortBridgeClient({ serverUrl });
+  await bridge.start(false);
+  const mapping = await bridge.addMapping('bridge_' + Date.now(), resolvedMachineId, remotePort, preferredLocalPort);
+
+  console.log('\n================================================================');
+  console.log(`⚡ PORT BRIDGE ESTABLISHED & RUNNING`);
+  console.log(`================================================================`);
+  console.log(`Local Endpoint:  127.0.0.1:${mapping.localPort}`);
+  console.log(`Remote Target:   [${resolvedHostname}]:${remotePort}`);
+  if (remotePort === 22) {
+    console.log(`\nConnect with native SFTP client:`);
+    console.log(`  sftp -P ${mapping.localPort} user@127.0.0.1`);
+    console.log(`\nConnect with native SSH client:`);
+    console.log(`  ssh -p ${mapping.localPort} user@127.0.0.1`);
+  } else {
+    console.log(`\nLocal Web URL:`);
+    console.log(`  http://127.0.0.1:${mapping.localPort}`);
+  }
+  console.log(`================================================================`);
+  console.log(`Relay active across Space Station. Press Ctrl+C to disconnect.\n`);
+
+  process.on('SIGINT', () => {
+    console.log('\n[*] Disconnecting port bridge...');
+    bridge.stop();
+    process.exit(0);
+  });
 }
 
 main().catch(err => {

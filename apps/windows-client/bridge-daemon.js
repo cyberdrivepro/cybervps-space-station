@@ -34,6 +34,8 @@ class WindowsPortBridgeClient {
   constructor(options = {}) {
     this.serverUrl = options.serverUrl || 'http://localhost:8080';
     this.wsUrl = this.serverUrl.replace('http://', 'ws://').replace('https://', 'wss://');
+    this.machineId = options.machineId || ('win_bridge_' + crypto.randomBytes(4).toString('hex'));
+    this.token = options.token || 'cvps_enroll_master_token';
     this.activeMappings = new Map(); // id -> { machineId, remotePort, localPort, server, activeSockets }
     this.relayWs = null;
     this.activeStreams = new Map(); // streamId -> net.Socket
@@ -65,8 +67,8 @@ class WindowsPortBridgeClient {
         this.relayWs.send(JSON.stringify({
           type: 'Auth',
           payload: {
-            machine_id: 'windows_pc_client',
-            token: 'cvps_enroll_master_token',
+            machine_id: this.machineId,
+            token: this.token,
             agent_version: '1.0.0',
             hostname: require('os').hostname(),
             os: 'Windows',

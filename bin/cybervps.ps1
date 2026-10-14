@@ -206,7 +206,25 @@ switch ($Command.ToLower()) {
         Write-Host "CyberVPS Space Station v1.0.0 (win32-x64, powershell)"
     }
 
+    { $_ -in "bridge", "tunnel", "sftp", "ssh" } {
+        $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+        $cliJs = Join-Path $InstallDir "bin\cybervps"
+        if (-not (Test-Path $cliJs)) {
+            $cliJs = Join-Path $BaseDir "space-station\bin\cybervps"
+        }
+        if (-not (Test-Path $cliJs)) {
+            $cliJs = Join-Path (Split-Path -Parent $PSScriptRoot) "bin\cybervps"
+        }
+        if ($nodeCmd -and (Test-Path $cliJs)) {
+            & node $cliJs $Command.ToLower() @ArgsList
+        } else {
+            Write-Host "[!] Node.js is required for local TCP port bridge daemon." -ForegroundColor Yellow
+            Write-Host "    You can access files immediately using the Web File Manager in your browser:" -ForegroundColor Cyan
+            Write-Host "    https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Yellow
+        }
+    }
+
     default {
-        Write-Host "Usage: cybervps <start|stop|restart|status|doctor|logs|version>"
+        Write-Host "Usage: cybervps <start|stop|restart|status|bridge|sftp|ssh|doctor|logs|version>"
     }
 }

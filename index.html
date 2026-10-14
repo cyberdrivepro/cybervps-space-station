@@ -1518,8 +1518,10 @@
               <!-- Interactive Prompt Input -->
               <div class="terminal-prompt-line" id="terminal-prompt-container">
                 <span id="terminal-prompt-prefix" style="color:var(--accent-cyan); font-family:var(--font-mono); font-weight:600; white-space:nowrap;">$&gt;</span>
-                <input type="text" id="terminal-cmd-input" class="terminal-input" placeholder="Type command (Up/Down for history, Ctrl+C to abort, Ctrl+L to clear)..." onkeydown="handleTerminalKey(event)" autocomplete="off" spellcheck="false">
-                <button class="btn btn-primary" onclick="submitTerminalInput()" style="padding:0.3rem 0.85rem; font-size:0.75rem;">Send</button>
+                <form id="terminal-cmd-form" autocomplete="off" onsubmit="event.preventDefault(); submitTerminalInput(); return false;" style="display:flex; flex:1; align-items:center; gap:0.5rem; margin:0; padding:0;" data-lpignore="true" data-form-type="other">
+                  <input type="text" id="terminal-cmd-input" class="terminal-input" placeholder="Type command (Up/Down for history, Ctrl+C to abort, Ctrl+L to clear)..." onkeydown="handleTerminalKey(event)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" name="terminal_cmd_no_save">
+                  <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.85rem; font-size:0.75rem;">Send</button>
+                </form>
               </div>
             </div>
           </div>
@@ -1598,7 +1600,7 @@
 
             <div class="form-group">
               <label class="form-label">Instance Pairing Key (Optional)</label>
-              <input type="password" id="setting-pairing-key" class="form-control" placeholder="cvps_pair_...">
+              <input type="password" id="setting-pairing-key" class="form-control" placeholder="cvps_pair_..." autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" data-form-type="other" name="cvps_settings_auth_key">
               <span style="font-size:0.75rem; color:var(--text-muted);">Cryptographic key required to authorize remote bridge and terminal management over public networks.</span>
             </div>
 
@@ -1671,7 +1673,7 @@
         </div>
       </div>
       <div class="modal-body" style="padding:1rem;">
-        <textarea id="fm-editor-content" class="fm-editor-textarea" placeholder="File content..." spellcheck="false"></textarea>
+        <textarea id="fm-editor-content" class="fm-editor-textarea" placeholder="File content..." spellcheck="false" oninput="updateFmEditorMetrics()"></textarea>
       </div>
       <div class="modal-footer" style="justify-content:space-between;">
         <div id="fm-editor-status" style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono);">Ready</div>
@@ -1739,13 +1741,71 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label class="form-label">File Name (with extension)</label>
-          <input type="text" id="fm-newfile-name" class="form-control" placeholder="e.g. config.json, test.py, index.html" onkeydown="if(event.key==='Enter') submitFmNewFile()">
+          <label class="form-label">File Name</label>
+          <input type="text" id="fm-newfile-name" class="form-control" placeholder="e.g. notes.txt, server.py, index.html" onkeydown="if(event.key==='Enter') submitFmNewFile()">
+          <div style="display:flex; gap:0.35rem; margin-top:0.5rem; flex-wrap:wrap; align-items:center;">
+            <span style="font-size:0.72rem; color:var(--text-muted);">Quick Extensions:</span>
+            <button type="button" class="badge badge-subtle" style="cursor:pointer;" onclick="appendFmExtension('.txt')">.txt</button>
+            <button type="button" class="badge badge-subtle" style="cursor:pointer;" onclick="appendFmExtension('.py')">.py</button>
+            <button type="button" class="badge badge-subtle" style="cursor:pointer;" onclick="appendFmExtension('.sh')">.sh</button>
+            <button type="button" class="badge badge-subtle" style="cursor:pointer;" onclick="appendFmExtension('.json')">.json</button>
+            <button type="button" class="badge badge-subtle" style="cursor:pointer;" onclick="appendFmExtension('.js')">.js</button>
+            <button type="button" class="badge badge-subtle" style="cursor:pointer;" onclick="appendFmExtension('.html')">.html</button>
+            <button type="button" class="badge badge-subtle" style="cursor:pointer;" onclick="appendFmExtension('.log')">.log</button>
+          </div>
+          <span style="font-size:0.72rem; color:var(--text-muted); display:block; margin-top:0.35rem;">If no extension is specified, <code>.txt</code> will be added automatically.</span>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeFmNewFileModal()">Cancel</button>
         <button class="btn btn-primary" onclick="submitFmNewFile()">Create File</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: SFTP & REMOTE ACCESS GUIDE -->
+  <div id="modal-sftp" class="modal-backdrop">
+    <div class="modal" style="max-width:560px;">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <strong id="modal-sftp-title" style="color:var(--text-primary); font-size:1rem;">SFTP & File Transfer Access</strong>
+        </div>
+        <button class="btn-icon" onclick="closeSftpModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="font-size:0.85rem; line-height:1.5;">
+        <div style="background:rgba(0,255,157,0.06); border:1px solid rgba(0,255,157,0.25); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1rem;">
+          <strong style="color:var(--accent-cyan);">📁 Option 1: Built-in Web File Manager (Direct in Browser)</strong>
+          <div style="color:var(--text-muted); font-size:0.8rem; margin-top:0.25rem;">
+            No terminal or SSH software needed! You are already in the Web File Manager. Browse directories below, upload files via <strong>⬆️ Upload</strong>, download files, or edit live in the code editor.
+          </div>
+        </div>
+
+        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1rem;">
+          <strong style="color:var(--text-primary);">⚡ Option 2: Native SFTP / SSH (FileZilla, WinSCP, OpenSSH, VS Code)</strong>
+          <div style="color:var(--text-muted); font-size:0.8rem; margin-top:0.25rem;">
+            Because remote hosts are behind NAT/firewalls, bridge remote port 22 to your PC:
+          </div>
+          <div style="background:rgba(0,0,0,0.5); padding:0.5rem 0.75rem; border-radius:4px; font-family:var(--font-mono); font-size:0.78rem; margin:0.5rem 0; display:flex; justify-content:space-between; align-items:center;">
+            <code id="sftp-bridge-cmd">cybervps bridge SoloA 22 2222</code>
+            <button class="btn btn-secondary" style="padding:0.2rem 0.5rem; font-size:0.72rem;" onclick="copySftpBridgeCmd()">Copy</button>
+          </div>
+          <div style="color:var(--text-muted); font-size:0.8rem;">Then connect directly to localhost:</div>
+          <div style="background:rgba(0,0,0,0.5); padding:0.5rem 0.75rem; border-radius:4px; font-family:var(--font-mono); font-size:0.78rem; margin:0.5rem 0; display:flex; justify-content:space-between; align-items:center;">
+            <code id="sftp-connect-cmd">sftp -P 2222 user@127.0.0.1</code>
+            <button class="btn btn-secondary" style="padding:0.2rem 0.5rem; font-size:0.72rem;" onclick="copySftpConnectCmd()">Copy</button>
+          </div>
+        </div>
+
+        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:0.75rem 1rem;">
+          <strong style="color:var(--text-muted);">🌐 Option 3: Mesh Virtual IP (Mode B)</strong>
+          <div style="color:var(--text-muted); font-size:0.78rem; margin-top:0.25rem;">
+            Internal Virtual IP: <code id="sftp-mesh-ip">10.77.0.3:22</code>. Note: Windows cannot route virtual IPs directly without the local CyberVPS port bridge (Option 2).
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeSftpModal()">Close</button>
       </div>
     </div>
   </div>
@@ -3934,13 +3994,61 @@
       renderFileManagerTable();
     }
 
-    function copySftpCommand() {
+    function openSftpModal() {
       const m = appState.machines.find(x => x.id === appState.selectedMachineId);
-      const host = m?.virtual_ip || m?.network?.public_ip || '127.0.0.1';
-      const cmd = `sftp -P 22 user@${host}`;
-      navigator.clipboard.writeText(cmd).then(() => {
-        showToast(`SFTP command copied: ${cmd}`, 'success');
-      }).catch(() => showToast('Failed to copy SFTP command', 'error'));
+      const name = m?.hostname || m?.friendly_name || m?.id || 'target_machine';
+      const vip = m?.virtual_ip || '10.77.0.x';
+      const title = document.getElementById('modal-sftp-title');
+      if (title) title.innerText = `SFTP & File Transfer Access [${name}]`;
+      const bridgeCmdEl = document.getElementById('sftp-bridge-cmd');
+      if (bridgeCmdEl) bridgeCmdEl.innerText = `cybervps bridge ${name} 22 2222`;
+      const connectCmdEl = document.getElementById('sftp-connect-cmd');
+      if (connectCmdEl) connectCmdEl.innerText = `sftp -P 2222 user@127.0.0.1`;
+      const meshIpEl = document.getElementById('sftp-mesh-ip');
+      if (meshIpEl) meshIpEl.innerText = `${vip}:22`;
+      document.getElementById('modal-sftp').style.display = 'flex';
+    }
+
+    function closeSftpModal() {
+      document.getElementById('modal-sftp').style.display = 'none';
+    }
+
+    function copySftpBridgeCmd() {
+      const txt = document.getElementById('sftp-bridge-cmd')?.innerText;
+      if (txt) {
+        navigator.clipboard.writeText(txt).then(() => showToast('Copied bridge command: ' + txt, 'success'));
+      }
+    }
+
+    function copySftpConnectCmd() {
+      const txt = document.getElementById('sftp-connect-cmd')?.innerText;
+      if (txt) {
+        navigator.clipboard.writeText(txt).then(() => showToast('Copied SFTP command: ' + txt, 'success'));
+      }
+    }
+
+    function copySftpCommand() {
+      openSftpModal();
+    }
+
+    function appendFmExtension(ext) {
+      const inp = document.getElementById('fm-newfile-name');
+      if (!inp) return;
+      let val = inp.value.trim();
+      if (!val) val = 'untitled';
+      val = val.replace(/\.[a-zA-Z0-9]+$/, '') + ext;
+      inp.value = val;
+      inp.focus();
+    }
+
+    function updateFmEditorMetrics() {
+      const content = document.getElementById('fm-editor-content')?.value || '';
+      const bytes = new Blob([content]).size;
+      const lines = content.split('\n').length;
+      const badge = document.getElementById('fm-editor-size-badge');
+      if (badge) badge.innerText = formatBytes(bytes);
+      const status = document.getElementById('fm-editor-status');
+      if (status) status.innerText = `Editing • ${lines} lines • ${formatBytes(bytes)}`;
     }
 
     async function openFileInEditor(path, name, size) {
@@ -3963,7 +4071,9 @@
       }
 
       document.getElementById('fm-editor-content').value = res.data.content;
-      document.getElementById('fm-editor-status').innerText = `Ready • ${res.data.encoding || 'UTF-8'} • ${res.data.lines || 0} lines`;
+      const actualBytes = new Blob([res.data.content || '']).size;
+      document.getElementById('fm-editor-size-badge').innerText = formatBytes(actualBytes);
+      document.getElementById('fm-editor-status').innerText = `Ready • ${res.data.encoding || 'UTF-8'} • ${res.data.lines || 0} lines • ${formatBytes(actualBytes)}`;
       document.getElementById('fm-editor-content').focus();
     }
 
@@ -3993,7 +4103,9 @@
         return;
       }
 
-      document.getElementById('fm-editor-status').innerText = `Saved successfully at ${new Date().toLocaleTimeString()}!`;
+      const savedBytes = new Blob([content]).size;
+      document.getElementById('fm-editor-status').innerText = `Saved successfully at ${new Date().toLocaleTimeString()}! (${formatBytes(savedBytes)})`;
+      document.getElementById('fm-editor-size-badge').innerText = formatBytes(savedBytes);
       showToast('File saved successfully!', 'success');
       fmRefresh();
     }
@@ -4124,8 +4236,11 @@
     }
 
     async function submitFmNewFile() {
-      const name = document.getElementById('fm-newfile-name').value.trim();
+      let name = document.getElementById('fm-newfile-name').value.trim();
       if (!name) return showToast('Please enter a file name', 'warning');
+      if (!name.includes('.')) {
+        name += '.txt';
+      }
 
       let targetPath = appState.currentFmPath;
       const sep = targetPath.includes('\\') ? '\\' : '/';
@@ -4310,9 +4425,11 @@
 
     function renderProcessSummaryKpis() {
       const summary = appState.procSummary || {};
-      const cpuVal = summary.host_cpu_percent !== undefined ? summary.host_cpu_percent : 0;
-      const memUsed = summary.host_mem_used_mb || 0;
-      const memTotal = summary.host_mem_total_mb || 0;
+      const m = appState.machines.find(x => x.id === appState.selectedProcMachineId);
+      const tel = m?.telemetry || {};
+      const cpuVal = (summary.host_cpu_percent !== undefined && summary.host_cpu_percent > 0) ? summary.host_cpu_percent : (tel.cpu_percent || 0);
+      const memUsed = (summary.host_mem_used_mb && summary.host_mem_used_mb > 0) ? summary.host_mem_used_mb : (tel.memory_used_mb || 0);
+      const memTotal = (summary.host_mem_total_mb && summary.host_mem_total_mb > 0) ? summary.host_mem_total_mb : (tel.memory_total_mb || 0);
       const memPct = memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0;
 
       const cpuEl = document.getElementById('kpi-proc-cpu');

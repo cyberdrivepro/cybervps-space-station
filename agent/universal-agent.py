@@ -1164,7 +1164,9 @@ class CyberVPSAgent:
     def handle_file_read(self, payload):
         req_id = payload.get("request_id")
         raw_path = payload.get("path")
-        max_bytes = payload.get("max_bytes", 5 * 1024 * 1024)
+        is_download = bool(payload.get("download", False))
+        default_max = 500 * 1024 * 1024 if is_download else (25 * 1024 * 1024)
+        max_bytes = payload.get("max_bytes", default_max)
         try:
             target_path = self._sanitize_path(raw_path)
             if not os.path.isfile(target_path):
@@ -1172,7 +1174,11 @@ class CyberVPSAgent:
 
             size = os.path.getsize(target_path)
             if size > max_bytes:
-                raise ValueError(f"File size ({round(size / 1024 / 1024, 2)} MB) exceeds preview limit of 5 MB.")
+                limit_mb = round(max_bytes / 1024 / 1024)
+                if is_download:
+                    raise ValueError(f"File size ({round(size / 1024 / 1024, 2)} MB) exceeds download limit of {limit_mb} MB.")
+                else:
+                    raise ValueError(f"File size ({round(size / 1024 / 1024, 2)} MB) exceeds preview limit of {limit_mb} MB. Use Download to retrieve this file.")
 
             with open(target_path, "rb") as f:
                 raw = f.read()
@@ -1352,6 +1358,15 @@ class CyberVPSAgent:
             host_mem_total = 0
             cores = os.cpu_count() or 1
 
+            # Natively collect host metrics so CPU and RAM are non-zero even without psutil
+            try:
+                metrics = self.get_system_metrics()
+                host_cpu = round(metrics.get("cpu_usage", 0.0), 1)
+                host_mem_used = round(metrics.get("memory_used_bytes", 0) / (1024 * 1024), 1)
+                host_mem_total = round(metrics.get("memory_total_bytes", 0) / (1024 * 1024), 1)
+            except Exception:
+                pass
+
             if psutil:
                 try:
                     host_cpu = round(psutil.cpu_percent(interval=None), 1)
@@ -1395,30 +1410,35 @@ class CyberVPSAgent:
                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                         continue
             elif platform.system() == "Windows":
+                # Fast tasklist (0.2s runtime) ensures Windows Server never times out
                 try:
-                    out = subprocess.check_output(["tasklist", "/V", "/FO", "CSV", "/NH"], timeout=4).decode("utf-8", errors="ignore")
+                    out = subprocess.check_output(["tasklist", "/FO", "CSV", "/NH"], timeout=5).decode("utf-8", errors="ignore")
                     reader = csv.reader(io.StringIO(out))
                     for row in reader:
-                        if len(row) >= 8:
-                            pid = int(row[1])
-                            name = row[0]
-                            user = row[6] if len(row) > 6 else row[2]
-                            if search and (search not in name.lower() and search not in str(pid) and search not in user.lower()):
+                        if len(row) >= 5:
+                            try:
+                                pid = int(row[1])
+                            except ValueError:
                                 continue
-                            mem_str = row[4].replace(",", "").replace(" K", "").replace(" ", "")
+                            name = row[0]
+                            session = row[2]
+                            if search and (search not in name.lower() and search not in str(pid) and search not in session.lower()):
+                                continue
+                            mem_str = row[4].replace(",", "").replace(" K", "").replace(" ", "").replace("\xa0", "")
                             try:
                                 mem_mb = round(int(mem_str) / 1024, 1)
                             except ValueError:
-                                mem_mb = 0
+                                mem_mb = 0.0
+                            mem_pct = round((mem_mb / host_mem_total) * 100, 1) if host_mem_total > 0 else 0.0
                             procs.append({
                                 "pid": pid,
                                 "ppid": 0,
                                 "name": name,
-                                "user": user,
+                                "user": session,
                                 "cpu_percent": 0.0,
                                 "memory_mb": mem_mb,
-                                "memory_percent": 0.0,
-                                "status": row[5] if len(row) > 5 else "Running",
+                                "memory_percent": mem_pct,
+                                "status": "Running",
                                 "threads": 1,
                                 "create_time": 0
                             })

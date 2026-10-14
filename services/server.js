@@ -728,7 +728,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     try {
-      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, max_bytes: 50 * 1024 * 1024 }, 25000);
+      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, download: true, max_bytes: 500 * 1024 * 1024 }, 60000);
       const filename = data.filename || 'download';
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
       if (data.is_binary && data.content_base64) {
@@ -839,6 +839,12 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const data = await sendAgentRequest(machineId, 'ProcessList', { search, sort, limit }, 15000);
+      const m = db.machines.get(machineId);
+      if (m && m.telemetry) {
+        if (!data.host_cpu_percent && m.telemetry.cpu_percent) data.host_cpu_percent = m.telemetry.cpu_percent;
+        if (!data.host_mem_used_mb && m.telemetry.memory_used_mb) data.host_mem_used_mb = m.telemetry.memory_used_mb;
+        if (!data.host_mem_total_mb && m.telemetry.memory_total_mb) data.host_mem_total_mb = m.telemetry.memory_total_mb;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {
