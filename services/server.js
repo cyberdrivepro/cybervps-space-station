@@ -92,7 +92,8 @@ const db = {
   hostingProjects: new Map(), // project_id -> { id, name, runtime, domain, status, created_at, last_deployed, env_vars, build_cmd, start_cmd }
   hostingDeployments: new Map(), // deploy_id -> { id, project_id, status, logs, created_at }
   domains: new Map(), // domain_name -> { domain, project_id, target_backend, status, ssl_ready, verification_code, created_at }
-  plugins: new Map() // plugin_id -> { id, name, version, enabled, description, capabilities }
+  plugins: new Map(), // plugin_id -> { id, name, version, enabled, description, capabilities }
+  appInventories: new Map() // machine_id -> { apps, timestamp, os_type, total, running, stopped }
 };
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
@@ -193,11 +194,31 @@ function initDefaultPlatformState() {
   if (db.backends.size === 0) {
     db.backends.set('be_primary_local', {
       id: 'be_primary_local',
-      name: 'Primary Gateway (Local/Current)',
-      url: `http://127.0.0.1:${port}`,
+      name: 'Primary Gateway (Local / Current)',
+      url: process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${port}`,
       role: 'primary',
       state: 'healthy',
       latency_ms: 2,
+      last_check: new Date().toISOString(),
+      failures_count: 0
+    });
+    db.backends.set('be_railway_cloud', {
+      id: 'be_railway_cloud',
+      name: 'Primary Gateway (Railway Cloud)',
+      url: 'https://cybervps-space-station.up.railway.app',
+      role: 'primary',
+      state: 'healthy',
+      latency_ms: 8,
+      last_check: new Date().toISOString(),
+      failures_count: 0
+    });
+    db.backends.set('be_render_cloud', {
+      id: 'be_render_cloud',
+      name: 'Secondary Gateway (Render Cloud)',
+      url: 'https://cybervps-render-control.onrender.com',
+      role: 'secondary',
+      state: 'healthy',
+      latency_ms: 24,
       last_check: new Date().toISOString(),
       failures_count: 0
     });
@@ -1040,7 +1061,18 @@ const server = http.createServer(async (req, res) => {
     }
 
     const mStatus = getMachineStatus(machine);
+    const cached = db.appInventories.get(machineId);
     if (mStatus === 'offline') {
+      if (cached && (cached.apps || cached.applications)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ...cached,
+          offline: true,
+          cached: true,
+          warning: `Host machine '${machineId}' is offline. Displaying cached inventory from ${new Date(cached.timestamp || Date.now()).toLocaleTimeString()}.`
+        }));
+        return;
+      }
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         error: `Host machine '${machineId}' is offline. Please start or reconnect the CyberVPS agent service.`,
@@ -1051,12 +1083,44 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Fast-path: Return cached inventory instantly (<5ms) and asynchronously refresh in background
+    if (cached && !refresh && (Date.now() - (cached.timestamp || 0) < 300000) && (cached.apps || cached.applications)?.length > 0) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ...cached,
+        cached: true,
+        age_seconds: Math.round((Date.now() - (cached.timestamp || 0)) / 1000)
+      }));
+      // Asynchronous background cache refresh
+      sendAgentRequest(machineId, 'AppList', { refresh: false }, 15000).then(fresh => {
+        if (fresh && (fresh.apps || fresh.applications)) {
+          db.appInventories.set(machineId, { ...fresh, timestamp: Date.now() });
+        }
+      }).catch(() => {});
+      return;
+    }
+
     try {
       const data = await sendAgentRequest(machineId, 'AppList', { refresh }, 10000);
+      if (data && (data.apps || data.applications)) {
+        db.appInventories.set(machineId, { ...data, timestamp: Date.now() });
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {
       const isTimeout = err.message && err.message.includes('timed out');
+      if (cached && (cached.apps || cached.applications)?.length > 0) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ...cached,
+          cached: true,
+          timeout: isTimeout,
+          ota_available: true,
+          ota_version: '2.1.1',
+          warning: isTimeout ? `Live query timed out after 10s. Showing cached inventory. Trigger OTA update to upgrade agent.` : err.message
+        }));
+        return;
+      }
       const baseline = getBaselineAppsForOs(machine.os);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -1069,6 +1133,8 @@ const server = http.createServer(async (req, res) => {
         applications: baseline,
         fallback: true,
         timeout: isTimeout,
+        ota_available: true,
+        ota_version: '2.1.1',
         warning: isTimeout
           ? `Host request 'AppList' timed out after 10000ms. Displaying baseline system applications. Update host agent to universal-agent v2.1+ for live dynamic inventory.`
           : err.message,
@@ -2712,6 +2778,138 @@ while True:
       'Content-Length': Buffer.byteLength(rdpContent)
     });
     res.end(rdpContent);
+    return;
+  }
+
+  // =========================================================================
+  // OVER-THE-AIR (OTA) SILENT FLEET UPDATE & RECONCILIATION API
+  // =========================================================================
+  if (pathname === '/api/v1/ota/latest' && method === 'GET') {
+    let sha = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    try {
+      const agentPath = path.join(__dirname, '..', 'agent', 'universal-agent.py');
+      if (fs.existsSync(agentPath)) {
+        sha = crypto.createHash('sha256').update(fs.readFileSync(agentPath)).digest('hex');
+      }
+    } catch (_) {}
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      version: '2.1.1',
+      protocol_version: '2.1.0',
+      release_tag: 'v2.1.1',
+      published_at: new Date().toISOString(),
+      download_url: '/api/v1/ota/download/universal-agent.py',
+      sha256: sha,
+      features: [
+        'ota_silent_self_update',
+        'prewarmed_app_cache',
+        'render_secondary_failover',
+        'session_0_desktop_bypass'
+      ],
+      changelog: 'Automatic Over-the-Air (OTA) updates, Render secondary HA backend support, instant cached AppList.'
+    }));
+    return;
+  }
+
+  if (pathname === '/api/v1/ota/download/universal-agent.py' && method === 'GET') {
+    const agentPath = path.join(__dirname, '..', 'agent', 'universal-agent.py');
+    if (fs.existsSync(agentPath)) {
+      const content = fs.readFileSync(agentPath, 'utf8');
+      res.writeHead(200, {
+        'Content-Type': 'text/x-python',
+        'Content-Disposition': 'attachment; filename="universal-agent.py"'
+      });
+      res.end(content);
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'universal-agent.py not found on control plane' }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/fleet/ota-update' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const targetMachineId = payload.machine_id;
+        const targetVersion = payload.target_version || '2.1.1';
+        const force = !!payload.force;
+
+        let targetAgents = [];
+        if (targetMachineId) {
+          const ws = db.connectedAgents.get(targetMachineId);
+          if (!ws) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Agent '${targetMachineId}' is not currently connected.` }));
+            return;
+          }
+          targetAgents.push({ machineId: targetMachineId, ws });
+        } else {
+          for (const [mid, ws] of db.connectedAgents.entries()) {
+            targetAgents.push({ machineId: mid, ws });
+          }
+        }
+
+        let dispatched = 0;
+        for (const { machineId, ws } of targetAgents) {
+          try {
+            if (ws && (ws.readyState === 1 || ws.readyState === (ws.OPEN || 1))) {
+              ws.send(JSON.stringify({
+                type: 'OtaUpdate',
+                payload: {
+                  download_url: '/api/v1/ota/download/universal-agent.py',
+                  target_version: targetVersion,
+                  force: force,
+                  timestamp: new Date().toISOString()
+                }
+              }));
+              dispatched++;
+              const m = db.machines.get(machineId);
+              if (m) m.ota_status = 'updating';
+            }
+          } catch (_) {}
+        }
+
+        logAudit('ota_update_fleet_dispatched', 'admin', targetMachineId || 'fleet', `Dispatched OTA update v${targetVersion} to ${dispatched} host(s)`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          dispatched_count: dispatched,
+          target_version: targetVersion,
+          message: `OTA update to v${targetVersion} successfully dispatched to ${dispatched} connected agent(s). Agents will silently self-update and reconcile.`
+        }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/fleet/ota-status' && method === 'GET') {
+    const list = Array.from(db.machines.values()).map(m => {
+      const isConnected = db.connectedAgents.has(m.id);
+      return {
+        machine_id: m.id,
+        hostname: m.hostname || m.id,
+        os: m.os,
+        agent_version: m.agent_version || '2.1.0',
+        latest_version: '2.1.1',
+        is_up_to_date: (m.agent_version === '2.1.1'),
+        status: isConnected ? (m.ota_status || (m.agent_version === '2.1.1' ? 'up_to_date' : 'ready_for_update')) : 'offline',
+        last_seen: m.last_seen
+      };
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      latest_version: '2.1.1',
+      total_enrolled: list.length,
+      up_to_date_count: list.filter(n => n.is_up_to_date).length,
+      connected_count: db.connectedAgents.size,
+      nodes: list
+    }));
     return;
   }
 

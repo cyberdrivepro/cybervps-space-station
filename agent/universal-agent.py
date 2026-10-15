@@ -94,9 +94,9 @@ if sys.version_info >= (3, 7):
     except Exception:
         pass
 
-PROTOCOL_VERSION = "2.1.0"
+PROTOCOL_VERSION = "2.1.1"
 AGENT_CAPABILITIES = [
-    "apps", "desktop_launch", "wireguard", "docker", "sandboxes", "rdp", "vnc", "terminal", "file_manager", "interactive_gui"
+    "apps", "desktop_launch", "wireguard", "docker", "sandboxes", "rdp", "vnc", "terminal", "file_manager", "interactive_gui", "ota_update"
 ]
 
 
@@ -574,9 +574,15 @@ class CyberVPSAgent:
         self._prev_linux_stat = None
         self.device_profile = {}
         self.ws_relay = None
-        self.ws_connected = False
         self._drives_cache = {"data": [], "timestamp": 0}
         self._disk_cache = {}
+        self._cached_apps_list = None
+        self._cached_apps_time = 0
+        try:
+            threading.Thread(target=self._prewarm_apps_inventory, daemon=True).start()
+            threading.Thread(target=self._periodic_ota_check_loop, daemon=True).start()
+        except Exception:
+            pass
 
     def _detect_local_username(self):
         user = os.environ.get("USERNAME") or os.environ.get("USER") or os.environ.get("LOGNAME")
@@ -3326,20 +3332,150 @@ class CyberVPSAgent:
             except Exception:
                 return False
 
+    def _prewarm_apps_inventory(self):
+        try:
+            sys_os = platform.system()
+            if sys_os == "Windows":
+                apps = self._discover_windows_applications()
+            else:
+                apps = self._discover_linux_applications()
+            if apps:
+                self._cached_apps_list = apps
+                self._cached_apps_time = time.time()
+        except Exception:
+            pass
+
     def handle_app_list(self, payload):
         req_id = payload.get("request_id")
         try:
             force_refresh = bool(payload.get("refresh", False))
-            inv = self.get_application_inventory(force_refresh=force_refresh)
+            inv = self.get_application_inventory(force_refresh=False)
             self.send_agent_event({
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": inv}
             })
+            if force_refresh:
+                threading.Thread(target=self._prewarm_apps_inventory, daemon=True).start()
         except Exception as e:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": False, "error": str(e)}
             })
+
+    def handle_ota_update(self, payload):
+        req_id = payload.get("request_id")
+        download_url = payload.get("download_url")
+        target_version = payload.get("target_version", "2.1.1")
+        force = bool(payload.get("force", False))
+
+        if req_id:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "result": {
+                        "status": "ota_accepted",
+                        "current_version": PROTOCOL_VERSION,
+                        "target_version": target_version
+                    }
+                }
+            })
+
+        threading.Thread(target=self._perform_silent_ota_update, args=(download_url, target_version, force), daemon=False).start()
+
+    def _perform_silent_ota_update(self, download_url=None, target_version="2.1.1", force=False):
+        try:
+            print(f"[*] Starting silent Over-the-Air (OTA) update to v{target_version}...")
+            if not download_url:
+                download_url = f"{self.http_base}/api/v1/ota/download/universal-agent.py"
+            elif not download_url.startswith("http"):
+                download_url = f"{self.http_base}{download_url if download_url.startswith('/') else '/' + download_url}"
+
+            script_path = os.path.abspath(__file__)
+            temp_path = f"{script_path}.new"
+            backup_path = f"{script_path}.bak"
+
+            req = urllib.request.Request(download_url, headers={"User-Agent": f"CyberVPS-OTA-Agent/{PROTOCOL_VERSION}"})
+            ctx = ssl._create_unverified_context() if hasattr(ssl, "_create_unverified_context") else None
+            with urllib.request.urlopen(req, context=ctx, timeout=25) as resp:
+                if resp.status != 200:
+                    raise Exception(f"HTTP {resp.status} while downloading OTA update")
+                content = resp.read()
+
+            if len(content) < 30000:
+                raise Exception(f"Downloaded payload ({len(content)} bytes) too small to be valid universal-agent")
+
+            with open(temp_path, "wb") as f:
+                f.write(content)
+
+            import py_compile
+            try:
+                py_compile.compile(temp_path, doraise=True)
+            except Exception as e:
+                if os.path.exists(temp_path):
+                    try: os.remove(temp_path)
+                    except Exception: pass
+                raise Exception(f"Downloaded agent failed Python syntax validation: {e}")
+
+            if os.path.exists(script_path):
+                try: shutil.copyfile(script_path, backup_path)
+                except Exception: pass
+
+            os.replace(temp_path, script_path)
+            print(f"[+] OTA binary replaced successfully. Spawning self-updated agent process v{target_version}...")
+
+            self.send_agent_event({
+                "type": "OtaUpdateEvent",
+                "payload": {
+                    "machine_id": self.machine_id,
+                    "status": "restarting_for_update",
+                    "old_version": PROTOCOL_VERSION,
+                    "new_version": target_version
+                }
+            })
+
+            time.sleep(0.5)
+
+            cmd = [sys.executable, script_path] + sys.argv[1:]
+            if platform.system() == "Windows":
+                DETACHED = 0x00000008
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                subprocess.Popen(cmd, creationflags=DETACHED | CREATE_NEW_PROCESS_GROUP, close_fds=True)
+            else:
+                subprocess.Popen(cmd, start_new_session=True, close_fds=True)
+
+            print("[+] Exiting old agent instance. New version launched cleanly.")
+            os._exit(0)
+        except Exception as err:
+            print(f"[!] OTA update failed: {err}")
+            self.send_agent_event({
+                "type": "OtaUpdateEvent",
+                "payload": {
+                    "machine_id": self.machine_id,
+                    "status": "failed",
+                    "error": str(err)
+                }
+            })
+
+    def _periodic_ota_check_loop(self):
+        time.sleep(45)
+        while self.running:
+            try:
+                check_url = f"{self.http_base}/api/v1/ota/latest"
+                req = urllib.request.Request(check_url, headers={"User-Agent": f"CyberVPS-OTA-Agent/{PROTOCOL_VERSION}"})
+                ctx = ssl._create_unverified_context() if hasattr(ssl, "_create_unverified_context") else None
+                with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        remote_ver = data.get("version")
+                        if remote_ver and remote_ver > PROTOCOL_VERSION:
+                            print(f"[*] OTA periodic check detected new version {remote_ver} (current: {PROTOCOL_VERSION}). Updating silently...")
+                            self._perform_silent_ota_update(data.get("download_url"), remote_ver)
+                            break
+            except Exception:
+                pass
+            time.sleep(600)
 
     def handle_app_action(self, payload):
         req_id = payload.get("request_id")
@@ -4381,6 +4517,8 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_app_list, args=(payload,), daemon=True).start()
         elif c_type == "AppAction":
             threading.Thread(target=self.handle_app_action, args=(payload,), daemon=True).start()
+        elif c_type in ["OtaUpdate", "OtaCheck", "FleetUpdate"]:
+            threading.Thread(target=self.handle_ota_update, args=(payload,), daemon=True).start()
         elif c_type == "TunnelOpenStream":
             self.handle_tunnel_open(
                 payload.get("tunnel_id"),

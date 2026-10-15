@@ -1949,7 +1949,10 @@
               </select>
               <button class="btn btn-secondary" onclick="syncAppsInventory(true)" title="Force Rescan Applications">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                <span>Rescan OS Apps</span>
+                <span>Rescan</span>
+              </button>
+              <button class="btn btn-primary" onclick="triggerHostOtaUpdate()" style="font-size:0.78rem; padding:0.35rem 0.75rem;" title="Silent Over-the-Air Auto Update Host Agent">
+                🚀 Silent OTA Update
               </button>
             </div>
           </div>
@@ -2012,10 +2015,13 @@
               <div class="card-title">Multi-Backend High Availability (HA) Manager</div>
               <div class="card-desc">Distributed mesh across 5+ independent backends with automatic health checks, circuit breakers, and zero-downtime failover routing</div>
             </div>
-            <div style="display:flex; align-items:center; gap:0.6rem;">
+            <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
               <button class="btn btn-secondary" onclick="testAllBackends()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 <span>Health Check Mesh</span>
+              </button>
+              <button class="btn btn-secondary" onclick="triggerFleetOtaUpdate()" title="Dispatches silent OTA update to all connected agents">
+                <span>🚀 Fleet OTA Update</span>
               </button>
               <button class="btn btn-primary" onclick="openAddBackendModal()">+ Register Backend</button>
             </div>
@@ -3043,6 +3049,7 @@
     }
 
     const defaultRailway = 'https://cybervps-space-station.up.railway.app';
+    const defaultRender = 'https://cybervps-render-control.onrender.com';
     const isGitHubPages = window.location.hostname.endsWith('github.io');
     const defaultOrigin = isGitHubPages ? defaultRailway : (window.location.origin.startsWith('http') ? window.location.origin : defaultRailway);
 
@@ -6973,7 +6980,16 @@
         if (bannerEl) {
           if (data.warning || data.fallback) {
             bannerEl.style.display = 'block';
-            bannerEl.innerHTML = `⚠️ <strong>Baseline Applications:</strong> ${escapeHtml(data.warning || 'Displaying platform baseline applications.')} <span style="margin-left:8px; opacity:0.85;">Update host agent via <code>cybervps update</code> for live dynamic inventory.</span>`;
+            bannerEl.innerHTML = `
+              <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.6rem;">
+                <div>
+                  ⚠️ <strong>Application Inventory Notice:</strong> ${escapeHtml(data.warning || 'Displaying platform baseline applications.')}
+                </div>
+                <button class="btn btn-primary" onclick="triggerHostOtaUpdate('${escapeHtml(machineId)}')" style="font-size:0.75rem; padding:0.3rem 0.75rem; background:#eab308; color:#000; font-weight:700; border:none; border-radius:var(--radius-sm);">
+                  🚀 Silent OTA Update Host to v2.1.1
+                </button>
+              </div>
+            `;
           } else {
             bannerEl.style.display = 'none';
           }
@@ -6983,20 +6999,21 @@
       } catch (err) {
         showToast(err.message, 'error');
         if (grid) {
-          const isTimeout = err.message && (err.message.includes('timed out') || err.message.includes('15000ms'));
+          const isTimeout = err.message && (err.message.includes('timed out') || err.message.includes('15000ms') || err.message.includes('10000ms'));
           const isOffline = err.message && (err.message.includes('offline') || err.message.includes('503'));
           grid.innerHTML = `
             <div style="grid-column:1/-1; background:var(--bg-surface); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:2.5rem 1.5rem; text-align:center;">
               <div style="font-size:2.2rem; margin-bottom:0.75rem;">${isOffline ? '🔌' : (isTimeout ? '⏱️' : '⚠️')}</div>
               <div style="font-size:1.05rem; font-weight:700; color:var(--text-primary); margin-bottom:0.5rem;">
-                ${isOffline ? 'Target Host Machine is Offline' : (isTimeout ? 'Application Scan Timed Out (15s)' : 'Failed to Retrieve Applications')}
+                ${isOffline ? 'Target Host Machine is Offline' : (isTimeout ? 'Application Scan Timed Out' : 'Failed to Retrieve Applications')}
               </div>
               <div style="font-size:0.82rem; color:var(--text-muted); max-width:540px; margin:0 auto 1.5rem;">
                 ${escapeHtml(err.message)}
-                ${isTimeout ? '<br><span style="margin-top:0.4rem; display:inline-block; color:var(--text-secondary);">The host agent may be temporarily busy, paused, or running an older revision without Remote Application Manager support.</span>' : ''}
+                ${isTimeout ? '<br><span style="margin-top:0.4rem; display:inline-block; color:var(--text-secondary);">The host agent may be busy, paused, or running an older revision. Click below to trigger a silent Over-the-Air (OTA) update without logging into the machine.</span>' : ''}
               </div>
               <div style="display:flex; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
                 <button class="btn btn-primary" onclick="syncAppsInventory(true)">🔄 Retry Application Scan</button>
+                <button class="btn btn-secondary" onclick="triggerHostOtaUpdate('${escapeHtml(machineId)}')" style="border-color:#eab308; color:#fef08a; font-weight:600;">🚀 Silent OTA Update Host</button>
                 <button class="btn btn-secondary" onclick="navigate('terminal')">💻 Open Terminal</button>
                 <button class="btn btn-secondary" onclick="navigate('machines')">🛰️ View Fleet Status</button>
               </div>
@@ -7008,6 +7025,47 @@
             </div>
           `;
         }
+      }
+    }
+
+    async function triggerHostOtaUpdate(machineId) {
+      const mid = machineId || document.getElementById('apps-machine-select')?.value || appState.selectedMachineId || (appState.machines[0]?.id);
+      if (!mid) return showToast('No target machine selected for OTA update', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      showToast(`Dispatching silent Over-the-Air (OTA) update to node ${mid}...`, 'info');
+      try {
+        const res = await fetch(`${base}/api/v1/fleet/ota-update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: mid, target_version: '2.1.1' })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to dispatch OTA update');
+        showToast('OTA update dispatched! Host agent will silently update and restart in ~3s. Refreshing inventory...', 'success');
+        setTimeout(() => {
+          syncAppsInventory(true);
+        }, 4000);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function triggerFleetOtaUpdate() {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      showToast('Dispatching fleet-wide silent OTA update to all enrolled nodes...', 'info');
+      try {
+        const res = await fetch(`${base}/api/v1/fleet/ota-update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_version: '2.1.1', force: true })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to dispatch fleet OTA update');
+        showToast(data.message || 'OTA update dispatched across entire fleet!', 'success');
+        if (typeof syncBackends === 'function') syncBackends();
+      } catch (err) {
+        showToast(err.message, 'error');
       }
     }
 
