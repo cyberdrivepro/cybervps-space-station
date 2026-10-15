@@ -2914,6 +2914,10 @@ if __name__ == "__main__":
                     token = cfg["token"]
                 if cfg.get("machine_id"):
                     mid = cfg["machine_id"]
+                if cfg.get("proxy"):
+                    for k in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+                        if not os.environ.get(k):
+                            os.environ[k] = cfg["proxy"]
         except Exception as e:
             print(f"[!] Warning reading config {cfg_path}: {e}")
 
@@ -2943,6 +2947,10 @@ if __name__ == "__main__":
                             token = c_data["token"]
                         if c_data.get("machine_id"):
                             mid = c_data["machine_id"]
+                        if c_data.get("proxy"):
+                            for k in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+                                if not os.environ.get(k):
+                                    os.environ[k] = c_data["proxy"]
                 except Exception:
                     pass
             i += 2

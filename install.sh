@@ -111,6 +111,26 @@ if [ -z "${MACHINE_ID}" ]; then
 fi
 echo "${MACHINE_ID}" > "${MID_FILE}"
 
+DETECTED_PROXY="${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-${all_proxy:-${ALL_PROXY}}}}}}"
+SYSTEMD_PROXY_ENV=""
+for pvar in https_proxy HTTPS_PROXY http_proxy HTTP_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY; do
+  pval="$(eval echo "\$$pvar" 2>/dev/null || true)"
+  if [ -n "$pval" ]; then
+    SYSTEMD_PROXY_ENV="${SYSTEMD_PROXY_ENV}Environment=\"${pvar}=${pval}\"\n"
+  fi
+done
+
+if [ -n "${DETECTED_PROXY}" ]; then
+cat <<EOF > "${CONFIG_FILE}"
+{
+  "server_url": "${SERVER_URL}",
+  "token": "${TOKEN}",
+  "machine_id": "${MACHINE_ID}",
+  "hostname": "${HOSTNAME}",
+  "proxy": "${DETECTED_PROXY}"
+}
+EOF
+else
 cat <<EOF > "${CONFIG_FILE}"
 {
   "server_url": "${SERVER_URL}",
@@ -119,6 +139,7 @@ cat <<EOF > "${CONFIG_FILE}"
   "hostname": "${HOSTNAME}"
 }
 EOF
+fi
 echo "[*] Configuration written to ${CONFIG_FILE}"
 
 # 7. Setup CLI in PATH
@@ -167,7 +188,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_BASE}
-ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR}
+$(printf "%b" "${SYSTEMD_PROXY_ENV}")ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR}
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -224,7 +245,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_BASE}
-ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR}
+$(printf "%b" "${SYSTEMD_PROXY_ENV}")ExecStart=${PY_CMD} -u ${INSTALL_DIR}/agent/universal-agent.py --config ${CONFIG_FILE} --log-dir ${LOG_DIR}
 Restart=always
 RestartSec=3s
 StandardOutput=append:${LOG_DIR}/agent.log
