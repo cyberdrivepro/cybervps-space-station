@@ -359,13 +359,17 @@ class RelayWebSocket:
     def _run_loop(self):
         while self.running and self.agent.running:
             try:
+                if hasattr(self.agent, "get_active_backend_url"):
+                    self.target_url = self.agent.get_active_backend_url()
                 self._connect_and_read()
             except Exception as e:
                 err_msg = str(e)
-                if "timed out" in err_msg or "Connection refused" in err_msg or "getaddrinfo" in err_msg:
-                    print(f"[*] Relay transport waiting for control plane ({err_msg}). Reconnecting in {int(self._backoff)}s...")
+                next_url = self.agent.get_next_backend_url() if hasattr(self.agent, "get_next_backend_url") else self.target_url
+                self.target_url = next_url
+                if "timed out" in err_msg or "Connection refused" in err_msg or "getaddrinfo" in err_msg or "1006" in err_msg:
+                    print(f"[*] Relay transport waiting for control plane ({err_msg}). Trying failover to {next_url} in {int(self._backoff)}s...")
                 else:
-                    print(f"[*] Relay transport reconnecting in {int(self._backoff)}s: {err_msg}")
+                    print(f"[*] Relay transport reconnecting ({err_msg}). Target: {next_url} in {int(self._backoff)}s")
             finally:
                 with self._lock:
                     if self.sock:
@@ -376,7 +380,7 @@ class RelayWebSocket:
                     self.authenticated = False
                     self.agent.ws_connected = False
             time.sleep(self._backoff)
-            self._backoff = min(self._backoff * 1.5, 15.0)
+            self._backoff = min(self._backoff * 1.5, 10.0)
 
     def _connect_and_read(self):
         raw = self.target_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -491,6 +495,8 @@ class RelayWebSocket:
                             self.agent.ws_connected = True
                             self._backoff = 2.0
                             print(f"[*] Relay WebSocket verified & authenticated for [{self.agent.machine_id}]. Link ACTIVE.")
+                            if p_ack.get("backends") and hasattr(self.agent, "update_backends"):
+                                self.agent.update_backends(p_ack.get("backends"))
                             ports = self.agent.discover_listening_ports()
                             self.send_text(json.dumps({
                                 "type": "DiscoveryReport",
@@ -574,13 +580,77 @@ class CyberVPSAgent:
         self._prev_linux_stat = None
         self.device_profile = {}
         self.ws_relay = None
+        self.ws_connected = False
         self._drives_cache = {"data": [], "timestamp": 0}
         self._disk_cache = {}
         self._cached_apps_list = None
         self._cached_apps_time = 0
+        self.backend_pool = []
+        if self.server_url:
+            self.backend_pool.append(self.server_url)
+        for def_b in ["https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"]:
+            if def_b not in self.backend_pool:
+                self.backend_pool.append(def_b)
+        self.backend_index = 0
+        self._load_backends_from_disk()
         try:
             threading.Thread(target=self._prewarm_apps_inventory, daemon=True).start()
             threading.Thread(target=self._periodic_ota_check_loop, daemon=True).start()
+        except Exception:
+            pass
+
+    def get_active_backend_url(self):
+        with self.lock:
+            if not self.backend_pool:
+                return self.server_url
+            return self.backend_pool[self.backend_index % len(self.backend_pool)]
+
+    def get_next_backend_url(self):
+        with self.lock:
+            if not self.backend_pool:
+                return self.server_url
+            self.backend_index = (self.backend_index + 1) % len(self.backend_pool)
+            chosen = self.backend_pool[self.backend_index]
+            self.server_url = chosen
+            self.http_base = chosen.replace("ws://", "http://").replace("wss://", "https://")
+            return chosen
+
+    def update_backends(self, new_backends):
+        if not new_backends or not isinstance(new_backends, list):
+            return
+        updated = False
+        with self.lock:
+            for b in new_backends:
+                b_url = (b.get("url") if isinstance(b, dict) else str(b)).strip().rstrip("/")
+                if b_url and b_url not in self.backend_pool:
+                    self.backend_pool.append(b_url)
+                    updated = True
+        if updated:
+            self._save_backends_to_disk()
+
+    def _load_backends_from_disk(self):
+        try:
+            home = os.path.expanduser("~")
+            b_file = os.path.join(home, ".cybervps", "backends.json")
+            if os.path.exists(b_file):
+                with open(b_file, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        for u in data:
+                            u_clean = str(u).strip().rstrip("/")
+                            if u_clean and u_clean not in self.backend_pool:
+                                self.backend_pool.append(u_clean)
+        except Exception:
+            pass
+
+    def _save_backends_to_disk(self):
+        try:
+            home = os.path.expanduser("~")
+            cvps_dir = os.path.join(home, ".cybervps")
+            os.makedirs(cvps_dir, exist_ok=True)
+            b_file = os.path.join(cvps_dir, "backends.json")
+            with open(b_file, "w") as f:
+                json.dump(self.backend_pool, f, indent=2)
         except Exception:
             pass
 
@@ -4519,6 +4589,14 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_app_action, args=(payload,), daemon=True).start()
         elif c_type in ["OtaUpdate", "OtaCheck", "FleetUpdate"]:
             threading.Thread(target=self.handle_ota_update, args=(payload,), daemon=True).start()
+        elif c_type == "RebootHost":
+            threading.Thread(target=self.handle_reboot_host, args=(payload,), daemon=True).start()
+        elif c_type == "RestartAgent":
+            threading.Thread(target=self.handle_restart_agent, args=(payload,), daemon=True).start()
+        elif c_type == "RebuildAgent":
+            threading.Thread(target=self.handle_rebuild_agent, args=(payload,), daemon=True).start()
+        elif c_type == "SyncBackendPool":
+            self.handle_sync_backend_pool(payload)
         elif c_type == "TunnelOpenStream":
             self.handle_tunnel_open(
                 payload.get("tunnel_id"),
@@ -4529,6 +4607,133 @@ class CyberVPSAgent:
             self.write_tunnel_data(payload.get("stream_id"), payload.get("data_base64", ""))
         elif c_type == "TunnelCloseStream":
             self.close_tunnel_stream(payload.get("stream_id"))
+
+    def handle_reboot_host(self, payload):
+        req_id = payload.get("request_id")
+        reason = payload.get("reason", "Initiated via CyberVPS Control Plane")
+        print(f"[*] REBOOT REQUEST RECEIVED: {reason}")
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {
+                "request_id": req_id,
+                "success": True,
+                "status": "rebooting",
+                "message": f"Host reboot sequence initiated: {reason}. Agent will reconnect automatically after startup."
+            }
+        })
+        def _exec_reboot():
+            time.sleep(1.5)
+            try:
+                if platform.system() == "Windows":
+                    subprocess.Popen(["shutdown.exe", "/r", "/t", "2", "/f", "/c", "CyberVPS Remote Reboot"])
+                else:
+                    subprocess.Popen("sleep 1 && (systemctl reboot || reboot || shutdown -r now)", shell=True)
+            except Exception as e:
+                print(f"[!] Error triggering OS reboot: {e}")
+        threading.Thread(target=_exec_reboot, daemon=False).start()
+
+    def handle_restart_agent(self, payload):
+        req_id = payload.get("request_id")
+        print("[*] AGENT SERVICE RESTART REQUEST RECEIVED")
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {
+                "request_id": req_id,
+                "success": True,
+                "status": "restarting",
+                "message": "CyberVPS agent restarting in background..."
+            }
+        })
+        def _exec_restart():
+            time.sleep(1.0)
+            self._spawn_detached_replacement()
+            os._exit(0)
+        threading.Thread(target=_exec_restart, daemon=False).start()
+
+    def handle_rebuild_agent(self, payload):
+        req_id = payload.get("request_id")
+        print("[*] AGENT REBUILD FROM GITHUB REQUEST RECEIVED")
+        success, msg = self._perform_github_rebuild()
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {
+                "request_id": req_id,
+                "success": success,
+                "status": "rebuilt" if success else "failed",
+                "message": msg
+            }
+        })
+        if success:
+            def _exec_restart():
+                time.sleep(1.0)
+                self._spawn_detached_replacement()
+                os._exit(0)
+            threading.Thread(target=_exec_restart, daemon=False).start()
+
+    def handle_sync_backend_pool(self, payload):
+        backends = payload.get("backends", [])
+        self.update_backends(backends)
+
+    def _perform_github_rebuild(self):
+        try:
+            github_url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
+            req = urllib.request.Request(github_url, headers={"User-Agent": "CyberVPS-SelfHealer/2.1"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                new_code = resp.read()
+            if not new_code or len(new_code) < 10000:
+                return False, f"Downloaded code too small ({len(new_code) if new_code else 0} bytes)"
+            
+            script_path = os.path.abspath(__file__)
+            tmp_path = script_path + ".rebuild.tmp"
+            bak_path = script_path + ".bak"
+            with open(tmp_path, "wb") as f:
+                f.write(new_code)
+            
+            import py_compile
+            py_compile.compile(tmp_path, doraise=True)
+
+            try:
+                shutil.copy2(script_path, bak_path)
+            except Exception:
+                pass
+            shutil.move(tmp_path, script_path)
+            print("[+] Successfully rebuilt agent script from GitHub")
+            return True, "Rebuilt agent executable successfully from GitHub. Re-spawning agent process."
+        except Exception as e:
+            print(f"[!] GitHub rebuild failed: {e}")
+            return False, f"Rebuild failed: {str(e)}"
+
+    def _spawn_detached_replacement(self):
+        script_path = os.path.abspath(__file__)
+        args = sys.argv[1:]
+        cmd = [sys.executable, script_path] + args
+        try:
+            cvps_dir = os.path.join(os.path.expanduser("~"), ".cybervps")
+            os.makedirs(cvps_dir, exist_ok=True)
+            log_path = os.path.join(cvps_dir, "agent.log")
+            log_fp = open(log_path, "a", encoding="utf-8")
+            if platform.system() == "Windows":
+                DETACHED_PROCESS = 0x00000008
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                subprocess.Popen(
+                    cmd,
+                    creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_fp,
+                    stderr=log_fp,
+                    close_fds=True
+                )
+            else:
+                subprocess.Popen(
+                    cmd,
+                    preexec_fn=os.setpgrp,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_fp,
+                    stderr=log_fp,
+                    close_fds=True
+                )
+        except Exception as e:
+            print(f"[!] Error spawning replacement agent: {e}")
 
     def send_discovery_report(self):
         ports = self.discover_listening_ports()
@@ -4688,7 +4893,233 @@ class CyberVPSAgent:
                 pass
 
 
+def handle_cli_subcommands(args):
+    if not args:
+        return False
+    subcmd = args[0].lower().strip()
+    if subcmd not in ["status", "restart", "stop", "start", "reboot", "rebuild", "repair", "help", "--help", "-h"]:
+        return False
+
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+    home = os.path.expanduser("~")
+    cvps_dir = os.path.join(home, ".cybervps")
+    os.makedirs(cvps_dir, exist_ok=True)
+    pid_file = os.path.join(cvps_dir, "agent.pid")
+    cfg_file = os.path.join(cvps_dir, "config.json")
+    script_path = os.path.abspath(__file__)
+
+    cfg = {}
+    if os.path.exists(cfg_file):
+        try:
+            with open(cfg_file, "r") as f:
+                cfg = json.load(f)
+        except Exception:
+            pass
+
+    server_url = cfg.get("server_url") or "https://cybervps-space-station.up.railway.app"
+    token = cfg.get("token") or "cvps_enroll_master_token"
+    mid = cfg.get("machine_id") or ""
+    if not mid and os.path.exists(os.path.join(cvps_dir, "machine_id")):
+        try:
+            with open(os.path.join(cvps_dir, "machine_id"), "r") as mf:
+                mid = mf.read().strip()
+        except Exception:
+            pass
+
+    def get_running_pid():
+        if not os.path.exists(pid_file):
+            return None
+        try:
+            with open(pid_file, "r") as f:
+                p = int(f.read().strip())
+            if platform.system() == "Windows":
+                import ctypes
+                PROCESS_QUERY_INFORMATION = 0x0400
+                h = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, p)
+                if h:
+                    ctypes.windll.kernel32.CloseHandle(h)
+                    return p
+                return None
+            else:
+                os.kill(p, 0)
+                return p
+        except Exception:
+            return None
+
+    if subcmd in ["help", "--help", "-h"]:
+        print("CyberVPS Space Station CLI")
+        print("Usage: cybervps [command]")
+        print("\nCommands:")
+        print("  status    Check agent status and connectivity to all backends")
+        print("  restart   Restart the local agent service cleanly")
+        print("  start     Start the agent service in background")
+        print("  stop      Stop the running agent service")
+        print("  reboot    Gracefully initiate host machine reboot")
+        print("  rebuild   Pull latest code from GitHub and restart agent")
+        print("  repair    Self-heal agent configuration and re-connect")
+        sys.exit(0)
+
+    elif subcmd == "status":
+        print("================================================================")
+        print("   [*] CyberVPS Universal Agent Status                          ")
+        print("================================================================")
+        active_pid = get_running_pid()
+        if active_pid:
+            print(f"  * Process Status: RUNNING (PID: {active_pid})")
+        else:
+            print("  * Process Status: STOPPED (Not running)")
+        if mid:
+            print(f"  * Machine ID: {mid}")
+
+        backends = cfg.get("server_urls") or [server_url, "https://cybervps-render-control.onrender.com"]
+        print("\n  * Backend Reachability:")
+        for b_url in backends:
+            health_url = b_url.rstrip("/") + "/health"
+            try:
+                t0 = time.time()
+                req = urllib.request.Request(health_url, headers={"User-Agent": "CyberVPS-CLI"})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    lat = int((time.time() - t0) * 1000)
+                    if resp.status == 200:
+                        print(f"    - {b_url}: ONLINE ({lat}ms)")
+                    else:
+                        print(f"    - {b_url}: HTTP {resp.status}")
+            except Exception as e:
+                print(f"    - {b_url}: UNREACHABLE ({e})")
+        print("================================================================")
+        sys.exit(0)
+
+    elif subcmd == "stop":
+        active_pid = get_running_pid()
+        if active_pid:
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(["taskkill", "/F", "/PID", str(active_pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    os.kill(active_pid, signal.SIGTERM)
+                print(f"[+] Stopped CyberVPS agent process (PID: {active_pid}).")
+            except Exception as e:
+                print(f"[!] Error stopping PID {active_pid}: {e}")
+        else:
+            print("[*] No active agent process found.")
+        if os.path.exists(pid_file):
+            try: os.remove(pid_file)
+            except Exception: pass
+        sys.exit(0)
+
+    def spawn_daemon(cmd_list):
+        log_path = os.path.join(cvps_dir, "agent.log")
+        full_cmd = list(cmd_list)
+        if "--log-file" not in full_cmd:
+            full_cmd += ["--log-file", log_path]
+        if platform.system() == "Windows":
+            p = subprocess.Popen(
+                full_cmd,
+                creationflags=0x00000008 | 0x00000200,
+                close_fds=True
+            )
+        else:
+            p = subprocess.Popen(
+                full_cmd,
+                preexec_fn=os.setpgrp,
+                close_fds=True
+            )
+        with open(pid_file, "w") as f:
+            f.write(str(p.pid))
+        try:
+            with open(cfg_file, "w") as cf:
+                json.dump({
+                    "server_url": server_url,
+                    "server_urls": list(dict.fromkeys([server_url, "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
+                    "token": token,
+                    "machine_id": mid,
+                    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                }, cf, indent=2)
+        except Exception:
+            pass
+        return p.pid
+
+    if subcmd == "start":
+        active_pid = get_running_pid()
+        if active_pid:
+            print(f"[!] Agent is already running (PID: {active_pid}).")
+            sys.exit(0)
+        cmd = [sys.executable, script_path, server_url, token, mid]
+        new_pid = spawn_daemon(cmd)
+        print(f"[+] CyberVPS agent started successfully (PID: {new_pid}).")
+        sys.exit(0)
+
+    elif subcmd == "restart":
+        active_pid = get_running_pid()
+        if active_pid:
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(["taskkill", "/F", "/PID", str(active_pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    os.kill(active_pid, signal.SIGTERM)
+                    time.sleep(0.5)
+            except Exception:
+                pass
+        cmd = [sys.executable, script_path, server_url, token, mid]
+        new_pid = spawn_daemon(cmd)
+        print(f"[+] CyberVPS agent restarted successfully (PID: {new_pid}).")
+        sys.exit(0)
+
+    elif subcmd in ["rebuild", "repair"]:
+        print("[*] Contacting GitHub for latest CyberVPS Universal Agent...")
+        try:
+            github_url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
+            req = urllib.request.Request(github_url, headers={"User-Agent": "CyberVPS-Rebuilder/2.1"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                code = resp.read()
+            if len(code) > 10000:
+                tmp_f = script_path + ".tmp"
+                with open(tmp_f, "wb") as f:
+                    f.write(code)
+                import py_compile
+                py_compile.compile(tmp_f, doraise=True)
+                shutil.move(tmp_f, script_path)
+                print("[+] Successfully downloaded and verified fresh agent script from GitHub.")
+            else:
+                print(f"[!] Warning: Code from GitHub was incomplete ({len(code)} bytes).")
+        except Exception as e:
+            print(f"[!] Error fetching from GitHub: {e}")
+
+        active_pid = get_running_pid()
+        if active_pid:
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(["taskkill", "/F", "/PID", str(active_pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    os.kill(active_pid, signal.SIGTERM)
+            except Exception: pass
+        cmd = [sys.executable, script_path, server_url, token, mid]
+        new_pid = spawn_daemon(cmd)
+        print(f"[+] CyberVPS agent refreshed and running (PID: {new_pid}).")
+        sys.exit(0)
+
+    elif subcmd == "reboot":
+        print("[*] Initiating graceful machine reboot...")
+        time.sleep(1.0)
+        if platform.system() == "Windows":
+            subprocess.Popen(["shutdown.exe", "/r", "/t", "2", "/f", "/c", "CyberVPS Remote Reboot"])
+        else:
+            subprocess.Popen("sleep 1 && (systemctl reboot || reboot || shutdown -r now)", shell=True)
+        print("[+] Machine reboot dispatched.")
+        sys.exit(0)
+
+    return True
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        handle_cli_subcommands(sys.argv[1:])
     log_file_env = os.environ.get("CYBERVPS_LOG_FILE")
     if log_file_env:
         try:
@@ -4801,6 +5232,20 @@ if __name__ == "__main__":
 
     try:
         agent = CyberVPSAgent(target, token, mid)
+        try:
+            home = os.path.expanduser("~")
+            cvps_dir = os.path.join(home, ".cybervps")
+            os.makedirs(cvps_dir, exist_ok=True)
+            with open(os.path.join(cvps_dir, "config.json"), "w") as f:
+                json.dump({
+                    "server_url": target,
+                    "server_urls": list(dict.fromkeys([target, "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
+                    "token": token,
+                    "machine_id": agent.machine_id,
+                    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                }, f, indent=2)
+        except Exception:
+            pass
         agent.run()
     except Exception as e:
         import traceback

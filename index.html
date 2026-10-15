@@ -2023,6 +2023,9 @@
               <button class="btn btn-secondary" onclick="triggerFleetOtaUpdate()" title="Dispatches silent OTA update to all connected agents">
                 <span>🚀 Fleet OTA Update</span>
               </button>
+              <button class="btn btn-secondary" onclick="broadcastBackendsToFleet()" title="Broadcasts updated backend pool to all connected agents for instant failover">
+                <span>📡 Sync Mesh to Fleet</span>
+              </button>
               <button class="btn btn-primary" onclick="openAddBackendModal()">+ Register Backend</button>
             </div>
           </div>
@@ -3382,7 +3385,7 @@
             ${m.capabilities?.pty_supported ? '<span class="badge badge-cyan">PTY</span>' : ''}
             ${isDaytona ? '<span class="badge badge-violet">DAYTONA</span>' : ''}
           </td>
-          <td>${m.status === 'online' ? '<span class="badge badge-success">ONLINE</span>' : '<span class="badge badge-danger">OFFLINE</span>'}</td>
+          <td>${m.status === 'online' ? '<span class="badge badge-success">ONLINE</span>' : (m.status === 'restarting' || m.status === 'rebooting' ? '<span class="badge badge-subtle" style="color:var(--accent-cyan); border:1px solid var(--accent-cyan);">RESTARTING</span>' : '<span class="badge badge-danger">OFFLINE</span>')}</td>
           <td style="font-size:0.75rem; color:var(--text-muted);">${formatTime(m.last_seen)}</td>
           <td style="white-space:nowrap;">
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem;" onclick="openDeviceDetails('${m.id}')" title="Neofetch & Tailscale Specs">Intel</button>
@@ -3390,6 +3393,8 @@
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="openTerminalForMachine('${m.id}')" title="Browser Web Terminal">Terminal</button>
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="openServicesForMachine('${m.id}')" title="Processes & OS Services">Services</button>
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="promptBridgeCustom('${m.id}')" title="Bridge TCP Port">+ Bridge</button>
+            <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px; color:var(--accent-cyan);" onclick="triggerAgentRestart('${m.id}')" title="Restart agent service on this machine">⚡ Agent</button>
+            <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px; color:var(--status-danger);" onclick="triggerMachineReboot('${m.id}')" title="Isolated reboot of this host machine">🔄 Reboot</button>
           </td>
         </tr>
       `;
@@ -7485,6 +7490,86 @@
         await syncBackends();
       } catch (err) {
         showToast(err.message, 'error');
+      }
+    }
+
+    async function broadcastBackendsToFleet() {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/backends/broadcast`, { method: 'POST' });
+        const result = await res.json();
+        if (res.ok) {
+          showToast(result.message || 'Synced backends to entire fleet!', 'success');
+        } else {
+          showToast(result.error || 'Failed to sync backends', 'error');
+        }
+      } catch (err) {
+        showToast('Error syncing backends: ' + err.message, 'error');
+      }
+    }
+
+    async function triggerMachineReboot(machineId) {
+      if (!confirm(`Are you sure you want to reboot machine ${machineId}?\n\nThis will initiate a graceful, isolated restart of ONLY this machine. The CyberVPS agent will reconnect automatically upon boot.`)) return;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      showToast(`Initiating isolated reboot sequence on ${machineId}...`, 'info');
+      try {
+        const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reboot' })
+        });
+        const result = await res.json();
+        if (res.ok) {
+          showToast(`Reboot dispatched to ${machineId}! System restarting...`, 'success');
+          syncData();
+        } else {
+          showToast(result.error || 'Failed to reboot machine', 'error');
+        }
+      } catch (err) {
+        showToast('Reboot request error: ' + err.message, 'error');
+      }
+    }
+
+    async function triggerAgentRestart(machineId) {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      showToast(`Restarting CyberVPS agent on ${machineId}...`, 'info');
+      try {
+        const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'restart_agent' })
+        });
+        const result = await res.json();
+        if (res.ok) {
+          showToast(`Agent service restarted on ${machineId}!`, 'success');
+          setTimeout(() => syncData(), 1500);
+        } else {
+          showToast(result.error || 'Failed to restart agent', 'error');
+        }
+      } catch (err) {
+        showToast('Agent restart error: ' + err.message, 'error');
+      }
+    }
+
+    async function triggerAgentRebuild(machineId) {
+      if (!confirm(`Rebuild CyberVPS agent from GitHub on ${machineId}?\n\nThis pulls the latest universal-agent from GitHub main, verifies syntax, replaces the binary, and restarts.`)) return;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      showToast(`Rebuilding agent from GitHub on ${machineId}...`, 'info');
+      try {
+        const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'rebuild_agent' })
+        });
+        const result = await res.json();
+        if (res.ok) {
+          showToast(`Agent rebuilt from GitHub successfully!`, 'success');
+          setTimeout(() => syncData(), 2000);
+        } else {
+          showToast(result.error || 'Failed to rebuild agent', 'error');
+        }
+      } catch (err) {
+        showToast('Agent rebuild error: ' + err.message, 'error');
       }
     }
 

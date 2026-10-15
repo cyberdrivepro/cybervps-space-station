@@ -99,6 +99,31 @@ chmod +x "$CVPS_DIR/agent-watchdog.sh" 2>/dev/null || true
 chmod +x "$CVPS_DIR/universal-agent.py" 2>/dev/null || true
 chmod +x "$CVPS_DIR/doctor.sh" 2>/dev/null || true
 
+# Generate durable configuration
+cat <<EOF > "$CVPS_DIR/config.json"
+{
+  "server_url": "$SERVER_URL",
+  "server_urls": ["$SERVER_URL", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"],
+  "token": "$TOKEN",
+  "machine_id": "$MACHINE_ID",
+  "updated_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+}
+EOF
+
+# CLI Wrapper Setup
+cat << 'EOF' > "$CVPS_DIR/cybervps"
+#!/usr/bin/env bash
+python3 "$HOME/.cybervps/universal-agent.py" "$@"
+EOF
+chmod +x "$CVPS_DIR/cybervps"
+if [ "$(id -u)" -eq 0 ]; then
+    ln -sf "$CVPS_DIR/cybervps" /usr/local/bin/cybervps 2>/dev/null || true
+elif sudo -n true 2>/dev/null; then
+    sudo ln -sf "$CVPS_DIR/cybervps" /usr/local/bin/cybervps 2>/dev/null || true
+fi
+mkdir -p "$HOME/.local/bin"
+ln -sf "$CVPS_DIR/cybervps" "$HOME/.local/bin/cybervps" 2>/dev/null || true
+
 echo -e "\n${GREEN}[2/4] Running System & Network Doctor...${NC}"
 if [ -f "$CVPS_DIR/doctor.sh" ]; then
     bash "$CVPS_DIR/doctor.sh" || true

@@ -345,6 +345,10 @@ function getMachineStatus(m) {
     const ws = db.connectedAgents.get(m.id);
     if (ws && ws.readyState === WebSocket.OPEN) return 'online';
   }
+  if (m.status === 'restarting' || m.status === 'rebooting') {
+    const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
+    if (Date.now() - lastSeenMs < 120000) return 'restarting';
+  }
   const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
   const diff = Date.now() - lastSeenMs;
   if (diff < 40000) return 'online';
@@ -847,6 +851,72 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Machine not found' }));
     }
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/action') && method === 'POST') {
+    const parts = pathname.split('/');
+    const mId = parts[4];
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { action, params } = JSON.parse(body || '{}');
+        if (!action) throw new Error('action required');
+        const m = db.machines.get(mId);
+        if (!m) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `Machine ${mId} not found` }));
+          return;
+        }
+
+        if (action === 'reboot') {
+          m.status = 'restarting';
+          logAudit('machine_reboot', 'admin', mId, `Initiated remote reboot on machine ${mId}`);
+          try {
+            const data = await sendAgentRequest(mId, 'RebootHost', { reason: 'Initiated via CyberVPS Control Plane' }, 8000);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, status: 'restarting', message: 'Machine reboot initiated', result: data }));
+          } catch (err) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, status: 'restarting', message: 'Reboot dispatched to host' }));
+          }
+          return;
+        }
+
+        if (action === 'restart_agent') {
+          logAudit('agent_restart', 'admin', mId, `Initiated agent service restart on machine ${mId}`);
+          try {
+            const data = await sendAgentRequest(mId, 'RestartAgent', {}, 8000);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Agent restart dispatched', result: data }));
+          } catch (err) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Agent restart in progress' }));
+          }
+          return;
+        }
+
+        if (action === 'rebuild_agent') {
+          logAudit('agent_rebuild', 'admin', mId, `Initiated GitHub rebuild on machine ${mId}`);
+          try {
+            const data = await sendAgentRequest(mId, 'RebuildAgent', {}, 25000);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Agent rebuilt from GitHub successfully', result: data }));
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Rebuild failed: ${err.message}` }));
+          }
+          return;
+        }
+
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Unknown machine action: ${action}` }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
 
@@ -1416,6 +1486,26 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: err.message }));
       }
     });
+    return;
+  }
+
+  if (pathname === '/api/v1/backends/broadcast' && method === 'POST') {
+    const backendList = Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }));
+    let broadcastCount = 0;
+    for (const [mId, ws] of db.connectedAgents.entries()) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({
+            type: 'SyncBackendPool',
+            payload: { backends: backendList }
+          }));
+          broadcastCount++;
+        } catch (_) {}
+      }
+    }
+    logAudit('backends_broadcast', 'admin', null, `Broadcasted backend pool (${backendList.length} backends) to ${broadcastCount} connected nodes`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: `Broadcasted ${backendList.length} backends to ${broadcastCount} connected nodes.` }));
     return;
   }
 
@@ -3268,6 +3358,13 @@ wssRelay.on('connection', (ws, request) => {
         if (res && res.success && msg.payload && msg.payload.machine_id) {
           machineId = msg.payload.machine_id;
           db.connectedAgents.set(machineId, ws);
+          try {
+            const backendList = Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }));
+            ws.send(JSON.stringify({
+              type: 'SyncBackendPool',
+              payload: { backends: backendList }
+            }));
+          } catch (_) {}
         } else {
           setTimeout(() => {
             try { ws.close(4001, 'Unauthorized'); } catch (_) {}
@@ -3283,7 +3380,9 @@ wssRelay.on('connection', (ws, request) => {
     if (machineId && db.connectedAgents.get(machineId) === ws) {
       db.connectedAgents.delete(machineId);
       const m = db.machines.get(machineId);
-      if (m) m.status = 'offline';
+      if (m && m.status !== 'restarting' && m.status !== 'rebooting') {
+        m.status = 'offline';
+      }
       logAudit('agent_disconnected', 'agent', machineId, `Node ${machineId} disconnected from relay`, 'warning');
       for (const [reqId, pending] of db.pendingRequests.entries()) {
         if (pending.machineId === machineId) {
@@ -3438,7 +3537,14 @@ function handleAgentMessage(ws, msg) {
     if (ws) {
       ws.send(JSON.stringify({
         type: 'AuthAck',
-        payload: { machine_id, success: true, virtual_ip: virtualIp, revocation_code: machineInfo.revocation_code, heartbeat_interval_secs: 2 }
+        payload: {
+          machine_id,
+          success: true,
+          virtual_ip: virtualIp,
+          revocation_code: machineInfo.revocation_code,
+          heartbeat_interval_secs: 2,
+          backends: Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }))
+        }
       }));
     }
     return { success: true, result: { machine_id, virtual_ip: virtualIp, revocation_code: machineInfo.revocation_code, status: 'online' } };

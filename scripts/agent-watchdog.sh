@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # CyberVPS SPACE STATION - Self-Healing Agent Supervisor & Watchdog
-# Ensures 24/7 continuous operation, crash recovery, and curl timeout checks
+# Ensures 24/7 continuous operation, crash recovery, and multi-backend failover
 # ==============================================================================
 
 SERVER_URL="${1:-http://localhost:8080}"
@@ -18,7 +18,7 @@ log() {
     echo "[$(date -u +'%Y-%m-%d %H:%M:%SZ')] [WATCHDOG] $1" | tee -a "$WATCHDOG_LOG"
 }
 
-log "ðŸš€ Starting CyberVPS Self-Healing Watchdog..."
+log "[*] Starting CyberVPS Self-Healing Watchdog..."
 log "Target Server: $SERVER_URL"
 log "Working Directory: $CVPS_DIR"
 
@@ -44,7 +44,7 @@ elif command -v python3 >/dev/null 2>&1 && [ -f "$PARENT_DIR/agent/universal-age
 elif command -v python3 >/dev/null 2>&1 && [ -f "$CVPS_DIR/universal-agent.py" ]; then
     AGENT_CMD="python3 $CVPS_DIR/universal-agent.py $SERVER_URL $TOKEN $MACHINE_ID"
 else
-    log "âŒ Error: No runnable CyberVPS agent binary or Python script found!"
+    log "[!] Error: No runnable CyberVPS agent binary or Python script found!"
     exit 1
 fi
 
@@ -65,23 +65,23 @@ while true; do
 
     # 2. If not running, perform health check & spawn
     if [ $IS_RUNNING -eq 0 ]; then
-        log "âš ï¸ Agent is NOT running. Performing pre-launch network diagnostic..."
+        log "[*] Agent is NOT running. Performing pre-launch network diagnostic..."
 
-        # Curl timeout check to relay health endpoint
+        # Curl timeout check across registered control plane backends
         if command -v curl >/dev/null 2>&1; then
-            HTTP_TARGET=$(echo "$SERVER_URL" | sed 's/ws:\/\//http:\/\//' | sed 's/wss:\/\//https:\/\//')
-            HEALTH_URL="$HTTP_TARGET/health"
-            
-            CHECK_RESULT=$(curl -s -m 3 "$HEALTH_URL" 2>&1)
-            CURL_EXIT=$?
-            if [ $CURL_EXIT -eq 0 ]; then
-                log "âœ… Pre-flight connectivity check passed ($HEALTH_URL reachable)"
-                BACKOFF=2
-            else
-                log "âš ï¸ Warning: Target server check failed (Exit code: $CURL_EXIT). Retrying with backoff ${BACKOFF}s..."
-                sleep "$BACKOFF"
-                BACKOFF=$(( BACKOFF * 2 ))
-                [ $BACKOFF -gt $MAX_BACKOFF ] && BACKOFF=$MAX_BACKOFF
+            CHECKED=0
+            for TARGET in "$SERVER_URL" "https://cybervps-space-station.up.railway.app" "https://cybervps-render-control.onrender.com"; do
+                HTTP_TARGET=$(echo "$TARGET" | sed 's/ws:\/\//http:\/\//' | sed 's/wss:\/\//https:\/\//')
+                HEALTH_URL="$HTTP_TARGET/health"
+                if curl -s -m 4 "$HEALTH_URL" >/dev/null 2>&1; then
+                    log "[+] Control plane connectivity verified ($HEALTH_URL reachable)"
+                    CHECKED=1
+                    BACKOFF=2
+                    break
+                fi
+            done
+            if [ $CHECKED -eq 0 ]; then
+                log "[*] Target servers sleeping or cold-starting. Launching agent with auto-failover..."
             fi
         fi
 
@@ -89,14 +89,13 @@ while true; do
         nohup $AGENT_CMD >> "$LOG_FILE" 2>&1 &
         NEW_PID=$!
         echo "$NEW_PID" > "$PID_FILE"
-        log "Agent successfully spawned with PID: $NEW_PID"
+        log "[+] Agent successfully spawned with PID: $NEW_PID"
     else
         # 3. Agent is running, verify memory and health
         if [ -n "$AGENT_PID" ]; then
-            # Check RSS memory in KB
             RSS_KB=$(ps -o rss= -p "$AGENT_PID" 2>/dev/null | tr -d ' ')
             if [ -n "$RSS_KB" ] && [ "$RSS_KB" -gt 300000 ]; then # > 300MB
-                log "âš ï¸ Agent memory usage exceeded limit ($RSS_KB KB). Gracefully restarting..."
+                log "[!] Agent memory usage exceeded limit ($RSS_KB KB). Gracefully restarting..."
                 kill -15 "$AGENT_PID" 2>/dev/null
                 sleep 2
                 kill -9 "$AGENT_PID" 2>/dev/null || true
