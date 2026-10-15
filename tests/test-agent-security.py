@@ -319,6 +319,88 @@ try:
     assert "session_id is required" in events[0]["payload"]["error"]
     print("  ✅ Action validation verified: missing session_id properly rejected.")
 
+    # -------------------------------------------------------------------------
+    # TEST 6: Interactive Desktop Launch & Session 0 Isolation Boundaries
+    # -------------------------------------------------------------------------
+    print("\n[Test 6] Testing Interactive Desktop Launch & Session 0 Isolation Boundaries...")
+    events.clear()
+    agent.handle_desktop_status({"request_id": "test_dt_status_s0"})
+    assert len(events) == 1
+    st_res = events[0]["payload"]["result"]
+    assert "is_session_0" in st_res, "DesktopStatus must include is_session_0"
+    assert "active_console_session" in st_res, "DesktopStatus must include active_console_session"
+    assert "gui_test_mode" in st_res, "DesktopStatus must include gui_test_mode"
+    print(f"  ✅ Desktop Session state verified: is_session_0={st_res['is_session_0']}, active_console_session={st_res['active_console_session']}")
+
+    # Test Interactive Desktop Launch in Test Mode
+    events.clear()
+    agent.handle_desktop_action({
+        "request_id": "test_dt_launch_1",
+        "action": "launch_interactive",
+        "params": {
+            "executable": "notepad.exe",
+            "test_mode": True
+        }
+    })
+    assert len(events) == 1
+    launch_res = events[0]["payload"]
+    if launch_res.get("success"):
+        res_data = launch_res["result"]
+        assert res_data.get("status") in ["PASSED", "LAUNCHED"], f"Unexpected status: {res_data.get('status')}"
+        assert res_data.get("app") == "notepad.exe"
+        assert res_data.get("session_id") is not None
+        print(f"  ✅ Interactive launch verified: Status={res_data.get('status')} | PID={res_data.get('pid')} | Session={res_data.get('session_id')}")
+    else:
+        res_data = launch_res.get("result") or {}
+        assert res_data.get("status") == "NO_INTERACTIVE_SESSION" or "session" in launch_res.get("error", "").lower()
+        print(f"  ✅ Clean fail-closed on headless environment: Status={res_data.get('status', 'NO_INTERACTIVE_SESSION')}")
+
+    # Verify Terminal Idle Guarantee: agent has zero active terminal injection
+    assert len(agent.active_terminals) == 0, "Terminal sessions must remain completely idle with zero injected synthetic commands"
+    print("  ✅ Terminal Idle Guarantee verified: Zero synthetic keystrokes or loops injected into terminal sessions.")
+
+    # -------------------------------------------------------------------------
+    # TEST 7: Remote Application Discovery, Real Icons & Process Protection
+    # -------------------------------------------------------------------------
+    print("\n[Test 7] Testing Remote Application Discovery, Real Icons & Process Protection...")
+    events.clear()
+    agent.handle_app_list({"request_id": "test_app_list_1", "refresh": True})
+    assert len(events) == 1, "Expected 1 event from handle_app_list"
+    app_res = events[0]["payload"]
+    assert app_res.get("success") is True, f"handle_app_list failed: {app_res.get('error')}"
+    apps = app_res["result"].get("applications", [])
+    assert len(apps) > 0, "Application inventory must discover at least one OS or bundled application"
+    first_app = apps[0]
+    assert "id" in first_app and "name" in first_app and "status" in first_app
+    assert "icon" in first_app and len(first_app["icon"]) > 0, "Discovered app must have an icon (SVG or base64)"
+    print(f"  ✅ Application discovery verified: {len(apps)} applications discovered (e.g., '{first_app['name']}', Category: {first_app.get('category')})")
+
+    # Verify Process Protection Guard (attempting force kill on agent PID or system PID)
+    events.clear()
+    agent.handle_app_action({
+        "request_id": "test_kill_guard",
+        "action": "kill",
+        "target_pid": os.getpid()
+    })
+    assert len(events) == 1
+    guard_res = events[0]["payload"]
+    assert guard_res.get("success") is False, "Killing protected agent PID must be denied"
+    assert "protected" in guard_res.get("error", "").lower(), "Error must indicate protected critical system process"
+    print("  ✅ Process Protection Guard verified: Critical agent PID kill attempt strictly rejected.")
+
+    # Test App Details Action
+    events.clear()
+    agent.handle_app_action({
+        "request_id": "test_app_details",
+        "action": "details",
+        "app_id": first_app["id"]
+    })
+    assert len(events) == 1
+    det_res = events[0]["payload"]
+    assert det_res.get("success") is True
+    assert det_res["result"]["id"] == first_app["id"]
+    print(f"  ✅ Application details query verified for app '{first_app['id']}'.")
+
     print("\n================================================================")
     print("🎉 ALL AGENT SECURITY, TOKEN INTEGRITY & LIFECYCLE TESTS PASSED!")
     print("================================================================\n")

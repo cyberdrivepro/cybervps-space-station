@@ -170,6 +170,10 @@ async function main() {
     case 'rdp':
       await handleBridge(3389);
       break;
+    case 'desktop-launch':
+    case 'gui-launch':
+      await handleDesktopLaunch();
+      break;
     case 'vnc':
       await handleBridge(5900);
       break;
@@ -205,6 +209,7 @@ Commands:
   status          Show agent health, fleet enrollment, and central dashboard
   bridge          Bridge remote port to local PC (e.g. cybervps bridge SoloA 22)
   desktop, rdp    Direct Windows Remote Desktop (RDP :3389) bridge shortcut
+  desktop-launch  Launch GUI application on active desktop (e.g. cybervps desktop-launch notepad)
   vnc             Direct VNC (:5900) bridge shortcut to remote machine
   sftp            Direct SFTP bridge shortcut to remote machine
   ssh             Direct SSH bridge shortcut to remote machine
@@ -520,6 +525,37 @@ function handleConfig() {
     cfg[key] = value;
     saveConfig(cfg);
     console.log(`✅ Updated config: ${key} = ${value}`);
+  }
+}
+
+async function handleDesktopLaunch() {
+  const appName = args[1] || 'notepad.exe';
+  const cfg = loadConfig();
+  const serverUrl = cfg.server_url || 'http://127.0.0.1:8080';
+  const machineId = cfg.machine_id;
+
+  console.log(`[*] Requesting interactive desktop launch for '${appName}'...`);
+  try {
+    const res = await request(`${serverUrl}/api/v1/desktop/launch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        machine_id: machineId,
+        executable: appName
+      })
+    });
+    const data = JSON.parse(res.body || '{}');
+    const result = data.result || data;
+    if (result.success) {
+      console.log(`✅ SUCCESS: Launched '${appName}' on interactive desktop!`);
+      if (result.pid) console.log(`   PID: ${result.pid}`);
+      if (result.session_id) console.log(`   Session ID: ${result.session_id}`);
+    } else {
+      console.log(`⚠️ Status: ${result.status || 'FAILED'}`);
+      console.log(`   ${result.error || data.error || 'Failed to launch on desktop'}`);
+    }
+  } catch (err) {
+    console.error(`❌ Error connecting to control plane: ${err.message}`);
   }
 }
 

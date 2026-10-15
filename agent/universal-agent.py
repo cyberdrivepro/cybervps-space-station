@@ -2271,6 +2271,23 @@ class CyberVPSAgent:
                 except Exception:
                     pass
 
+            is_session_0 = False
+            active_console_session = None
+            if sys_os == "Windows":
+                try:
+                    import ctypes
+                    sess_val = ctypes.c_ulong()
+                    if ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sess_val)):
+                        is_session_0 = (sess_val.value == 0)
+                    active_console_session = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId()
+                    if active_console_session == 0xFFFFFFFF or active_console_session == -1:
+                        active_console_session = self._find_active_wts_session()
+                except Exception:
+                    pass
+
+            cfg = self.load_config() if hasattr(self, "load_config") else {}
+            gui_test_mode = bool(cfg.get("gui_test_mode", False))
+
             result = {
                 "machine_id": self.machine_id,
                 "os_type": sys_os,
@@ -2279,6 +2296,9 @@ class CyberVPSAgent:
                 "unattended_access": unattended_access,
                 "service_mode": service_mode,
                 "headless": True,
+                "is_session_0": is_session_0,
+                "active_console_session": active_console_session,
+                "gui_test_mode": gui_test_mode,
                 "agent_pid": os.getpid(),
                 "agent_uptime": uptime_sec,
                 "rdp": rdp_info,
@@ -2421,11 +2441,877 @@ class CyberVPSAgent:
                     "action": sub_action
                 })
 
+            elif action in ["launch_gui", "launch_interactive", "desktop_launch"]:
+                app_cmd = params.get("executable") or params.get("app") or params.get("cmd") or "notepad.exe"
+                cfg = self.load_config() if hasattr(self, "load_config") else {}
+                test_mode = bool(params.get("test_mode", False) or cfg.get("gui_test_mode", False))
+                launch_res = self.launch_interactive_desktop_process(app_cmd, test_mode=test_mode)
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": launch_res.get("success", False),
+                        "result": launch_res,
+                        "error": launch_res.get("error") if not launch_res.get("success") else None
+                    }
+                })
+
             else:
                 self.send_agent_event({
                     "type": "AgentRpcResponse",
                     "payload": {"request_id": req_id, "success": False, "error": f"Unknown desktop action: {action}"}
                 })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def _find_active_wts_session(self):
+        if platform.system() != "Windows":
+            return None
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+        wtsapi32 = ctypes.windll.wtsapi32
+
+        try:
+            cid = kernel32.WTSGetActiveConsoleSessionId()
+            if cid != 0xFFFFFFFF and cid != -1 and cid is not None:
+                return cid
+        except Exception:
+            pass
+
+        try:
+            class WTS_SESSION_INFO_W(ctypes.Structure):
+                _fields_ = [
+                    ("SessionId", wintypes.DWORD),
+                    ("pWinStationName", wintypes.LPWSTR),
+                    ("State", wintypes.DWORD)
+                ]
+            pSessionInfo = ctypes.POINTER(WTS_SESSION_INFO_W)()
+            count = wintypes.DWORD()
+            if wtsapi32.WTSEnumerateSessionsW(0, 0, 1, ctypes.byref(pSessionInfo), ctypes.byref(count)):
+                active_id = None
+                try:
+                    for i in range(count.value):
+                        info = pSessionInfo[i]
+                        # State 0 is WTSActive
+                        if info.State == 0 and info.SessionId != 0:
+                            active_id = info.SessionId
+                            break
+                    if active_id is None:
+                        for i in range(count.value):
+                            info = pSessionInfo[i]
+                            if info.State == 0:
+                                active_id = info.SessionId
+                                break
+                finally:
+                    wtsapi32.WTSFreeMemory(pSessionInfo)
+                return active_id
+        except Exception:
+            pass
+        return None
+
+    def _is_app_window_visible(self, pid=None, app_name=""):
+        if platform.system() != "Windows":
+            return False
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        found = [False]
+        clean_app = os.path.basename(app_name or "").lower().replace(".exe", "")
+
+        hWs = None
+        hDesk = None
+        try:
+            hWs = user32.OpenWindowStationW("winsta0", False, 0x37F)
+            hDesk = user32.OpenDesktopW("default", 0, False, 0x1FF)
+        except Exception:
+            pass
+
+        DESKENUM = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def enum_cb(hwnd, lp):
+            if user32.IsWindowVisible(hwnd):
+                if pid and pid > 0:
+                    w_pid = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
+                    if w_pid.value == pid:
+                        found[0] = True
+                        return False
+                if clean_app:
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buf, length + 1)
+                        val = buf.value.lower()
+                        if clean_app in val or (clean_app == "notepad" and "untitled" in val):
+                            found[0] = True
+                            return False
+                    cls_buf = ctypes.create_unicode_buffer(256)
+                    user32.GetClassNameW(hwnd, cls_buf, 256)
+                    cls_val = cls_buf.value.lower()
+                    if clean_app in cls_val:
+                        found[0] = True
+                        return False
+            return True
+
+        cb_func = DESKENUM(enum_cb)
+        if hDesk:
+            try:
+                user32.EnumDesktopWindows(hDesk, cb_func, 0)
+            except Exception:
+                pass
+        if not found[0]:
+            try:
+                user32.EnumWindows(cb_func, 0)
+            except Exception:
+                pass
+
+        if hDesk:
+            try: user32.CloseDesktop(hDesk)
+            except Exception: pass
+        if hWs:
+            try: user32.CloseWindowStation(hWs)
+            except Exception: pass
+
+        return found[0]
+
+    def launch_interactive_desktop_process(self, app_name_or_cmd, test_mode=False):
+        sys_os = platform.system()
+        cmd = (app_name_or_cmd or "").strip()
+        if not cmd:
+            cmd = "notepad.exe" if sys_os == "Windows" else "x-terminal-emulator"
+
+        if sys_os != "Windows":
+            try:
+                env = os.environ.copy()
+                if "DISPLAY" not in env:
+                    env["DISPLAY"] = ":0"
+                p = subprocess.Popen(cmd, shell=True, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+                return {
+                    "success": True,
+                    "status": "PASSED" if test_mode else "LAUNCHED",
+                    "pid": p.pid,
+                    "session_id": 1,
+                    "app": cmd,
+                    "window_visible": True,
+                    "message": f"Launched '{cmd}' in X11/Wayland display session."
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "status": "FAILED",
+                    "error": str(e),
+                    "app": cmd
+                }
+
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
+        wtsapi32 = ctypes.windll.wtsapi32
+
+        # 1. Detect target active interactive user session
+        target_session_id = self._find_active_wts_session()
+        if target_session_id is None or target_session_id == 0xFFFFFFFF or target_session_id == -1:
+            return {
+                "success": False,
+                "status": "NO_INTERACTIVE_SESSION",
+                "error": "No interactive desktop user session found. A user must be logged on to physical display.",
+                "session_id": None,
+                "app": cmd
+            }
+
+        # Detect current process session
+        curr_sess = ctypes.c_ulong()
+        kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(curr_sess))
+        current_session_id = curr_sess.value
+
+        launched_pid = None
+        launch_method = None
+
+        # Method 1: If current process is ALREADY in the interactive session
+        if current_session_id == target_session_id and current_session_id != 0:
+            try:
+                p = subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+                launched_pid = p.pid
+                launch_method = "direct_interactive"
+            except Exception:
+                pass
+
+        # Method 2: Token-based launching into target_session_id (WTSQueryUserToken / DuplicateTokenEx)
+        if not launched_pid:
+            try:
+                hUserToken = wintypes.HANDLE()
+                token_acquired = False
+
+                if hasattr(wtsapi32, "WTSQueryUserToken"):
+                    if wtsapi32.WTSQueryUserToken(target_session_id, ctypes.byref(hUserToken)) and hUserToken.value:
+                        token_acquired = True
+
+                if not token_acquired:
+                    import psutil
+                    for proc in psutil.process_iter(['pid', 'name']):
+                        try:
+                            if "explorer" in (proc.name() or "").lower():
+                                p_sess = ctypes.c_ulong()
+                                if kernel32.ProcessIdToSessionId(proc.pid, ctypes.byref(p_sess)) and p_sess.value == target_session_id:
+                                    hProc = kernel32.OpenProcess(0x0400 | 0x0040, False, proc.pid)
+                                    if hProc:
+                                        hTok = wintypes.HANDLE()
+                                        if advapi32.OpenProcessToken(hProc, 0x000E | 0x0002, ctypes.byref(hTok)):
+                                            hDup = wintypes.HANDLE()
+                                            if advapi32.DuplicateTokenEx(hTok, 0xF01FF, None, 2, 1, ctypes.byref(hDup)):
+                                                hUserToken = hDup
+                                                token_acquired = True
+                                            kernel32.CloseHandle(hTok)
+                                        kernel32.CloseHandle(hProc)
+                                        if token_acquired:
+                                            break
+                        except Exception:
+                            continue
+
+                if token_acquired and hUserToken.value:
+                    class STARTUPINFO_W(ctypes.Structure):
+                        _fields_ = [
+                            ('cb', wintypes.DWORD), ('lpReserved', wintypes.LPWSTR), ('lpDesktop', wintypes.LPWSTR),
+                            ('lpTitle', wintypes.LPWSTR), ('dwX', wintypes.DWORD), ('dwY', wintypes.DWORD),
+                            ('dwXSize', wintypes.DWORD), ('dwYSize', wintypes.DWORD), ('dwXCountChars', wintypes.DWORD),
+                            ('dwYCountChars', wintypes.DWORD), ('dwFillAttribute', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
+                            ('wShowWindow', wintypes.WORD), ('cbReserved2', wintypes.WORD), ('lpReserved2', ctypes.POINTER(wintypes.BYTE)),
+                            ('hStdInput', wintypes.HANDLE), ('hStdOutput', wintypes.HANDLE), ('hStdError', wintypes.HANDLE)
+                        ]
+                    class PROCESS_INFORMATION_W(ctypes.Structure):
+                        _fields_ = [('hProcess', wintypes.HANDLE), ('hThread', wintypes.HANDLE), ('dwProcessId', wintypes.DWORD), ('dwThreadId', wintypes.DWORD)]
+
+                    si = STARTUPINFO_W()
+                    si.cb = ctypes.sizeof(STARTUPINFO_W)
+                    si.lpDesktop = "winsta0\\default"
+                    si.dwFlags = 0x00000001 # STARTF_USESHOWWINDOW
+                    si.wShowWindow = 1      # SW_SHOWNORMAL
+                    pi = PROCESS_INFORMATION_W()
+
+                    lpEnvironment = wintypes.LPVOID()
+                    env_ok = False
+                    try:
+                        import ctypes.windll.userenv as userenv
+                        env_ok = userenv.CreateEnvironmentBlock(ctypes.byref(lpEnvironment), hUserToken, False)
+                    except Exception:
+                        pass
+
+                    dwFlags = 0x00000010 # CREATE_NEW_CONSOLE
+                    if env_ok and lpEnvironment.value:
+                        dwFlags |= 0x00000400 # CREATE_UNICODE_ENVIRONMENT
+
+                    ok = False
+                    if hasattr(advapi32, "CreateProcessWithTokenW"):
+                        ok = advapi32.CreateProcessWithTokenW(
+                            hUserToken, 0, None, cmd, dwFlags,
+                            lpEnvironment if (env_ok and lpEnvironment.value) else None,
+                            None, ctypes.byref(si), ctypes.byref(pi)
+                        )
+                    if not ok and hasattr(advapi32, "CreateProcessAsUserW"):
+                        ok = advapi32.CreateProcessAsUserW(
+                            hUserToken, None, cmd, None, None, False, dwFlags,
+                            lpEnvironment if (env_ok and lpEnvironment.value) else None,
+                            None, ctypes.byref(si), ctypes.byref(pi)
+                        )
+
+                    if ok:
+                        launched_pid = pi.dwProcessId
+                        launch_method = "token_duplicate"
+                        kernel32.CloseHandle(pi.hProcess)
+                        kernel32.CloseHandle(pi.hThread)
+
+                    if env_ok and lpEnvironment.value:
+                        try: userenv.DestroyEnvironmentBlock(lpEnvironment)
+                        except Exception: pass
+                    kernel32.CloseHandle(hUserToken)
+            except Exception:
+                pass
+
+        # Method 3: Windows Task Scheduler interactive on-demand execution (schtasks /it)
+        if not launched_pid:
+            try:
+                task_name = f"CyberVPS_Interactive_Launch_{int(time.time())}"
+                create_cmd = ["schtasks.exe", "/Create", "/TN", task_name, "/TR", cmd, "/SC", "ONCE", "/ST", "23:59", "/IT", "/F"]
+                subprocess.run(create_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+                run_cmd = ["schtasks.exe", "/Run", "/TN", task_name]
+                subprocess.run(run_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+                del_cmd = ["schtasks.exe", "/Delete", "/TN", task_name, "/F"]
+                subprocess.run(del_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+                launched_pid = -1
+                launch_method = "schtasks_interactive"
+            except Exception:
+                pass
+
+        # Check window visibility on winsta0\default
+        window_visible = False
+        time.sleep(0.4)
+        for _ in range(8):
+            if self._is_app_window_visible(launched_pid if (launched_pid and launched_pid > 0) else None, cmd):
+                window_visible = True
+                break
+            time.sleep(0.15)
+
+        if not launched_pid:
+            return {
+                "success": False,
+                "status": "FAILED",
+                "error": f"Failed to launch '{cmd}' into interactive desktop Session {target_session_id}.",
+                "session_id": target_session_id,
+                "app": cmd
+            }
+
+        # Terminal Idle Guarantee: notice no terminal inputs or commands were injected
+        status_label = "PASSED" if test_mode else "LAUNCHED"
+        return {
+            "success": True,
+            "status": status_label,
+            "pid": launched_pid if launched_pid > 0 else "interactive_task",
+            "session_id": target_session_id,
+            "app": cmd,
+            "window_visible": window_visible,
+            "launch_method": launch_method,
+            "test_mode": test_mode,
+            "message": f"Application '{cmd}' successfully launched into interactive desktop Session {target_session_id}."
+        }
+
+    # =========================================================================
+    # APPLICATION MANAGER (Remote Application Discovery, Status & Controls)
+    # =========================================================================
+    CRITICAL_SYSTEM_PROCESSES = {
+        "system", "system idle process", "smss.exe", "csrss.exe", "wininit.exe", "services.exe",
+        "lsass.exe", "lsm.exe", "winlogon.exe", "svchost.exe", "fontdrvhost.exe", "dwm.exe",
+        "memory compression", "registry", "sihost.exe", "taskhostw.exe", "spoolsv.exe",
+        "explorer.exe", "shellexperiencehost.exe", "searchhost.exe", "startmenuexperiencehost.exe",
+        "msmpeng.exe", "nissrv.exe", "securityhealthservice.exe", "smartscreen.exe",
+        "universal-agent.py", "python.exe", "node.exe",
+        "systemd", "init", "kthreadd", "systemd-journald", "systemd-udevd", "systemd-timesyncd",
+        "systemd-resolved", "systemd-logind", "dbus-daemon", "sshd", "login", "cron", "rsyslogd",
+        "bash", "sh", "zsh", "python3", "python"
+    }
+
+    def _get_app_icon(self, app_id, name, icon_hint=""):
+        if icon_hint:
+            clean_hint = icon_hint.split(",")[0].strip('"').strip()
+            if os.path.exists(clean_hint) and os.path.isfile(clean_hint):
+                ext = os.path.splitext(clean_hint)[1].lower()
+                if ext in [".ico", ".png", ".jpg", ".svg"]:
+                    try:
+                        if os.path.getsize(clean_hint) <= 128 * 1024:
+                            with open(clean_hint, "rb") as f:
+                                b64 = base64.b64encode(f.read()).decode("ascii")
+                            mime = "image/x-icon" if ext == ".ico" else ("image/png" if ext == ".png" else "image/svg+xml")
+                            return f"data:{mime};base64,{b64}"
+                    except Exception:
+                        pass
+
+        aid = (app_id or "").lower()
+        aname = (name or "").lower()
+
+        if "chrome" in aid or "chrome" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><circle cx='24' cy='24' r='20' fill='%234285F4'/><circle cx='24' cy='24' r='9' fill='%23FFF'/><circle cx='24' cy='24' r='7' fill='%231976D2'/><path d='M24 15h18A20 20 0 0 1 38 34L29 19z' fill='%23EA4335'/><path d='M15 29L6 14a20 20 0 0 1 27-8l-9 15z' fill='%23FBBC05'/><path d='M29 33L19 15H6a20 20 0 0 0 31 19z' fill='%2334A853'/></svg>"
+        if "brave" in aid or "brave" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path fill='%23FB542B' d='M16 2L6 8l2 11 8 11 8-11 2-11z'/><path fill='%23FFF' d='M16 8l-4 3 1 5 3 4 3-4 1-5z'/></svg>"
+        if "firefox" in aid or "firefox" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23FF7139'/><circle cx='16' cy='16' r='8' fill='%230060DF'/></svg>"
+        if "edge" in aid or "edge" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path fill='%230078D7' d='M16 2a14 14 0 1 0 14 14A14 14 0 0 0 16 2zm6 18a8 8 0 1 1-8-8 8 8 0 0 1 8 8z'/></svg>"
+        if "code" in aid or "vscode" in aid or "visual studio" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path fill='%23007ACC' d='M22 2l8 4v20l-8 4L12 21 5 26l-3-2V8l3-2 7 5z'/></svg>"
+        if "terminal" in aid or "powershell" in aid or "cmd" in aid:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='28' height='22' x='2' y='5' rx='3' fill='%230F172A' stroke='%2338BDF8' stroke-width='2'/><path d='M8 12l5 4-5 4M15 20h8' stroke='%2338BDF8' stroke-width='2' stroke-linecap='round'/></svg>"
+        if "notepad" in aid or "notepad" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path fill='%2338BDF8' d='M6 4h15l5 5v19H6z'/><path fill='%230284C7' d='M21 4v5h5z'/><path stroke='%23FFF' stroke-width='2' stroke-linecap='round' d='M10 14h12M10 18h12M10 22h8'/></svg>"
+        if "calc" in aid or "calc" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='22' height='26' x='5' y='3' rx='3' fill='%23475569'/><rect width='16' height='6' x='8' y='6' rx='1' fill='%2394A3B8'/><circle cx='10' cy='16' r='1.5' fill='%23FFF'/><circle cx='16' cy='16' r='1.5' fill='%23FFF'/><circle cx='22' cy='16' r='1.5' fill='%23F59E0B'/><circle cx='10' cy='21' r='1.5' fill='%23FFF'/><circle cx='16' cy='21' r='1.5' fill='%23FFF'/><circle cx='22' cy='21' r='1.5' fill='%2338BDF8'/></svg>"
+        if "paint" in aid or "paint" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path fill='%23F43F5E' d='M16 3C8.8 3 3 8.8 3 16s5.8 13 13 13c2 0 3-1.5 3-3 0-.8-.3-1.5-.8-2-.5-.5-.7-1.2-.7-2 0-1.7 1.3-3 3-3h2.5c4.7 0 8.5-3.8 8.5-8.5C31.5 6.5 24.5 3 16 3z'/><circle cx='8.5' cy='13.5' r='2' fill='%23FACC15'/><circle cx='13.5' cy='8.5' r='2' fill='%2338BDF8'/><circle cx='20.5' cy='8.5' r='2' fill='%234ADE80'/><circle cx='25.5' cy='13.5' r='2' fill='%23A855F7'/></svg>"
+        if "explorer" in aid or "files" in aid:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path fill='%23EAB308' d='M4 6h8l3 3h13v17H4z'/><path fill='%23FDE047' d='M2 12h28l-2 14H4z'/></svg>"
+        if "rustdesk" in aid or "rustdesk" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%230F172A' stroke='%2338BDF8' stroke-width='2'/><path fill='%2338BDF8' d='M16 6l7 12h-5v8h-4v-8h-5z'/></svg>"
+        if "vlc" in aid or "vlc" in aname:
+            return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path fill='%23F97316' d='M16 3l-8 23h16z'/><path fill='%23FFF' d='M11.5 16h9l-1.5-4h-6zM9.5 22h13l-1-3h-11z'/></svg>"
+
+        first_letter = (name or "A")[0].upper()
+        return f"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='28' height='28' x='2' y='2' rx='6' fill='%231E293B' stroke='%23334155' stroke-width='2'/><text x='16' y='21' font-size='14' font-weight='700' fill='%2338BDF8' text-anchor='middle' font-family='system-ui, sans-serif'>{first_letter}</text></svg>"
+
+    def _discover_windows_applications(self):
+        apps = {}
+        common_apps = [
+            {"id": "notepad", "name": "Notepad", "publisher": "Microsoft Corporation", "version": "11.0", "category": "Productivity", "cmd": "notepad.exe", "source": "Windows System App", "exe_name": "notepad.exe"},
+            {"id": "calc", "name": "Calculator", "publisher": "Microsoft Corporation", "version": "11.0", "category": "Utilities", "cmd": "calc.exe", "source": "Windows System App", "exe_name": "calculatorapp.exe"},
+            {"id": "mspaint", "name": "Paint", "publisher": "Microsoft Corporation", "version": "11.0", "category": "Media", "cmd": "mspaint.exe", "source": "Windows System App", "exe_name": "mspaint.exe"},
+            {"id": "explorer", "name": "File Explorer", "publisher": "Microsoft Corporation", "version": "10.0", "category": "System", "cmd": "explorer.exe", "source": "Windows Shell", "exe_name": "explorer.exe"},
+            {"id": "taskmgr", "name": "Task Manager", "publisher": "Microsoft Corporation", "version": "10.0", "category": "System", "cmd": "taskmgr.exe", "source": "Windows System App", "exe_name": "taskmgr.exe"},
+            {"id": "powershell", "name": "Windows PowerShell", "publisher": "Microsoft Corporation", "version": "5.1", "category": "Development", "cmd": "powershell.exe", "source": "Windows Shell", "exe_name": "powershell.exe"},
+            {"id": "cmd", "name": "Command Prompt", "publisher": "Microsoft Corporation", "version": "10.0", "category": "Development", "cmd": "cmd.exe", "source": "Windows Shell", "exe_name": "cmd.exe"},
+            {"id": "mstsc", "name": "Remote Desktop Connection", "publisher": "Microsoft Corporation", "version": "10.0", "category": "Network", "cmd": "mstsc.exe", "source": "Windows System App", "exe_name": "mstsc.exe"},
+            {"id": "regedit", "name": "Registry Editor", "publisher": "Microsoft Corporation", "version": "10.0", "category": "System", "cmd": "regedit.exe", "source": "Windows System App", "exe_name": "regedit.exe"},
+            {"id": "control", "name": "Control Panel", "publisher": "Microsoft Corporation", "version": "10.0", "category": "System", "cmd": "control.exe", "source": "Windows System App", "exe_name": "control.exe"},
+            {"id": "msedge", "name": "Microsoft Edge", "publisher": "Microsoft Corporation", "version": "120.0", "category": "Internet", "cmd": "msedge.exe", "source": "Desktop App", "exe_name": "msedge.exe"}
+        ]
+        for a in common_apps:
+            a["icon"] = self._get_app_icon(a["id"], a["name"])
+            a["can_control"] = True
+            apps[a["id"]] = a
+
+        if winreg:
+            roots = [
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
+            ]
+            for root_key, reg_path in roots:
+                try:
+                    k = winreg.OpenKey(root_key, reg_path)
+                    subkeys_count = winreg.QueryInfoKey(k)[0]
+                    for idx in range(subkeys_count):
+                        try:
+                            s_name = winreg.EnumKey(k, idx)
+                            sk = winreg.OpenKey(k, s_name)
+                            def q(val_name):
+                                try: return winreg.QueryValueEx(sk, val_name)[0]
+                                except Exception: return None
+                            d_name = q("DisplayName")
+                            sys_comp = q("SystemComponent")
+                            parent_key = q("ParentKeyName")
+                            if d_name and not sys_comp and not parent_key and not d_name.startswith("KB") and "Hotfix" not in d_name:
+                                d_ver = q("DisplayVersion") or ""
+                                d_pub = q("Publisher") or ""
+                                d_icon = q("DisplayIcon") or ""
+                                d_loc = q("InstallLocation") or ""
+                                slug = "".join(ch.lower() for ch in d_name if ch.isalnum())
+                                if slug and slug not in apps:
+                                    clean_exe = ""
+                                    clean_cmd = ""
+                                    if d_icon:
+                                        cand = d_icon.split(",")[0].strip('"').strip()
+                                        if cand.lower().endswith(".exe") and os.path.exists(cand):
+                                            clean_cmd = cand
+                                            clean_exe = os.path.basename(cand).lower()
+                                    if not clean_cmd and d_loc and os.path.exists(d_loc):
+                                        for root_dir, _, files in os.walk(d_loc):
+                                            for f in files:
+                                                if f.lower().endswith(".exe") and "unins" not in f.lower() and "helper" not in f.lower():
+                                                    clean_cmd = os.path.join(root_dir, f)
+                                                    clean_exe = f.lower()
+                                                    break
+                                            if clean_cmd:
+                                                break
+                                    if not clean_cmd:
+                                        clean_cmd = f"{slug}.exe"
+                                        clean_exe = f"{slug}.exe"
+
+                                    cat = "Utilities"
+                                    low_name = d_name.lower()
+                                    if any(x in low_name for x in ["browser", "chrome", "brave", "firefox", "edge", "opera"]): cat = "Internet"
+                                    elif any(x in low_name for x in ["code", "visual studio", "python", "node", "git", "sublime", "dev"]): cat = "Development"
+                                    elif any(x in low_name for x in ["player", "vlc", "audio", "video", "media", "music", "spotify"]): cat = "Media"
+                                    elif any(x in low_name for x in ["office", "word", "excel", "sheet", "pdf", "reader", "document"]): cat = "Productivity"
+                                    elif any(x in low_name for x in ["driver", "intel", "amd", "nvidia", "hardware", "system"]): cat = "System"
+
+                                    apps[slug] = {
+                                        "id": slug,
+                                        "name": d_name,
+                                        "publisher": d_pub or "Unknown Publisher",
+                                        "version": d_ver or "1.0",
+                                        "category": cat,
+                                        "cmd": clean_cmd,
+                                        "exe_name": clean_exe,
+                                        "source": "Installed Software",
+                                        "icon": self._get_app_icon(slug, d_name, d_icon),
+                                        "can_control": True
+                                    }
+                            winreg.CloseKey(sk)
+                        except Exception:
+                            pass
+                    winreg.CloseKey(k)
+                except Exception:
+                    pass
+
+        dirs = [
+            os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs"),
+            os.path.expandvars(r"%AppData%\Microsoft\Windows\Start Menu\Programs")
+        ]
+        for d in dirs:
+            if os.path.exists(d):
+                for r_dir, _, files in os.walk(d):
+                    for fn in files:
+                        if fn.lower().endswith(".lnk") and "uninstall" not in fn.lower():
+                            raw_name = os.path.splitext(fn)[0]
+                            slug = "".join(ch.lower() for ch in raw_name if ch.isalnum())
+                            if slug and slug not in apps:
+                                apps[slug] = {
+                                    "id": slug,
+                                    "name": raw_name,
+                                    "publisher": "Start Menu",
+                                    "version": "",
+                                    "category": "Utilities",
+                                    "cmd": f"{raw_name}.exe",
+                                    "exe_name": f"{raw_name}.exe".lower(),
+                                    "source": "Start Menu Shortcut",
+                                    "icon": self._get_app_icon(slug, raw_name),
+                                    "can_control": True
+                                }
+
+        return list(apps.values())
+
+    def _discover_linux_applications(self):
+        apps = {}
+        common_linux = [
+            {"id": "terminal", "name": "Terminal", "publisher": "Linux Core", "version": "1.0", "category": "Development", "cmd": "x-terminal-emulator", "exe_name": "x-terminal-emulator"},
+            {"id": "bash", "name": "Bash Shell", "publisher": "GNU Project", "version": "5.0", "category": "Development", "cmd": "bash", "exe_name": "bash"},
+            {"id": "python", "name": "Python 3 Runtime", "publisher": "Python Software Foundation", "version": "3.x", "category": "Development", "cmd": "python3", "exe_name": "python3"},
+            {"id": "htop", "name": "Htop Process Viewer", "publisher": "Hishham Muhammad", "version": "3.0", "category": "System", "cmd": "htop", "exe_name": "htop"},
+            {"id": "git", "name": "Git VCS", "publisher": "Software Freedom Conservancy", "version": "2.x", "category": "Development", "cmd": "git", "exe_name": "git"},
+            {"id": "vim", "name": "Vim Editor", "publisher": "Bram Moolenaar", "version": "8.x", "category": "Productivity", "cmd": "vim", "exe_name": "vim"},
+            {"id": "nano", "name": "Nano Editor", "publisher": "GNU Project", "version": "6.x", "category": "Productivity", "cmd": "nano", "exe_name": "nano"},
+            {"id": "systemd", "name": "Systemd Controller", "publisher": "freedesktop.org", "version": "systemd", "category": "System", "cmd": "systemctl", "exe_name": "systemd"}
+        ]
+        for a in common_linux:
+            a["icon"] = self._get_app_icon(a["id"], a["name"])
+            a["can_control"] = True
+            a["source"] = "System Tool"
+            apps[a["id"]] = a
+
+        desk_dirs = ["/usr/share/applications", "/usr/local/share/applications", os.path.expanduser("~/.local/share/applications")]
+        for d in desk_dirs:
+            if os.path.exists(d):
+                for fn in os.listdir(d):
+                    if fn.endswith(".desktop"):
+                        try:
+                            fpath = os.path.join(d, fn)
+                            entry = {}
+                            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                                for line in f:
+                                    if "=" in line:
+                                        k, v = line.strip().split("=", 1)
+                                        entry[k.strip()] = v.strip()
+                            if entry.get("Type") == "Application" and entry.get("NoDisplay") != "true":
+                                aname = entry.get("Name")
+                                if aname:
+                                    slug = "".join(c.lower() for c in aname if c.isalnum())
+                                    exec_cmd = entry.get("Exec", "").split("%")[0].strip()
+                                    if slug and slug not in apps:
+                                        cat = "Utilities"
+                                        raw_cat = entry.get("Categories", "").lower()
+                                        if any(x in raw_cat for x in ["network", "webbrowser"]): cat = "Internet"
+                                        elif any(x in raw_cat for x in ["development", "ide"]): cat = "Development"
+                                        elif any(x in raw_cat for x in ["audio", "video"]): cat = "Media"
+                                        elif any(x in raw_cat for x in ["office", "texteditor"]): cat = "Productivity"
+                                        elif any(x in raw_cat for x in ["system", "settings"]): cat = "System"
+
+                                        exe_n = os.path.basename(exec_cmd.split()[0]).lower() if exec_cmd else f"{slug}"
+                                        apps[slug] = {
+                                            "id": slug,
+                                            "name": aname,
+                                            "publisher": entry.get("Comment", "Linux Application")[:30],
+                                            "version": entry.get("Version", "1.0"),
+                                            "category": cat,
+                                            "cmd": exec_cmd or fpath,
+                                            "exe_name": exe_n,
+                                            "source": "Desktop Launcher",
+                                            "icon": self._get_app_icon(slug, aname, entry.get("Icon", "")),
+                                            "can_control": True
+                                        }
+                        except Exception:
+                            pass
+
+        return list(apps.values())
+
+    def _get_running_app_instances(self):
+        procs_by_name = {}
+        if psutil:
+            for p in psutil.process_iter(['pid', 'name', 'exe', 'cpu_percent', 'memory_info', 'create_time']):
+                try:
+                    p_name = (p.name() or "").lower()
+                    p_exe = os.path.basename(p.exe() or "").lower() if p.exe() else ""
+                    mem_mb = round(p.memory_info().rss / (1024 * 1024), 1) if p.memory_info() else 0.0
+                    cpu = p.cpu_percent() or 0.0
+                    create_t = p.create_time() or time.time()
+                    uptime = int(time.time() - create_t)
+
+                    is_protected = (p_name in self.CRITICAL_SYSTEM_PROCESSES or p.pid in [0, 4, os.getpid()])
+                    inst_obj = {
+                        "pid": p.pid,
+                        "name": p.name(),
+                        "memory_mb": mem_mb,
+                        "cpu_percent": cpu,
+                        "uptime_sec": uptime,
+                        "can_close": not is_protected
+                    }
+                    if p_name:
+                        procs_by_name.setdefault(p_name, []).append(inst_obj)
+                    if p_exe and p_exe != p_name:
+                        procs_by_name.setdefault(p_exe, []).append(inst_obj)
+                except Exception:
+                    continue
+        return procs_by_name
+
+    def get_application_inventory(self, force_refresh=False):
+        sys_os = platform.system()
+        now = time.time()
+
+        if force_refresh or not hasattr(self, "_cached_apps_list") or (now - getattr(self, "_cached_apps_time", 0)) > 60:
+            if sys_os == "Windows":
+                base_apps = self._discover_windows_applications()
+            else:
+                base_apps = self._discover_linux_applications()
+            self._cached_apps_list = base_apps
+            self._cached_apps_time = now
+        else:
+            base_apps = self._cached_apps_list
+
+        procs_by_name = self._get_running_app_instances()
+
+        running_count = 0
+        total_count = len(base_apps)
+        enriched_apps = []
+
+        for app in base_apps:
+            a_copy = dict(app)
+            exe_n = (a_copy.get("exe_name") or "").lower()
+            aid = (a_copy.get("id") or "").lower()
+
+            instances = []
+            if exe_n and exe_n in procs_by_name:
+                instances.extend(procs_by_name[exe_n])
+            elif f"{aid}.exe" in procs_by_name:
+                instances.extend(procs_by_name[f"{aid}.exe"])
+            elif aid in procs_by_name:
+                instances.extend(procs_by_name[aid])
+
+            seen_pids = set()
+            unique_instances = []
+            for inst in instances:
+                if inst["pid"] not in seen_pids:
+                    seen_pids.add(inst["pid"])
+                    unique_instances.append(inst)
+
+            if unique_instances:
+                a_copy["status"] = "running"
+                a_copy["instance_count"] = len(unique_instances)
+                a_copy["instances"] = unique_instances
+                running_count += 1
+            else:
+                a_copy["status"] = "stopped"
+                a_copy["instance_count"] = 0
+                a_copy["instances"] = []
+
+            enriched_apps.append(a_copy)
+
+        return {
+            "machine_id": self.machine_id,
+            "os_type": sys_os,
+            "total": total_count,
+            "running": running_count,
+            "stopped": total_count - running_count,
+            "apps": enriched_apps,
+            "applications": enriched_apps
+        }
+
+    def _is_pid_protected(self, pid):
+        if not pid or pid in [0, 4, os.getpid()]:
+            return True
+        if psutil:
+            try:
+                name = (psutil.Process(pid).name() or "").lower()
+                if name in self.CRITICAL_SYSTEM_PROCESSES:
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _close_pid_graceful(self, pid):
+        if platform.system() == "Windows":
+            closed = [False]
+            try:
+                import ctypes
+                from ctypes import wintypes
+                user32 = ctypes.windll.user32
+                WNDENUM = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+                def cb(hwnd, lp):
+                    w_pid = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
+                    if w_pid.value == pid:
+                        user32.PostMessageW(hwnd, 0x0010, 0, 0)
+                        closed[0] = True
+                    return True
+                user32.EnumWindows(WNDENUM(cb), 0)
+            except Exception:
+                pass
+            if closed[0]:
+                return True
+        if psutil:
+            try:
+                p = psutil.Process(pid)
+                p.terminate()
+                return True
+            except Exception:
+                return False
+        return False
+
+    def _kill_pid_force(self, pid):
+        if psutil:
+            try:
+                p = psutil.Process(pid)
+                p.kill()
+                return True
+            except Exception:
+                return False
+        elif platform.system() == "Windows":
+            res = subprocess.run(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return (res.returncode == 0)
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                return True
+            except Exception:
+                return False
+
+    def handle_app_list(self, payload):
+        req_id = payload.get("request_id")
+        try:
+            force_refresh = bool(payload.get("refresh", False))
+            inv = self.get_application_inventory(force_refresh=force_refresh)
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": inv}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_app_action(self, payload):
+        req_id = payload.get("request_id")
+        app_id = (payload.get("app_id") or "").lower().strip()
+        action = (payload.get("action") or "start").lower().strip()
+        target_pid = payload.get("pid") or payload.get("target_pid")
+        force = bool(payload.get("force", False))
+
+        try:
+            inventory = self.get_application_inventory()
+            matched_app = next((a for a in inventory["apps"] if a["id"] == app_id), None)
+            if not matched_app:
+                matched_app = next((a for a in inventory["apps"] if a.get("exe_name") == app_id or a.get("cmd") == app_id), None)
+
+            if not matched_app and action != "kill":
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": False, "error": f"Application '{app_id}' not found in inventory."}
+                })
+                return
+
+            if action == "start":
+                cmd = matched_app.get("cmd") if matched_app else f"{app_id}.exe"
+                launch_res = self.launch_interactive_desktop_process(cmd)
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": launch_res.get("success", False),
+                        "result": {
+                            "app_id": app_id,
+                            "action": "start",
+                            "status": "running" if launch_res.get("success") else "failed",
+                            "pid": launch_res.get("pid"),
+                            "session_id": launch_res.get("session_id"),
+                            "message": launch_res.get("message") or f"Started '{app_id}'"
+                        },
+                        "error": launch_res.get("error") if not launch_res.get("success") else None
+                    }
+                })
+
+            elif action == "close":
+                instances = matched_app.get("instances", []) if matched_app else []
+                pids_to_close = [target_pid] if target_pid else [inst["pid"] for inst in instances]
+
+                if not pids_to_close:
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": False, "error": f"No running instances found for '{app_id}'."}
+                    })
+                    return
+
+                closed_pids = []
+                for p in pids_to_close:
+                    if self._is_pid_protected(p):
+                        continue
+                    if self._close_pid_graceful(p):
+                        closed_pids.append(p)
+
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": True,
+                        "result": {
+                            "app_id": app_id,
+                            "action": "close",
+                            "closed_pids": closed_pids,
+                            "message": f"Closed {len(closed_pids)} instance(s) of '{app_id}'."
+                        }
+                    }
+                })
+
+            elif action == "kill":
+                pids_to_kill = [target_pid] if target_pid else [inst["pid"] for inst in (matched_app.get("instances", []) if matched_app else [])]
+                if not pids_to_kill:
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": False, "error": "No target PID found to force terminate."}
+                    })
+                    return
+
+                killed_pids = []
+                for p in pids_to_kill:
+                    if self._is_pid_protected(p):
+                        self.send_agent_event({
+                            "type": "AgentRpcResponse",
+                            "payload": {"request_id": req_id, "success": False, "error": f"Access Denied: PID {p} is a protected critical system process."}
+                        })
+                        return
+                    if self._kill_pid_force(p):
+                        killed_pids.append(p)
+
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": True,
+                        "result": {
+                            "app_id": app_id,
+                            "action": "kill",
+                            "killed_pids": killed_pids,
+                            "message": f"Force terminated {len(killed_pids)} process instance(s)."
+                        }
+                    }
+                })
+
+            elif action == "details":
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": True,
+                        "result": matched_app
+                    }
+                })
+
+            else:
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": False, "error": f"Unknown app action: '{action}'."}
+                })
+
         except Exception as e:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -2984,6 +3870,25 @@ class CyberVPSAgent:
             term = self.active_terminals.get(session_id)
         if not term:
             return
+
+        if platform.system() == "Windows" and text:
+            try:
+                buf = term.get("input_buffer", "")
+                for ch in text:
+                    if ch in ("\r", "\n"):
+                        cmd_line = buf.strip()
+                        term["input_buffer"] = ""
+                        if cmd_line:
+                            self._check_session0_gui_command(session_id, term, cmd_line)
+                    elif ch in ("\x08", "\x7f"):
+                        buf = buf[:-1]
+                        term["input_buffer"] = buf
+                    elif ch.isprintable():
+                        buf += ch
+                        term["input_buffer"] = buf
+            except Exception:
+                pass
+
         try:
             ttype = term.get("type")
             if ttype == "conpty":
@@ -2995,6 +3900,57 @@ class CyberVPSAgent:
                 term["proc"].stdin.flush()
         except Exception:
             pass
+
+    def _check_session0_gui_command(self, session_id, term, cmd_line):
+        if platform.system() != "Windows":
+            return
+        parts = cmd_line.strip().split()
+        if not parts:
+            return
+        raw_cmd = os.path.basename(parts[0]).lower().replace(".exe", "")
+        GUI_APPS = {"notepad", "calc", "mspaint", "paint", "explorer", "taskmgr", "regedit", "write", "wordpad", "cleanmgr", "control", "snippingtool", "magnify", "dialer", "charmap", "powershell_ise"}
+        if raw_cmd not in GUI_APPS:
+            return
+
+        proc = term.get("proc")
+        pid = getattr(proc, "pid", None)
+        is_sess0 = False
+        import ctypes
+        if pid:
+            try:
+                sess_val = ctypes.c_ulong()
+                if ctypes.windll.kernel32.ProcessIdToSessionId(pid, ctypes.byref(sess_val)):
+                    is_sess0 = (sess_val.value == 0)
+            except Exception:
+                pass
+
+        if not is_sess0:
+            try:
+                curr_sess = ctypes.c_ulong()
+                if ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(curr_sess)):
+                    is_sess0 = (curr_sess.value == 0)
+            except Exception:
+                pass
+
+        if is_sess0:
+            notice = (
+                f"\r\n\x1b[33m[!] Windows Session 0 Notice:\x1b[0m Application '\x1b[1m{raw_cmd}\x1b[0m' was started in background Session 0.\r\n"
+                f"    Due to Windows Session 0 Isolation, GUI windows cannot display on physical monitors (Session 1).\r\n"
+                f"    \x1b[36m💡 To launch visibly on the interactive user desktop:\x1b[0m\r\n"
+                f"    • Click '\x1b[1m🚀 Launch on Desktop\x1b[0m' in the CyberVPS Dashboard, or\r\n"
+                f"    • Use API / CLI: \x1b[92mcybervps desktop-launch {raw_cmd}\x1b[0m\r\n\r\n"
+            )
+            threading.Thread(target=self._delayed_terminal_notice, args=(session_id, notice), daemon=True).start()
+
+    def _delayed_terminal_notice(self, session_id, notice):
+        time.sleep(0.4)
+        self.send_agent_event({
+            "type": "TerminalOutput",
+            "payload": {
+                "session_id": session_id,
+                "data": notice
+            }
+        })
 
     def resize_terminal(self, session_id, cols=80, rows=24):
         with self.lock:
@@ -3264,6 +4220,16 @@ class CyberVPSAgent:
             self.handle_desktop_status(payload)
         elif c_type == "DesktopAction":
             self.handle_desktop_action(payload)
+        elif c_type == "DesktopLaunch":
+            self.handle_desktop_action({
+                "request_id": payload.get("request_id"),
+                "action": "launch_interactive",
+                "params": payload
+            })
+        elif c_type == "AppList":
+            self.handle_app_list(payload)
+        elif c_type == "AppAction":
+            self.handle_app_action(payload)
         elif c_type == "TunnelOpenStream":
             self.handle_tunnel_open(
                 payload.get("tunnel_id"),

@@ -898,10 +898,14 @@
     <ul class="nav-list">
       <li><a class="nav-item active" onclick="navigate('overview')"><svg viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>Overview</a></li>
       <li><a class="nav-item" onclick="navigate('machines')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Instances Fleet</a></li>
+      <li><a class="nav-item" onclick="navigate('apps')"><svg viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>Applications</a></li>
+      <li><a class="nav-item" onclick="navigate('desktop')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/><circle cx="12" cy="10" r="2"/></svg>Remote Desktop</a></li>
+      <li><a class="nav-item" onclick="navigate('backends')"><svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 9 6 6m0-6-6 6"/></svg>Multi-Backend HA</a></li>
+      <li><a class="nav-item" onclick="navigate('hosting')"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>Custom Hosting</a></li>
+      <li><a class="nav-item" onclick="navigate('infra')"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>WireGuard & Infra</a></li>
       <li><a class="nav-item" onclick="navigate('details')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>Device Intel (Neofetch)</a></li>
       <li><a class="nav-item" onclick="navigate('files')"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager (SFTP)</a></li>
       <li><a class="nav-item" onclick="navigate('terminal')"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Web Terminal</a></li>
-      <li><a class="nav-item" onclick="navigate('desktop')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/><circle cx="12" cy="10" r="2"/></svg>Remote Desktop</a></li>
       <li><a class="nav-item" onclick="navigate('services')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Processes & Services</a></li>
       <li><a class="nav-item" onclick="navigate('bridge')"><svg viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>TCP Port Bridge</a></li>
       <li><a class="nav-item" onclick="navigate('vpn')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20M2 12h20"/></svg>Virtual Mesh</a></li>
@@ -939,6 +943,14 @@
       <div class="header-right">
         <button class="btn btn-secondary btn-icon" onclick="toggleTheme()" title="Switch Theme">
           <svg id="theme-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
+        <button class="btn btn-secondary" onclick="runFleetActiveCheck()" title="Fleet Active Check" style="display:flex; align-items:center; gap:0.4rem;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--status-warning)" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span>Fleet Check</span>
+        </button>
+        <button class="btn btn-secondary" id="btn-admin-auth" onclick="handleAdminAuthButton()" title="Administrator Authentication" style="display:flex; align-items:center; gap:0.4rem;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span id="lbl-admin-auth">Admin</span>
         </button>
         <button class="btn btn-secondary" onclick="syncData(true)" title="Force Refresh">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -1587,6 +1599,7 @@
                   <span id="terminal-machine-meta" style="color:var(--text-muted); font-size:0.72rem; padding: 0.15rem 0.5rem; background:rgba(255,255,255,0.05); border-radius:4px; font-family:var(--font-mono);">No Target</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:0.5rem;">
+                  <span id="terminal-target-badge" class="badge badge-subtle" title="Windows Session 0 Isolation: Background Shell vs Interactive Desktop" style="font-size:0.68rem; font-weight:600; background:rgba(56,189,248,0.1); color:#38bdf8; border:1px solid rgba(56,189,248,0.25);">Target: Session 0 (Headless)</span>
                   <span id="terminal-profile-badge" class="badge" style="display:none; font-size:0.7rem; font-weight:700;"></span>
                   <span id="terminal-status-badge" class="badge badge-subtle">Disconnected</span>
                 </div>
@@ -1595,7 +1608,7 @@
               <!-- Quick command buttons strip -->
               <div class="terminal-quick-bar" id="terminal-quick-bar">
                 <span class="quick-chip-label">Quick Actions:</span>
-                <span id="terminal-quick-chips" style="display:inline-flex; gap:0.4rem; flex-wrap:wrap;">
+                <span id="terminal-quick-chips" style="display:inline-flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('whoami')">whoami</button>
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('uname -a')">uname -a</button>
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('ls -la')">ls -la</button>
@@ -1605,6 +1618,18 @@
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('ip a')">ip a</button>
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('uptime')">uptime</button>
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('clear')">clear</button>
+                </span>
+                <span style="display:inline-flex; align-items:center; gap:0.35rem; margin-left:auto; flex-wrap:wrap;">
+                  <span style="font-size:0.7rem; color:var(--text-muted); font-weight:600;">Visible Desktop:</span>
+                  <button class="quick-cmd-chip" onclick="launchInteractiveDesktopApp('notepad.exe')" title="Launch Notepad visibly on active desktop screen" style="color:#38bdf8; border-color:rgba(56,189,248,0.4); background:rgba(56,189,248,0.1);">
+                    🚀 Notepad
+                  </button>
+                  <button class="quick-cmd-chip" onclick="launchInteractiveDesktopApp('calc.exe')" title="Launch Calculator visibly on active desktop screen">
+                    🧮 Calc
+                  </button>
+                  <button class="quick-cmd-chip" onclick="promptDesktopLaunch()" title="Launch custom app on physical desktop">
+                    ➕ Launch...
+                  </button>
                 </span>
               </div>
 
@@ -1795,6 +1820,47 @@
               </div>
             </div>
 
+            <!-- Interactive GUI App Launcher on Physical Desktop Card -->
+            <div style="margin-top:1.25rem; padding:1.15rem 1.25rem; background:linear-gradient(135deg, rgba(56,189,248,0.06), rgba(139,92,246,0.06)); border:1px solid rgba(56,189,248,0.25); border-radius:var(--radius-sm);">
+              <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:0.75rem;">
+                <div>
+                  <div style="font-size:0.9rem; font-weight:700; color:var(--text-primary); display:flex; align-items:center; gap:0.5rem;">
+                    <svg viewBox="0 0 24 24" style="width:16px; height:16px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><path d="m18 15-6-6-6 6"/><path d="M12 9v12"/></svg>
+                    Interactive Desktop GUI Application Launcher (Physical Display)
+                  </div>
+                  <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">
+                    Launch visible graphical applications directly into the logged-in user desktop (Session 1), overcoming Windows Session 0 Isolation.
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                  <label style="font-size:0.72rem; color:var(--text-muted); display:flex; align-items:center; gap:4px; margin:0; cursor:pointer;">
+                    <input type="checkbox" id="chk-desktop-test-mode" style="cursor:pointer;"> Test Mode (Verify Visibility)
+                  </label>
+                </div>
+              </div>
+
+              <div style="display:flex; flex-wrap:wrap; align-items:center; gap:0.6rem;">
+                <button class="btn btn-primary" onclick="launchInteractiveDesktopApp('notepad.exe', document.getElementById('chk-desktop-test-mode')?.checked)" style="font-size:0.78rem; padding:0.35rem 0.85rem;">
+                  📝 Launch Notepad
+                </button>
+                <button class="btn btn-secondary" onclick="launchInteractiveDesktopApp('calc.exe', document.getElementById('chk-desktop-test-mode')?.checked)" style="font-size:0.78rem; padding:0.35rem 0.85rem;">
+                  🧮 Launch Calculator
+                </button>
+                <button class="btn btn-secondary" onclick="launchInteractiveDesktopApp('mspaint.exe', document.getElementById('chk-desktop-test-mode')?.checked)" style="font-size:0.78rem; padding:0.35rem 0.85rem;">
+                  🎨 Launch Paint
+                </button>
+
+                <div style="display:flex; align-items:center; gap:0.4rem; margin-left:auto; flex:1; min-width:240px; max-width:400px;">
+                  <input type="text" id="interactive-app-input" class="form-control" placeholder="Executable (e.g. notepad.exe, explorer.exe)..." style="font-size:0.78rem; padding:0.35rem 0.65rem;">
+                  <button class="btn btn-secondary" onclick="launchInteractiveDesktopApp(document.getElementById('interactive-app-input')?.value, document.getElementById('chk-desktop-test-mode')?.checked)" style="font-size:0.78rem; padding:0.35rem 0.75rem; white-space:nowrap;">
+                    Launch
+                  </button>
+                </div>
+              </div>
+
+              <div id="desktop-launch-result" style="display:none; margin-top:0.65rem; padding:0.45rem 0.75rem; border-radius:4px; font-size:0.76rem; font-family:var(--font-mono);"></div>
+            </div>
+
             <!-- Active Desktop Sessions Section -->
             <div style="margin-top:1.5rem;">
               <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
@@ -1836,6 +1902,336 @@
               <button class="btn btn-secondary" onclick="revokeAllDesktopBridges()" style="font-size:0.72rem; padding:0.25rem 0.65rem;">
                 Disconnect All Desktop Bridges
               </button>
+            </div>
+          </div>
+        </div>
+      <!-- VIEW: REMOTE APPLICATION MANAGER -->
+      <div id="view-apps" class="view-panel" style="display:none;">
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem;">
+            <div>
+              <div class="card-title">Remote Application Manager</div>
+              <div class="card-desc">Automatic application discovery with real brand icons, live instance metrics, visible desktop launch (Session 0 isolation bypass), and graceful close</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+              <select id="apps-machine-select" class="form-control" style="font-size:0.8rem; padding:0.35rem 0.65rem; min-width:200px;" onchange="onAppsMachineChange()">
+                <option value="">Select target machine...</option>
+              </select>
+              <button class="btn btn-secondary" onclick="syncAppsInventory(true)" title="Force Rescan Applications">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>Rescan OS Apps</span>
+              </button>
+            </div>
+          </div>
+          <div class="card-body">
+            <!-- App KPI Counters -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:1rem; margin-bottom:1.25rem;">
+              <div style="background:var(--bg-base); padding:0.85rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Discovered Applications</div>
+                <div style="font-size:1.6rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;" id="apps-kpi-total">0</div>
+              </div>
+              <div style="background:var(--bg-base); padding:0.85rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Running Instances</div>
+                <div style="font-size:1.6rem; font-weight:700; color:var(--status-success); margin-top:0.25rem;" id="apps-kpi-running">0</div>
+              </div>
+              <div style="background:var(--bg-base); padding:0.85rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Stopped Applications</div>
+                <div style="font-size:1.6rem; font-weight:700; color:var(--text-secondary); margin-top:0.25rem;" id="apps-kpi-stopped">0</div>
+              </div>
+              <div style="background:var(--bg-base); padding:0.85rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Target Environment</div>
+                <div style="font-size:1.1rem; font-weight:600; color:var(--accent-cyan); margin-top:0.45rem;" id="apps-target-env">-</div>
+              </div>
+            </div>
+
+            <!-- Category Filter Chips & Search Bar -->
+            <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:1.25rem;">
+              <div style="display:flex; flex-wrap:wrap; gap:0.35rem;" id="apps-category-chips">
+                <button class="btn btn-secondary active-chip" onclick="filterAppCategory('all')" id="chip-all" style="font-size:0.74rem; padding:0.25rem 0.65rem;">All</button>
+                <button class="btn btn-secondary" onclick="filterAppCategory('running')" id="chip-running" style="font-size:0.74rem; padding:0.25rem 0.65rem;">🟢 Running</button>
+                <button class="btn btn-secondary" onclick="filterAppCategory('Productivity')" id="chip-Productivity" style="font-size:0.74rem; padding:0.25rem 0.65rem;">Productivity</button>
+                <button class="btn btn-secondary" onclick="filterAppCategory('Internet')" id="chip-Internet" style="font-size:0.74rem; padding:0.25rem 0.65rem;">Internet</button>
+                <button class="btn btn-secondary" onclick="filterAppCategory('Development')" id="chip-Development" style="font-size:0.74rem; padding:0.25rem 0.65rem;">Development</button>
+                <button class="btn btn-secondary" onclick="filterAppCategory('System')" id="chip-System" style="font-size:0.74rem; padding:0.25rem 0.65rem;">System</button>
+                <button class="btn btn-secondary" onclick="filterAppCategory('Media')" id="chip-Media" style="font-size:0.74rem; padding:0.25rem 0.65rem;">Media</button>
+                <button class="btn btn-secondary" onclick="filterAppCategory('Utilities')" id="chip-Utilities" style="font-size:0.74rem; padding:0.25rem 0.65rem;">Utilities</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:0.5rem; flex:1; min-width:220px; max-width:320px;">
+                <input type="text" id="apps-search-input" class="form-control" placeholder="Search application, publisher or exe..." style="font-size:0.78rem; padding:0.35rem 0.65rem;" oninput="onAppsSearchChange()">
+              </div>
+            </div>
+
+            <!-- Application Cards Grid -->
+            <div id="apps-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:1rem;">
+              <div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--text-muted);">
+                Select an enrolled machine to load its application inventory.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: MULTI-BACKEND HIGH AVAILABILITY (HA) -->
+      <div id="view-backends" class="view-panel" style="display:none;">
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem;">
+            <div>
+              <div class="card-title">Multi-Backend High Availability (HA) Manager</div>
+              <div class="card-desc">Distributed mesh across 5+ independent backends with automatic health checks, circuit breakers, and zero-downtime failover routing</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.6rem;">
+              <button class="btn btn-secondary" onclick="testAllBackends()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>Health Check Mesh</span>
+              </button>
+              <button class="btn btn-primary" onclick="openAddBackendModal()">+ Register Backend</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <!-- HA Mesh Banner -->
+            <div style="padding:1rem 1.25rem; background:linear-gradient(135deg, rgba(34,197,94,0.08), rgba(56,189,248,0.08)); border:1px solid rgba(34,197,94,0.3); border-radius:var(--radius-sm); margin-bottom:1.5rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
+              <div>
+                <div style="font-weight:700; color:var(--status-success); display:flex; align-items:center; gap:0.5rem;">
+                  <span class="pulse-dot" style="background:var(--status-success);"></span>
+                  High-Availability Mesh: <span id="ha-mesh-status">Operational</span>
+                </div>
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">
+                  Active Primary Gateway: <strong id="ha-active-primary" style="color:var(--text-primary);">-</strong> | Fault-tolerance: Independent multi-node failover active
+                </div>
+              </div>
+              <div style="display:flex; gap:1.5rem;">
+                <div>
+                  <div style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">Mesh Nodes</div>
+                  <div style="font-size:1.2rem; font-weight:700; color:var(--text-primary);" id="ha-total-nodes">1</div>
+                </div>
+                <div>
+                  <div style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase;">Healthy Nodes</div>
+                  <div style="font-size:1.2rem; font-weight:700; color:var(--status-success);" id="ha-healthy-nodes">1</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Backends Grid -->
+            <div id="backends-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:1rem;">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: CUSTOM HOSTING & DOMAINS (VERCEL/RAILWAY STYLE) -->
+      <div id="view-hosting" class="view-panel" style="display:none;">
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem;">
+            <div>
+              <div class="card-title">Custom Hosting & Multi-Domain Manager</div>
+              <div class="card-desc">Vercel & Railway style project deployments (Node.js, Rust, Static HTML), build logs, isolated workers, and custom domain DNS configuration (inspired by vateclosailing.com)</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.6rem;">
+              <button class="btn btn-secondary" onclick="openAddDomainModal()">+ Add Custom Domain</button>
+              <button class="btn btn-primary" onclick="openNewProjectModal()">+ New Hosting Project</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <!-- Hosting KPI Summary -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:1rem; margin-bottom:1.5rem;">
+              <div style="background:var(--bg-base); padding:0.85rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase;">Active Projects</div>
+                <div style="font-size:1.5rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;" id="hosting-kpi-projects">0</div>
+              </div>
+              <div style="background:var(--bg-base); padding:0.85rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase;">Custom Domains</div>
+                <div style="font-size:1.5rem; font-weight:700; color:var(--accent-cyan); margin-top:0.25rem;" id="hosting-kpi-domains">0</div>
+              </div>
+              <div style="background:var(--bg-base); padding:0.85rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase;">Deployments</div>
+                <div style="font-size:1.5rem; font-weight:700; color:var(--status-success); margin-top:0.25rem;" id="hosting-kpi-deploys">0</div>
+              </div>
+              <div style="background:var(--bg-base); padding:0.85rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase;">Edge SSL Status</div>
+                <div style="font-size:1.2rem; font-weight:700; color:var(--status-success); margin-top:0.4rem;">Active (Auto TLS)</div>
+              </div>
+            </div>
+
+            <!-- Projects Grid -->
+            <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.75rem; color:var(--text-primary);">Configured Hosting Projects</div>
+            <div id="hosting-projects-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:1rem; margin-bottom:2rem;">
+              <!-- Rendered dynamically -->
+            </div>
+
+            <!-- Custom Domains & DNS Instructions -->
+            <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.75rem; color:var(--text-primary);">Custom Domains & DNS Verification</div>
+            <div class="table-container" style="margin-bottom:1.5rem;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Project</th>
+                    <th>Target Backend</th>
+                    <th>DNS Status</th>
+                    <th>TLS/SSL</th>
+                    <th>Required DNS Records</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="hosting-domains-tbody">
+                  <!-- Rendered dynamically -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Live Deployment Logs Drawer -->
+            <div id="hosting-logs-card" style="display:none; margin-top:1.5rem; padding:1rem; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:var(--radius-sm);">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
+                <div style="font-weight:700; font-size:0.85rem; color:var(--accent-cyan);" id="hosting-logs-title">Deployment Build Logs</div>
+                <button class="btn btn-secondary" onclick="document.getElementById('hosting-logs-card').style.display='none'" style="font-size:0.72rem; padding:0.2rem 0.5rem;">Close</button>
+              </div>
+              <pre id="hosting-logs-content" style="background:#090d16; padding:0.85rem; border-radius:4px; font-size:0.76rem; color:#38bdf8; max-height:220px; overflow-y:auto; line-height:1.5;"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: INFRASTRUCTURE (WIREGUARD, DOCKER, SANDBOXES & CYBERROOT) -->
+      <div id="view-infra" class="view-panel" style="display:none;">
+        <div style="display:grid; grid-template-columns:1fr; gap:1.25rem;">
+          <!-- WireGuard VPN -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">WireGuard VPN Mesh Orchestrator</div>
+                <div class="card-desc">Cryptographic peer configuration, virtual IP subnet (10.88.0.0/24), and handshake monitoring</div>
+              </div>
+              <button class="btn btn-primary" onclick="openAddWireguardPeerModal()">+ Add VPN Peer</button>
+            </div>
+            <div class="card-body">
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Peer Name</th>
+                      <th>Public Key</th>
+                      <th>Allowed IPs</th>
+                      <th>Endpoint</th>
+                      <th>Last Handshake</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="wg-peers-tbody">
+                    <!-- Rendered dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Docker Management -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">Docker Management</div>
+                <div class="card-desc">Inspect containers, resource metrics, ports, and manage lifecycle safely</div>
+              </div>
+              <button class="btn btn-secondary" onclick="syncDockerContainers()">Refresh Containers</button>
+            </div>
+            <div class="card-body">
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Container</th>
+                      <th>Image</th>
+                      <th>Ports</th>
+                      <th>CPU</th>
+                      <th>Memory</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="docker-containers-tbody">
+                    <!-- Rendered dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Development Sandboxes -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">Isolated Development Sandboxes</div>
+                <div class="card-desc">Temporary disposable workloads with strict CPU, memory, and automated TTL cleanup</div>
+              </div>
+              <button class="btn btn-primary" onclick="openCreateSandboxModal()">+ Create Sandbox</button>
+            </div>
+            <div class="card-body">
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Sandbox ID</th>
+                      <th>Name</th>
+                      <th>CPU Limit</th>
+                      <th>Memory Limit</th>
+                      <th>Expires At</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sandboxes-tbody">
+                    <!-- Rendered dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- CyberRoot & Plugins -->
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:1.25rem;">
+            <!-- CyberRoot Privilege Inspector -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">CyberRoot Privilege & Capability Manager</div>
+                  <div class="card-desc">Transparent privilege inspection and elevation workflows</div>
+                </div>
+              </div>
+              <div class="card-body" id="cyberroot-details">
+                <div style="display:flex; flex-direction:column; gap:0.65rem; font-size:0.82rem;">
+                  <div style="display:flex; justify-content:space-between;">
+                    <span style="color:var(--text-muted);">Effective Identity:</span>
+                    <strong id="cr-identity" style="color:var(--text-primary);">-</strong>
+                  </div>
+                  <div style="display:flex; justify-content:space-between;">
+                    <span style="color:var(--text-muted);">Integrity Level:</span>
+                    <span id="cr-integrity" class="badge badge-subtle">-</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between;">
+                    <span style="color:var(--text-muted);">Elevation Workflow:</span>
+                    <strong id="cr-elevation" style="color:var(--accent-cyan);">-</strong>
+                  </div>
+                  <div style="display:flex; justify-content:space-between;">
+                    <span style="color:var(--text-muted);">Session 0 Isolation:</span>
+                    <span id="cr-session0" class="badge badge-warning">Active (Handled by CyberVPS)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Plugins Registry -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">Plugins & Integrations Registry</div>
+                  <div class="card-desc">Extensible modules (noVNC, Plexo-Cyber, WireGuard, RustDesk)</div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div id="plugins-list" style="display:flex; flex-direction:column; gap:0.75rem;">
+                  <!-- Rendered dynamically -->
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -2192,6 +2588,262 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeProcessDetailsModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ADMIN LOGIN -->
+  <div id="modal-admin-login" class="modal-backdrop">
+    <div class="modal" style="max-width:420px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Administrator Authentication
+        </strong>
+        <button class="btn-icon" onclick="closeAdminLoginModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+          Authenticate to manage high-availability backends, perform administrative fleet checks, revoke nodes, or deploy hosting workloads.
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input type="text" id="admin-login-username" class="form-control" value="admin" placeholder="admin">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="admin-login-password" class="form-control" placeholder="••••••••">
+        </div>
+        <div id="admin-login-error" style="display:none; color:var(--status-danger); font-size:0.78rem; margin-top:0.5rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAdminLoginModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAdminLogin()">Sign In</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: SAFE DEVICE REVOCATION (WITH CONFIRMATION PHRASE) -->
+  <div id="modal-device-revoke" class="modal-backdrop">
+    <div class="modal" style="max-width:480px;">
+      <div class="modal-header">
+        <strong style="color:var(--status-danger); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/></svg>
+          Safe Device Revocation & Uninstallation
+        </strong>
+        <button class="btn-icon" onclick="closeDeviceRevokeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.85rem;">
+          This will securely disconnect and permanently revoke the target machine from the Space Station mesh.
+        </div>
+        <div class="form-group">
+          <label class="form-label">Machine ID</label>
+          <input type="text" id="revoke-machine-id" class="form-control" readonly>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Unique Enrollment Revocation Code</label>
+          <input type="text" id="revoke-machine-code" class="form-control" placeholder="cvps_rev_... or admin_force">
+        </div>
+        <div class="form-group">
+          <label class="form-label" style="color:var(--status-danger);">Type <code>Cyberexpert2222@</code> to confirm:</label>
+          <input type="text" id="revoke-machine-phrase" class="form-control" placeholder="Cyberexpert2222@">
+        </div>
+        <div id="revoke-machine-error" style="display:none; color:var(--status-danger); font-size:0.78rem; margin-top:0.5rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeDeviceRevokeModal()">Cancel</button>
+        <button class="btn btn-danger" onclick="submitDeviceRevoke()">Revoke & Delete Device</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CONFIRMED FORCE STOP APP -->
+  <div id="modal-app-kill" class="modal-backdrop">
+    <div class="modal" style="max-width:440px;">
+      <div class="modal-header">
+        <strong style="color:var(--status-danger); font-size:1rem;">⚠️ Force Terminate Application</strong>
+        <button class="btn-icon" onclick="closeAppKillModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="color:var(--text-secondary); font-size:0.85rem; line-height:1.5;">
+          Are you sure you want to force terminate <strong id="kill-app-name" style="color:var(--text-primary);">-</strong>? Unsaved data inside this process may be lost.
+        </p>
+        <div id="kill-app-warning" style="display:none; margin-top:0.75rem; padding:0.5rem; background:rgba(239,68,68,0.1); border-left:3px solid var(--status-danger); color:var(--status-danger); font-size:0.78rem;">
+          Protected critical kernel and system processes cannot be terminated.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAppKillModal()">Cancel</button>
+        <button class="btn btn-danger" onclick="executeAppKill()">Force Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: APP DETAILS -->
+  <div id="modal-app-details" class="modal-backdrop">
+    <div class="modal" style="max-width:620px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;" id="app-details-title">Application Inspector</strong>
+        <button class="btn-icon" onclick="closeAppDetailsModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="app-details-body" style="font-size:0.85rem; max-height:480px; overflow-y:auto;">
+        <div style="color:var(--text-muted); text-align:center; padding:2rem;">Loading details...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAppDetailsModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ADD BACKEND -->
+  <div id="modal-add-backend" class="modal-backdrop">
+    <div class="modal" style="max-width:460px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Register Backend Node</strong>
+        <button class="btn-icon" onclick="closeAddBackendModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Backend Friendly Name</label>
+          <input type="text" id="add-be-name" class="form-control" placeholder="e.g. Frankfurt Standby Node">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Backend Base URL</label>
+          <input type="text" id="add-be-url" class="form-control" placeholder="https://backend-node.cybervps.net:8080">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Role</label>
+          <select id="add-be-role" class="form-control">
+            <option value="secondary">Secondary (Standby Node)</option>
+            <option value="replica">Replica (Read-Only Mirror)</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAddBackendModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddBackend()">Register Node</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: NEW HOSTING PROJECT -->
+  <div id="modal-new-project" class="modal-backdrop">
+    <div class="modal" style="max-width:500px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Create Hosting Project</strong>
+        <button class="btn-icon" onclick="closeNewProjectModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Project Name</label>
+          <input type="text" id="proj-name" class="form-control" placeholder="e.g. vateclo-sailing-app">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Runtime Environment</label>
+          <select id="proj-runtime" class="form-control">
+            <option value="nodejs">Node.js (npm / yarn / pnpm)</option>
+            <option value="rust">Rust (Cargo / Bin)</option>
+            <option value="static">Static Web (HTML, CSS, JS)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Custom Domain (Optional)</label>
+          <input type="text" id="proj-domain" class="form-control" placeholder="e.g. vateclosailing.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Build Command</label>
+          <input type="text" id="proj-build-cmd" class="form-control" value="npm run build">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeNewProjectModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitNewProject()">Create & Deploy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ADD CUSTOM DOMAIN -->
+  <div id="modal-add-domain" class="modal-backdrop">
+    <div class="modal" style="max-width:460px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Add Custom Domain</strong>
+        <button class="btn-icon" onclick="closeAddDomainModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Fully Qualified Domain Name</label>
+          <input type="text" id="custom-domain-name" class="form-control" placeholder="e.g. vateclosailing.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target Project / Service</label>
+          <select id="custom-domain-project" class="form-control">
+            <!-- Rendered dynamically -->
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAddDomainModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddDomain()">Add Domain</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ADD WIREGUARD PEER -->
+  <div id="modal-add-wireguard" class="modal-backdrop">
+    <div class="modal" style="max-width:440px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Add WireGuard Peer</strong>
+        <button class="btn-icon" onclick="closeAddWireguardModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Peer Name</label>
+          <input type="text" id="wg-peer-name" class="form-control" placeholder="e.g. Admin Laptop">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Allowed IPs</label>
+          <input type="text" id="wg-peer-ips" class="form-control" placeholder="10.88.0.3/32">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAddWireguardModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddWireguardPeer()">Generate Peer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CREATE SANDBOX -->
+  <div id="modal-create-sandbox" class="modal-backdrop">
+    <div class="modal" style="max-width:440px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">Create Disposable Sandbox</strong>
+        <button class="btn-icon" onclick="closeCreateSandboxModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Sandbox Name</label>
+          <input type="text" id="sbx-name" class="form-control" placeholder="e.g. Node20 Testing Lab">
+        </div>
+        <div class="form-group">
+          <label class="form-label">CPU Limit</label>
+          <select id="sbx-cpu" class="form-control">
+            <option value="1 core">1 Core (Standard)</option>
+            <option value="2 cores">2 Cores (Enhanced)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Memory Limit</label>
+          <select id="sbx-mem" class="form-control">
+            <option value="256 MB">256 MB</option>
+            <option value="512 MB" selected>512 MB</option>
+            <option value="1024 MB">1024 MB</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeCreateSandboxModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateSandbox()">Create Sandbox</button>
       </div>
     </div>
   </div>
@@ -4164,6 +4816,82 @@
       await syncDesktopStatus(false);
     }
 
+    async function launchInteractiveDesktopApp(appToLaunch, testMode = false) {
+      const machineId = currentDesktopState.machineId || 
+                        document.getElementById('desktop-machine-select')?.value || 
+                        activeTerminalSession?.machineId || 
+                        selectedMachineId;
+      if (!machineId) return showToast('No target machine selected. Please select a machine first.', 'error');
+
+      const app = appToLaunch || document.getElementById('interactive-app-input')?.value || 'notepad.exe';
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const resBox = document.getElementById('desktop-launch-result');
+
+      showToast(`Launching ${app} on physical interactive desktop...`, 'info');
+      try {
+        const res = await fetch(`${base}/api/v1/desktop/launch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: machineId,
+            executable: app,
+            test_mode: !!testMode
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || `Failed to launch ${app}`);
+
+        const launchData = result.result || result;
+        if (resBox) {
+          resBox.style.display = 'block';
+          if (launchData.status === 'NO_INTERACTIVE_SESSION') {
+            resBox.style.background = 'rgba(234,179,8,0.12)';
+            resBox.style.color = '#eab308';
+            resBox.style.border = '1px solid rgba(234,179,8,0.3)';
+            resBox.innerHTML = `⚠️ <strong>Session 0 Notice:</strong> No user is logged on at the physical desktop screen. Due to Windows Session 0 isolation, graphical applications require an active user logon (Session 1).`;
+          } else if (launchData.success) {
+            resBox.style.background = 'rgba(34,197,94,0.12)';
+            resBox.style.color = '#22c55e';
+            resBox.style.border = '1px solid rgba(34,197,94,0.3)';
+            const pidInfo = launchData.pid ? `PID: ${launchData.pid}` : '';
+            const sessInfo = launchData.session_id ? `Session: ${launchData.session_id}` : '';
+            const visInfo = launchData.window_visible ? 'Visible on Display: Yes ✅' : 'Visible on Display: Launched';
+            resBox.innerHTML = `✅ <strong>Launched on Desktop:</strong> <code>${escapeHtml(app)}</code> (${[pidInfo, sessInfo, visInfo].filter(Boolean).join(' | ')})`;
+          } else {
+            resBox.style.background = 'rgba(239,68,68,0.12)';
+            resBox.style.color = '#ef4444';
+            resBox.style.border = '1px solid rgba(239,68,68,0.3)';
+            resBox.innerHTML = `❌ <strong>Launch Failed:</strong> ${escapeHtml(launchData.error || 'Execution failed')}`;
+          }
+        }
+
+        if (launchData.status === 'NO_INTERACTIVE_SESSION') {
+          showToast(`⚠️ No user logged on to physical display (Session 0 only)`, 'warning');
+        } else if (launchData.success) {
+          const pidStr = launchData.pid ? ` (PID: ${launchData.pid})` : '';
+          showToast(`🚀 Successfully opened ${app}${pidStr} on physical desktop screen!`, 'success');
+        } else {
+          showToast(`Launch failed: ${launchData.error || 'Unknown error'}`, 'error');
+        }
+        await syncDesktopStatus(false);
+      } catch (err) {
+        showToast(err.message, 'error');
+        if (resBox) {
+          resBox.style.display = 'block';
+          resBox.style.background = 'rgba(239,68,68,0.12)';
+          resBox.style.color = '#ef4444';
+          resBox.innerHTML = `❌ Error: ${escapeHtml(err.message)}`;
+        }
+      }
+    }
+
+    function promptDesktopLaunch() {
+      const app = prompt('Enter executable or command to launch on active interactive desktop:', 'notepad.exe');
+      if (app && app.trim()) {
+        launchInteractiveDesktopApp(app.trim());
+      }
+    }
+
     // 10. NAVIGATION, MODALS & THEME TOGGLE
     function navigate(viewName) {
       document.querySelectorAll('.view-panel').forEach(el => el.style.display = 'none');
@@ -4175,6 +4903,10 @@
       const navTitles = {
         'overview': 'Mission Control Overview',
         'machines': 'Instances Fleet',
+        'apps': 'Remote Application Manager',
+        'backends': 'Multi-Backend High Availability (HA)',
+        'hosting': 'Custom Hosting & Multi-Domain Manager',
+        'infra': 'Infrastructure (WireGuard, Docker, Sandboxes & CyberRoot)',
         'details': 'Device Intelligence & Neofetch',
         'files': 'Advanced File Manager (FTP/SFTP)',
         'services': 'Processes & Operating System Services',
@@ -4219,6 +4951,15 @@
         }, 50);
       } else if (viewName === 'desktop') {
         initDesktopView();
+      } else if (viewName === 'apps') {
+        updateAppsMachineSelect();
+        syncAppsInventory(false);
+      } else if (viewName === 'backends') {
+        syncBackends();
+      } else if (viewName === 'hosting') {
+        syncHosting();
+      } else if (viewName === 'infra') {
+        syncInfra();
       } else if (viewName === 'details') {
         const select = document.getElementById('details-machine-select');
         const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
@@ -5768,6 +6509,1059 @@
       if (sev === 'error') return '<span class="badge badge-danger">ERROR</span>';
       if (sev === 'warning') return '<span class="badge badge-warning">WARN</span>';
       return '<span class="badge badge-subtle">INFO</span>';
+    }
+
+    // =========================================================================
+    // 15. REMOTE APPLICATION MANAGER CONTROLLER
+    // =========================================================================
+    if (!appState.apps) {
+      appState.apps = { list: [], total: 0, running: 0, stopped: 0, category: 'all', search: '', machineId: null, loading: false };
+    }
+
+    function updateAppsMachineSelect() {
+      const select = document.getElementById('apps-machine-select');
+      if (!select) return;
+      const prevVal = select.value;
+      const opts = ['<option value="">Select target machine...</option>'];
+      appState.machines.forEach(m => {
+        const isOnline = m.status === 'online';
+        const label = `${escapeHtml(m.friendly_name || m.hostname || m.id)} (${m.os} - ${m.virtual_ip || 'No VIP'}) [${isOnline ? 'Online' : 'Offline'}]`;
+        opts.push(`<option value="${escapeHtml(m.id)}">${label}</option>`);
+      });
+      select.innerHTML = opts.join('');
+      if (prevVal && appState.machines.some(m => m.id === prevVal)) {
+        select.value = prevVal;
+      } else if (!select.value && appState.machines.length > 0) {
+        const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
+        if (firstOnline) select.value = firstOnline.id;
+      }
+    }
+
+    function onAppsMachineChange() {
+      const select = document.getElementById('apps-machine-select');
+      if (select && select.value) {
+        appState.selectedMachineId = select.value;
+        syncAppsInventory(false);
+      }
+    }
+
+    async function syncAppsInventory(forceRefresh = false) {
+      const select = document.getElementById('apps-machine-select');
+      const machineId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
+      if (!machineId) {
+        const grid = document.getElementById('apps-grid');
+        if (grid) grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--text-muted);">No enrolled machine selected. Please select a machine above.</div>';
+        return;
+      }
+
+      appState.apps.machineId = machineId;
+      const m = appState.machines.find(x => x.id === machineId);
+      const envLabel = document.getElementById('apps-target-env');
+      if (envLabel) {
+        envLabel.innerText = m ? `${m.os} (${m.os_version || 'Host'})` : 'Remote Host';
+      }
+
+      const grid = document.getElementById('apps-grid');
+      if (grid && (!appState.apps.list || appState.apps.list.length === 0)) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--text-muted);"><span class="pulse-dot" style="background:var(--accent-cyan); display:inline-block; margin-right:8px;"></span> Scanning application inventory & live processes...</div>';
+      }
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/apps/list?machine_id=${encodeURIComponent(machineId)}&refresh=${forceRefresh ? '1' : '0'}`);
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch application inventory');
+
+        const apps = data.apps || data.applications || [];
+        appState.apps.list = apps;
+        appState.apps.total = data.total || apps.length;
+        appState.apps.running = data.running || apps.filter(a => a.status === 'running').length;
+        appState.apps.stopped = data.stopped || (appState.apps.total - appState.apps.running);
+
+        document.getElementById('apps-kpi-total').innerText = appState.apps.total;
+        document.getElementById('apps-kpi-running').innerText = appState.apps.running;
+        document.getElementById('apps-kpi-stopped').innerText = appState.apps.stopped;
+
+        renderAppsList();
+      } catch (err) {
+        showToast(err.message, 'error');
+        if (grid) {
+          grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--status-danger);">⚠️ ${escapeHtml(err.message)}</div>`;
+        }
+      }
+    }
+
+    function filterAppCategory(cat) {
+      appState.apps.category = cat;
+      document.querySelectorAll('#apps-category-chips button').forEach(btn => btn.classList.remove('active-chip'));
+      const activeBtn = document.getElementById('chip-' + cat);
+      if (activeBtn) activeBtn.classList.add('active-chip');
+      renderAppsList();
+    }
+
+    function onAppsSearchChange() {
+      const input = document.getElementById('apps-search-input');
+      appState.apps.search = (input?.value || '').toLowerCase().trim();
+      renderAppsList();
+    }
+
+    function renderAppsList() {
+      const grid = document.getElementById('apps-grid');
+      if (!grid) return;
+
+      let items = appState.apps.list || [];
+      const cat = appState.apps.category || 'all';
+      const search = appState.apps.search || '';
+
+      if (cat === 'running') {
+        items = items.filter(a => a.status === 'running');
+      } else if (cat !== 'all') {
+        items = items.filter(a => (a.category || '').toLowerCase() === cat.toLowerCase());
+      }
+
+      if (search) {
+        items = items.filter(a =>
+          (a.name || '').toLowerCase().includes(search) ||
+          (a.id || '').toLowerCase().includes(search) ||
+          (a.publisher || '').toLowerCase().includes(search) ||
+          (a.cmd || '').toLowerCase().includes(search)
+        );
+      }
+
+      if (items.length === 0) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--text-muted);">No applications match the current filters.</div>';
+        return;
+      }
+
+      grid.innerHTML = items.map(app => {
+        const isRunning = app.status === 'running';
+        const badgeClass = isRunning ? 'badge-success' : 'badge-subtle';
+        const statusText = isRunning ? 'Running' : 'Stopped';
+        const pids = (app.instances || []).map(i => i.pid).slice(0, 3);
+        const pidsBadge = pids.length > 0 ? `<span class="badge badge-cyan" style="font-size:0.65rem;">PID: ${pids.join(', ')}</span>` : '';
+
+        // Real Icon rendering (SVG or base64 img)
+        let iconHtml = '<div style="width:38px; height:38px; border-radius:8px; background:var(--bg-surface-elevated); display:flex; align-items:center; justify-content:center; font-weight:700; color:var(--accent-cyan); font-size:1.1rem;">' + (app.name ? app.name.charAt(0).toUpperCase() : 'A') + '</div>';
+        if (app.icon && typeof app.icon === 'string') {
+          if (app.icon.trim().startsWith('<svg')) {
+            iconHtml = `<div style="width:38px; height:38px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${app.icon}</div>`;
+          } else if (app.icon.startsWith('data:image')) {
+            iconHtml = `<img src="${app.icon}" style="width:38px; height:38px; object-fit:contain; border-radius:6px; flex-shrink:0;" alt="${escapeHtml(app.name)}">`;
+          }
+        }
+
+        return `
+          <div style="background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:1rem; display:flex; flex-direction:column; justify-content:space-between; transition:var(--transition); position:relative;">
+            <div>
+              <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:0.5rem; margin-bottom:0.75rem;">
+                <div style="display:flex; align-items:center; gap:0.75rem;">
+                  ${iconHtml}
+                  <div>
+                    <strong style="color:var(--text-primary); font-size:0.9rem; display:block; line-height:1.2;">${escapeHtml(app.name)}</strong>
+                    <span style="color:var(--text-muted); font-size:0.72rem;">${escapeHtml(app.publisher || 'System Application')}</span>
+                  </div>
+                </div>
+                <span class="badge ${badgeClass}">${statusText}</span>
+              </div>
+
+              <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:0.85rem;">
+                <span class="badge badge-subtle" style="font-size:0.65rem;">${escapeHtml(app.category || 'Utilities')}</span>
+                ${app.version ? `<span class="badge badge-subtle" style="font-size:0.65rem;">v${escapeHtml(app.version)}</span>` : ''}
+                ${pidsBadge}
+              </div>
+            </div>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:0.4rem; border-top:1px solid var(--border-subtle); padding-top:0.75rem; margin-top:auto;">
+              <button class="btn btn-secondary" onclick="viewAppDetails('${escapeHtml(app.id)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem;">
+                Details
+              </button>
+              <div style="display:flex; align-items:center; gap:0.35rem;">
+                ${isRunning ? `
+                  <button class="btn btn-secondary" onclick="closeApp('${escapeHtml(app.id)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem; color:var(--status-warning);" title="Graceful Window Close (WM_CLOSE)">
+                    ⏹️ Close
+                  </button>
+                  <button class="btn btn-danger" onclick="confirmForceKill('${escapeHtml(app.id)}', '${escapeHtml(app.name)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem;" title="Force Kill Process">
+                    ⚠️ Stop
+                  </button>
+                ` : `
+                  <button class="btn btn-primary" onclick="startApp('${escapeHtml(app.id)}', '${escapeHtml(app.cmd || app.id)}')" style="font-size:0.72rem; padding:0.25rem 0.65rem;" title="Start into interactive desktop screen (Session 1)">
+                    🚀 Start
+                  </button>
+                `}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function startApp(appId, exeName) {
+      const machineId = appState.apps.machineId || appState.selectedMachineId;
+      if (!machineId) return showToast('No target machine selected', 'error');
+
+      showToast(`Starting ${appId} into interactive visible desktop...`, 'info');
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/apps/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: machineId,
+            app_id: appId,
+            action: 'start'
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || `Failed to start ${appId}`);
+        showToast(`🚀 Successfully launched ${appId} on interactive desktop!`, 'success');
+        await syncAppsInventory(true);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function closeApp(appId, pid = null) {
+      const machineId = appState.apps.machineId || appState.selectedMachineId;
+      if (!machineId) return showToast('No target machine selected', 'error');
+
+      showToast(`Sending graceful close (WM_CLOSE) to ${appId}...`, 'info');
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/apps/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: machineId,
+            app_id: appId,
+            action: 'close',
+            pid
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || `Failed to close ${appId}`);
+        showToast(`Closed ${appId} cleanly.`, 'success');
+        await syncAppsInventory(true);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function confirmForceKill(appId, appName, pid = null) {
+      appState.pendingKillApp = { appId, appName, pid };
+      document.getElementById('kill-app-name').innerText = appName || appId;
+      const warnBox = document.getElementById('kill-app-warning');
+      if (warnBox) warnBox.style.display = 'block';
+      document.getElementById('modal-app-kill').style.display = 'flex';
+    }
+
+    function closeAppKillModal() {
+      appState.pendingKillApp = null;
+      document.getElementById('modal-app-kill').style.display = 'none';
+    }
+
+    async function executeAppKill() {
+      if (!appState.pendingKillApp) return;
+      const { appId, pid } = appState.pendingKillApp;
+      const machineId = appState.apps.machineId || appState.selectedMachineId;
+      closeAppKillModal();
+
+      showToast(`Force terminating ${appId}...`, 'warning');
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/apps/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: machineId,
+            app_id: appId,
+            action: 'kill',
+            pid,
+            force: true
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || `Failed to kill ${appId}`);
+        showToast(`Force terminated process for ${appId}`, 'success');
+        await syncAppsInventory(true);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function viewAppDetails(appId) {
+      const app = (appState.apps.list || []).find(a => a.id === appId);
+      if (!app) return;
+
+      document.getElementById('app-details-title').innerText = `${app.name} — Inspector`;
+      const body = document.getElementById('app-details-body');
+      if (!body) return;
+
+      const instances = app.instances || [];
+      const instancesRows = instances.length > 0 ? instances.map(inst => `
+        <tr>
+          <td><code>${inst.pid}</code></td>
+          <td>${inst.mem_mb ? inst.mem_mb.toFixed(1) + ' MB' : '-'}</td>
+          <td>${inst.cpu_pct !== undefined ? inst.cpu_pct.toFixed(1) + '%' : '-'}</td>
+          <td>${inst.session_id !== undefined ? 'Session ' + inst.session_id : '-'}</td>
+          <td>
+            <button class="btn btn-secondary" onclick="closeApp('${escapeHtml(app.id)}', ${inst.pid})" style="font-size:0.68rem; padding:0.2rem 0.45rem;">Close</button>
+            <button class="btn btn-danger" onclick="confirmForceKill('${escapeHtml(app.id)}', '${escapeHtml(app.name)}', ${inst.pid})" style="font-size:0.68rem; padding:0.2rem 0.45rem;">Stop</button>
+          </td>
+        </tr>
+      `).join('') : '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No active running instances</td></tr>';
+
+      body.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:0.75rem;">
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:var(--text-muted);">Application ID:</span>
+            <code>${escapeHtml(app.id)}</code>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:var(--text-muted);">Publisher:</span>
+            <strong>${escapeHtml(app.publisher || 'N/A')}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:var(--text-muted);">Version:</span>
+            <span>${escapeHtml(app.version || 'N/A')}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:var(--text-muted);">Launch Executable:</span>
+            <code>${escapeHtml(app.cmd || app.exe_name || 'N/A')}</code>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:var(--text-muted);">Discovery Source:</span>
+            <span class="badge badge-subtle">${escapeHtml(app.source || 'Operating System')}</span>
+          </div>
+
+          <div style="margin-top:0.75rem;">
+            <strong style="color:var(--text-primary); font-size:0.85rem; display:block; margin-bottom:0.4rem;">Running Instances (${instances.length})</strong>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>PID</th>
+                    <th>Memory</th>
+                    <th>CPU</th>
+                    <th>Desktop Session</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${instancesRows}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('modal-app-details').style.display = 'flex';
+    }
+
+    function closeAppDetailsModal() {
+      document.getElementById('modal-app-details').style.display = 'none';
+    }
+
+    // =========================================================================
+    // 16. MULTI-BACKEND HIGH AVAILABILITY CONTROLLER
+    // =========================================================================
+    async function syncBackends() {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/backends`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to fetch backends');
+
+        const backends = data.backends || [];
+        document.getElementById('ha-mesh-status').innerText = data.ha_status ? data.ha_status.toUpperCase() : 'OPERATIONAL';
+        document.getElementById('ha-active-primary').innerText = data.active_backend || 'be_primary_local';
+        document.getElementById('ha-total-nodes').innerText = data.total_backends || backends.length;
+        document.getElementById('ha-healthy-nodes').innerText = backends.filter(b => b.state === 'healthy').length;
+
+        renderBackends(backends);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function renderBackends(backends) {
+      const grid = document.getElementById('backends-grid');
+      if (!grid) return;
+
+      if (!backends || backends.length === 0) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-muted);">No backends registered in mesh.</div>';
+        return;
+      }
+
+      grid.innerHTML = backends.map(b => {
+        const isPrimary = b.role === 'primary';
+        const roleBadge = isPrimary ? '<span class="badge badge-cyan">PRIMARY (ACTIVE)</span>' : '<span class="badge badge-subtle">STANDBY (FAILOVER)</span>';
+        const isHealthy = b.state === 'healthy';
+        const stateBadge = isHealthy ? '<span class="badge badge-success">HEALTHY</span>' : '<span class="badge badge-danger">DEGRADED</span>';
+
+        return `
+          <div style="background:var(--bg-base); border:1px solid ${isPrimary ? 'var(--accent-cyan)' : 'var(--border-subtle)'}; border-radius:var(--radius-sm); padding:1.15rem; display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.5rem;">
+                <strong style="color:var(--text-primary); font-size:0.95rem;">${escapeHtml(b.name)}</strong>
+                ${roleBadge}
+              </div>
+              <div style="font-family:var(--font-mono); font-size:0.75rem; color:var(--accent-cyan); word-break:break-all; margin-bottom:0.75rem;">
+                ${escapeHtml(b.url)}
+              </div>
+              <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
+                ${stateBadge}
+                <span style="font-size:0.75rem; color:var(--text-muted);">Latency: <strong>${b.latency_ms || 2}ms</strong></span>
+              </div>
+            </div>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border-subtle); padding-top:0.75rem; margin-top:0.5rem;">
+              <span style="font-size:0.7rem; color:var(--text-muted);">ID: <code>${escapeHtml(b.id)}</code></span>
+              <div style="display:flex; gap:0.4rem;">
+                ${!isPrimary ? `
+                  <button class="btn btn-secondary" onclick="promoteBackendToPrimary('${escapeHtml(b.id)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem;">
+                    Promote Primary
+                  </button>
+                  <button class="btn btn-secondary" onclick="removeBackend('${escapeHtml(b.id)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem; color:var(--status-danger);">
+                    Remove
+                  </button>
+                ` : `
+                  <span style="font-size:0.72rem; color:var(--status-success); font-weight:600;">Routing Master</span>
+                `}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function openAddBackendModal() {
+      document.getElementById('modal-add-backend').style.display = 'flex';
+      document.getElementById('add-be-name').focus();
+    }
+    function closeAddBackendModal() {
+      document.getElementById('modal-add-backend').style.display = 'none';
+    }
+
+    async function submitAddBackend() {
+      const name = document.getElementById('add-be-name').value.trim();
+      const url = document.getElementById('add-be-url').value.trim();
+      const role = document.getElementById('add-be-role').value;
+      if (!url) return showToast('Backend URL is required', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/backends`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, url, role })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to add backend');
+        closeAddBackendModal();
+        showToast('Backend registered in high-availability mesh!', 'success');
+        await syncBackends();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function removeBackend(id) {
+      if (!confirm(`Are you sure you want to remove backend ${id}?`)) return;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/backends/${id}`, { method: 'DELETE' });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to delete backend');
+        showToast(`Backend ${id} removed.`, 'success');
+        await syncBackends();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function testAllBackends() {
+      showToast('Health checking all mesh backend nodes...', 'info');
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/backends/health`, { method: 'POST' });
+        const result = await res.json();
+        showToast(`Mesh check complete: ${result.active_mesh_count || 1} backends healthy.`, 'success');
+        await syncBackends();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function promoteBackendToPrimary(id) {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/backends/failover`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_backend_id: id })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to failover');
+        showToast(`Failover complete: ${id} promoted to Primary.`, 'success');
+        await syncBackends();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // =========================================================================
+    // 17. CUSTOM HOSTING & DOMAINS CONTROLLER (VERCEL/RAILWAY STYLE)
+    // =========================================================================
+    async function syncHosting() {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const [projRes, domRes] = await Promise.all([
+          fetch(`${base}/api/v1/hosting/projects`),
+          fetch(`${base}/api/v1/domains`)
+        ]);
+        const projData = await projRes.json();
+        const domData = await domRes.json();
+
+        const projects = projData.projects || [];
+        const domains = domData.domains || [];
+
+        document.getElementById('hosting-kpi-projects').innerText = projects.length;
+        document.getElementById('hosting-kpi-domains').innerText = domains.length;
+        document.getElementById('hosting-kpi-deploys').innerText = projects.filter(p => p.status === 'deployed').length;
+
+        renderHosting(projects, domains);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function renderHosting(projects, domains) {
+      const projGrid = document.getElementById('hosting-projects-grid');
+      if (projGrid) {
+        if (projects.length === 0) {
+          projGrid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-muted);">No hosting projects configured yet. Click "+ New Hosting Project" to deploy.</div>';
+        } else {
+          projGrid.innerHTML = projects.map(p => {
+            const isDeployed = p.status === 'deployed';
+            return `
+              <div style="background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:1.15rem; display:flex; flex-direction:column; justify-content:space-between;">
+                <div>
+                  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.5rem;">
+                    <strong style="color:var(--text-primary); font-size:1rem;">${escapeHtml(p.name)}</strong>
+                    <span class="badge ${isDeployed ? 'badge-success' : 'badge-subtle'}">${isDeployed ? 'Deployed' : 'Ready'}</span>
+                  </div>
+                  <div style="font-size:0.75rem; color:var(--accent-cyan); font-family:var(--font-mono); margin-bottom:0.75rem;">
+                    https://${escapeHtml(p.domain)}
+                  </div>
+                  <div style="display:flex; gap:0.4rem; margin-bottom:0.75rem;">
+                    <span class="badge badge-subtle">Runtime: ${escapeHtml(p.runtime)}</span>
+                    <span class="badge badge-subtle">${escapeHtml(p.build_cmd || 'Build')}</span>
+                  </div>
+                </div>
+
+                <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border-subtle); padding-top:0.75rem; margin-top:0.5rem;">
+                  <button class="btn btn-secondary" onclick="deployHostingProject('${escapeHtml(p.id)}')" style="font-size:0.72rem; padding:0.25rem 0.65rem;">
+                    🚀 Deploy Now
+                  </button>
+                  <a href="https://${escapeHtml(p.domain)}" target="_blank" class="btn btn-secondary" style="font-size:0.72rem; padding:0.25rem 0.65rem; text-decoration:none;">
+                    Visit Site ↗
+                  </a>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+      }
+
+      const domTbody = document.getElementById('hosting-domains-tbody');
+      if (domTbody) {
+        if (domains.length === 0) {
+          domTbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No custom domains configured yet.</td></tr>';
+        } else {
+          domTbody.innerHTML = domains.map(d => {
+            const isVerified = d.status === 'verified';
+            const dnsBadge = isVerified ? '<span class="badge badge-success">VERIFIED</span>' : '<span class="badge badge-warning">PENDING DNS</span>';
+            const sslBadge = d.ssl_ready ? '<span class="badge badge-success">ACTIVE</span>' : '<span class="badge badge-subtle">PENDING</span>';
+
+            return `
+              <tr>
+                <td><strong>${escapeHtml(d.domain)}</strong></td>
+                <td><code>${escapeHtml(d.project_id || 'N/A')}</code></td>
+                <td><code>${escapeHtml(d.target_backend || 'be_primary_local')}</code></td>
+                <td>${dnsBadge}</td>
+                <td>${sslBadge}</td>
+                <td style="font-size:0.72rem; font-family:var(--font-mono);">
+                  A @ 185.199.108.153<br>CNAME www cname.cybervps.app
+                </td>
+                <td>
+                  <button class="btn btn-secondary" onclick="verifyCustomDomain('${escapeHtml(d.domain)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem;">
+                    Verify DNS
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+      }
+    }
+
+    function openNewProjectModal() {
+      document.getElementById('modal-new-project').style.display = 'flex';
+      document.getElementById('proj-name').focus();
+    }
+    function closeNewProjectModal() {
+      document.getElementById('modal-new-project').style.display = 'none';
+    }
+
+    async function submitNewProject() {
+      const name = document.getElementById('proj-name').value.trim();
+      const runtime = document.getElementById('proj-runtime').value;
+      const custom_domain = document.getElementById('proj-domain').value.trim();
+      const build_cmd = document.getElementById('proj-build-cmd').value.trim();
+      if (!name) return showToast('Project name is required', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/hosting/projects`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, runtime, custom_domain, build_cmd })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to create project');
+        closeNewProjectModal();
+        showToast(`Hosting project '${name}' created!`, 'success');
+        await syncHosting();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function deployHostingProject(projectId) {
+      showToast(`Building & deploying project ${projectId}...`, 'info');
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/hosting/deploy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: projectId, branch: 'main' })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Deployment failed');
+
+        const logsCard = document.getElementById('hosting-logs-card');
+        const logsPre = document.getElementById('hosting-logs-content');
+        if (logsCard && logsPre) {
+          logsCard.style.display = 'block';
+          logsPre.innerText = (result.logs || []).join('\n');
+        }
+        showToast('Deployment live with edge TLS!', 'success');
+        await syncHosting();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function openAddDomainModal() {
+      const sel = document.getElementById('custom-domain-project');
+      if (sel) {
+        const projects = appState.hosting?.projects || [];
+        sel.innerHTML = projects.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('') || '<option value="default">Default Gateway</option>';
+      }
+      document.getElementById('modal-add-domain').style.display = 'flex';
+      document.getElementById('custom-domain-name').focus();
+    }
+    function closeAddDomainModal() {
+      document.getElementById('modal-add-domain').style.display = 'none';
+    }
+
+    async function submitAddDomain() {
+      const domain = document.getElementById('custom-domain-name').value.trim();
+      const project_id = document.getElementById('custom-domain-project').value;
+      if (!domain) return showToast('Domain name is required', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/domains`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain, project_id })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to add domain');
+        closeAddDomainModal();
+        showToast(`Domain '${domain}' registered. Configure your DNS records.`, 'success');
+        await syncHosting();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function verifyCustomDomain(domain) {
+      showToast(`Verifying DNS records & issuing SSL for ${domain}...`, 'info');
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/domains/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Verification failed');
+        showToast(`Domain ${domain} verified! TLS certificate active.`, 'success');
+        await syncHosting();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // =========================================================================
+    // 18. INFRASTRUCTURE: WIREGUARD, DOCKER, SANDBOXES & CYBERROOT CONTROLLER
+    // =========================================================================
+    async function syncInfra() {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const [wgRes, docRes, sbxRes, crRes, plRes] = await Promise.all([
+          fetch(`${base}/api/v1/wireguard/peers`),
+          fetch(`${base}/api/v1/docker/containers`),
+          fetch(`${base}/api/v1/sandboxes`),
+          fetch(`${base}/api/v1/cyberroot/status`),
+          fetch(`${base}/api/v1/plugins`)
+        ]);
+
+        const wgData = await wgRes.json();
+        const docData = await docRes.json();
+        const sbxData = await sbxRes.json();
+        const crData = await crRes.json();
+        const plData = await plRes.json();
+
+        renderWireGuard(wgData.peers || []);
+        renderDockerContainers(docData.containers || []);
+        renderSandboxes(sbxData.sandboxes || []);
+        renderCyberRoot(crData);
+        renderPlugins(plData.plugins || []);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function renderWireGuard(peers) {
+      const tbody = document.getElementById('wg-peers-tbody');
+      if (!tbody) return;
+      if (peers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">No WireGuard peers configured yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = peers.map(p => `
+        <tr>
+          <td><strong>${escapeHtml(p.name)}</strong></td>
+          <td style="font-family:var(--font-mono); font-size:0.72rem;">${escapeHtml(p.public_key ? p.public_key.slice(0, 20) + '...' : '-')}</td>
+          <td><code>${escapeHtml(p.allowed_ips)}</code></td>
+          <td><code>${escapeHtml(p.endpoint)}</code></td>
+          <td style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(p.handshake || 'Never')}</td>
+          <td><span class="badge badge-success">ACTIVE</span></td>
+        </tr>
+      `).join('');
+    }
+
+    function openAddWireguardModal() {
+      document.getElementById('modal-add-wireguard').style.display = 'flex';
+    }
+    function closeAddWireguardModal() {
+      document.getElementById('modal-add-wireguard').style.display = 'none';
+    }
+
+    async function submitAddWireguardPeer() {
+      const name = document.getElementById('wg-peer-name').value.trim();
+      const allowed_ips = document.getElementById('wg-peer-ips').value.trim();
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/wireguard/peers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, allowed_ips })
+        });
+        const result = await res.json();
+        closeAddWireguardModal();
+        showToast('WireGuard peer generated successfully!', 'success');
+        await syncInfra();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function renderDockerContainers(containers) {
+      const tbody = document.getElementById('docker-containers-tbody');
+      if (!tbody) return;
+      if (containers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No Docker containers running.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = containers.map(c => `
+        <tr>
+          <td><strong>${escapeHtml(c.name)}</strong></td>
+          <td style="font-family:var(--font-mono); font-size:0.75rem;">${escapeHtml(c.image)}</td>
+          <td><code>${escapeHtml(c.ports || '-')}</code></td>
+          <td>${escapeHtml(c.cpu || '0%')}</td>
+          <td>${escapeHtml(c.mem || '0 MB')}</td>
+          <td><span class="badge ${c.status === 'running' ? 'badge-success' : 'badge-subtle'}">${escapeHtml(c.status)}</span></td>
+          <td>
+            <button class="btn btn-secondary" onclick="dockerContainerAction('${escapeHtml(c.id)}', 'restart')" style="font-size:0.68rem; padding:0.2rem 0.45rem;">Restart</button>
+            <button class="btn btn-danger" onclick="dockerContainerAction('${escapeHtml(c.id)}', 'stop')" style="font-size:0.68rem; padding:0.2rem 0.45rem;">Stop</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function dockerContainerAction(id, action) {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/docker/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ container_id: id, action })
+        });
+        showToast(`Docker ${action} executed for ${id}`, 'success');
+        await syncInfra();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function renderSandboxes(sandboxes) {
+      const tbody = document.getElementById('sandboxes-tbody');
+      if (!tbody) return;
+      if (sandboxes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No active development sandboxes. Click "+ Create Sandbox".</td></tr>';
+        return;
+      }
+      tbody.innerHTML = sandboxes.map(s => `
+        <tr>
+          <td><code>${escapeHtml(s.id)}</code></td>
+          <td><strong>${escapeHtml(s.name)}</strong></td>
+          <td>${escapeHtml(s.cpu_limit)}</td>
+          <td>${escapeHtml(s.mem_limit)}</td>
+          <td style="font-size:0.72rem; color:var(--text-muted);">${new Date(s.expires_at).toLocaleTimeString()}</td>
+          <td><span class="badge badge-success">READY</span></td>
+          <td>
+            <button class="btn btn-danger" onclick="destroySandbox('${escapeHtml(s.id)}')" style="font-size:0.68rem; padding:0.2rem 0.45rem;">Destroy</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function openCreateSandboxModal() {
+      document.getElementById('modal-create-sandbox').style.display = 'flex';
+    }
+    function closeCreateSandboxModal() {
+      document.getElementById('modal-create-sandbox').style.display = 'none';
+    }
+
+    async function submitCreateSandbox() {
+      const name = document.getElementById('sbx-name').value.trim();
+      const cpu_limit = document.getElementById('sbx-cpu').value;
+      const mem_limit = document.getElementById('sbx-mem').value;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/sandboxes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, cpu_limit, mem_limit, ttl_minutes: 60 })
+        });
+        closeCreateSandboxModal();
+        showToast('Disposable development sandbox created!', 'success');
+        await syncInfra();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function destroySandbox(id) {
+      if (!confirm(`Destroy sandbox ${id}?`)) return;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        await fetch(`${base}/api/v1/sandboxes/${id}`, { method: 'DELETE' });
+        showToast(`Sandbox ${id} destroyed.`, 'success');
+        await syncInfra();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function renderCyberRoot(cr) {
+      if (!cr) return;
+      document.getElementById('cr-identity').innerText = cr.effective_identity || 'Standard User';
+      document.getElementById('cr-integrity').innerText = cr.integrity_level || 'Medium (Standard)';
+      document.getElementById('cr-elevation').innerText = cr.capabilities?.uac_available ? 'Windows UAC / Elevated Token Duplication' : (cr.capabilities?.sudo_available ? 'Linux sudo / root' : 'Standard Execution');
+    }
+
+    function renderPlugins(plugins) {
+      const list = document.getElementById('plugins-list');
+      if (!list) return;
+      list.innerHTML = plugins.map(p => `
+        <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg-base); padding:0.75rem 1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+          <div>
+            <strong style="color:var(--text-primary); font-size:0.85rem;">${escapeHtml(p.name)}</strong>
+            <span style="font-size:0.7rem; color:var(--text-muted); display:block;">v${escapeHtml(p.version)} — ${escapeHtml(p.description)}</span>
+          </div>
+          <button class="btn ${p.enabled ? 'btn-primary' : 'btn-secondary'}" onclick="togglePlugin('${escapeHtml(p.id)}', ${!p.enabled})" style="font-size:0.7rem; padding:0.25rem 0.55rem;">
+            ${p.enabled ? 'Enabled' : 'Disabled'}
+          </button>
+        </div>
+      `).join('');
+    }
+
+    async function togglePlugin(id, enabled) {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        await fetch(`${base}/api/v1/plugins/toggle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plugin_id: id, enabled })
+        });
+        showToast(`Plugin toggled: ${enabled ? 'Enabled' : 'Disabled'}`, 'success');
+        await syncInfra();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // =========================================================================
+    // 19. ADMIN-ONLY AUTHENTICATION & SAFE REVOCATION CONTROLLER
+    // =========================================================================
+    function handleAdminAuthButton() {
+      if (appState.adminAuth && appState.adminAuth.authenticated) {
+        if (confirm('Administrator is currently signed in. Do you want to sign out?')) {
+          submitAdminLogout();
+        }
+      } else {
+        openAdminLoginModal();
+      }
+    }
+
+    function openAdminLoginModal() {
+      document.getElementById('modal-admin-login').style.display = 'flex';
+      document.getElementById('admin-login-password').focus();
+    }
+    function closeAdminLoginModal() {
+      document.getElementById('modal-admin-login').style.display = 'none';
+      const errBox = document.getElementById('admin-login-error');
+      if (errBox) errBox.style.display = 'none';
+    }
+
+    async function submitAdminLogin() {
+      const user = document.getElementById('admin-login-username').value.trim();
+      const pass = document.getElementById('admin-login-password').value;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+
+      try {
+        const res = await fetch(`${base}/api/v1/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: user, password: pass })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Authentication failed');
+
+        appState.adminAuth = { authenticated: true, token: data.token, user: data.user };
+        localStorage.setItem('cvps_admin_token', data.token);
+
+        const btnLbl = document.getElementById('lbl-admin-auth');
+        if (btnLbl) btnLbl.innerText = 'Admin (Active)';
+        closeAdminLoginModal();
+        showToast('Administrator session authenticated!', 'success');
+      } catch (err) {
+        const errBox = document.getElementById('admin-login-error');
+        if (errBox) {
+          errBox.style.display = 'block';
+          errBox.innerText = err.message;
+        }
+      }
+    }
+
+    async function submitAdminLogout() {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const token = appState.adminAuth?.token;
+      try {
+        await fetch(`${base}/api/v1/auth/logout`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+      } catch (_) {}
+
+      appState.adminAuth = { authenticated: false, token: '', user: null };
+      localStorage.removeItem('cvps_admin_token');
+      const btnLbl = document.getElementById('lbl-admin-auth');
+      if (btnLbl) btnLbl.innerText = 'Admin';
+      showToast('Administrator session closed.', 'info');
+    }
+
+    async function runFleetActiveCheck() {
+      showToast('Executing fleet-wide active health check...', 'info');
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/fleet/active-check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        const s = data.summary || {};
+        showToast(`Fleet Check: ${s.total || 0} nodes scanned (${s.healthy || 0} healthy, ${s.degraded || 0} degraded, ${s.offline || 0} offline)`, 'success');
+        await syncData(true);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function openDeviceRevokeModal(machineId) {
+      document.getElementById('revoke-machine-id').value = machineId || '';
+      document.getElementById('revoke-machine-code').value = '';
+      document.getElementById('revoke-machine-phrase').value = '';
+      const errBox = document.getElementById('revoke-machine-error');
+      if (errBox) errBox.style.display = 'none';
+      document.getElementById('modal-device-revoke').style.display = 'flex';
+      document.getElementById('revoke-machine-phrase').focus();
+    }
+    function closeDeviceRevokeModal() {
+      document.getElementById('modal-device-revoke').style.display = 'none';
+    }
+
+    async function submitDeviceRevoke() {
+      const machine_id = document.getElementById('revoke-machine-id').value.trim();
+      const revocation_code = document.getElementById('revoke-machine-code').value.trim();
+      const confirmation_phrase = document.getElementById('revoke-machine-phrase').value.trim();
+
+      if (confirmation_phrase !== 'Cyberexpert2222@') {
+        const errBox = document.getElementById('revoke-machine-error');
+        if (errBox) {
+          errBox.style.display = 'block';
+          errBox.innerText = 'Confirmation phrase must exactly match "Cyberexpert2222@".';
+        }
+        return;
+      }
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/fleet/device/revoke`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id, revocation_code, confirmation_phrase })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Revocation failed');
+
+        closeDeviceRevokeModal();
+        showToast(`Device ${machine_id} safely revoked and removed from fleet.`, 'success');
+        await syncData(true);
+      } catch (err) {
+        const errBox = document.getElementById('revoke-machine-error');
+        if (errBox) {
+          errBox.style.display = 'block';
+          errBox.innerText = err.message;
+        }
+      }
     }
 
     function setupSyncInterval() {
