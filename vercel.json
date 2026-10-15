@@ -5,6 +5,7 @@
       "root": ".",
       "framework": "container",
       "runtime": "container",
+      "entrypoint": "Dockerfile",
       "buildCommand": "npm install",
       "bindings": [
         {
@@ -30,6 +31,7 @@
     "control-plane": {
       "root": "services/control-plane",
       "runtime": "rust",
+      "entrypoint": "src/main.rs",
       "bindings": [
         {
           "type": "service",
@@ -41,15 +43,18 @@
     },
     "public-gateway": {
       "root": "services/public-gateway",
-      "runtime": "rust"
+      "runtime": "rust",
+      "entrypoint": "src/main.rs"
     },
     "relay": {
       "root": "services/relay",
-      "runtime": "rust"
+      "runtime": "rust",
+      "entrypoint": "src/main.rs"
     },
     "core": {
       "root": "agent/core",
       "runtime": "rust",
+      "entrypoint": "src/main.rs",
       "bindings": [
         {
           "type": "service",
