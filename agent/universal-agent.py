@@ -272,15 +272,54 @@ class ConPTYTerminal:
             self.w_out = None
 
 
-def _safe_create_connection(address, timeout=8.0):
+def _safe_create_connection(address, timeout=8.0, source_address=None):
     host, port = address
-    # Resolve IPv4 first to avoid 8-second IPv6 timeouts on cloud containers without IPv6 routes
+    proxy_url = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY") or \
+                os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY") or \
+                os.environ.get("all_proxy") or os.environ.get("ALL_PROXY")
+    
+    if proxy_url:
+        try:
+            p_parsed = urllib.parse.urlparse(proxy_url if "://" in proxy_url else "http://" + proxy_url)
+            p_host = p_parsed.hostname
+            p_port = p_parsed.port or 8080
+            
+            p_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            p_sock.settimeout(timeout)
+            p_sock.connect((p_host, p_port))
+            
+            connect_req = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+            if p_parsed.username and p_parsed.password:
+                creds = base64.b64encode(f"{p_parsed.username}:{p_parsed.password}".encode("utf-8")).decode("ascii")
+                connect_req += f"Proxy-Authorization: Basic {creds}\r\n"
+            connect_req += "User-Agent: CyberVPS-Agent/1.0\r\n\r\n"
+            
+            p_sock.sendall(connect_req.encode("utf-8"))
+            
+            hdr = b""
+            while b"\r\n\r\n" not in hdr:
+                chunk = p_sock.recv(512)
+                if not chunk:
+                    p_sock.close()
+                    raise ConnectionError("Proxy closed connection during CONNECT handshake")
+                hdr += chunk
+            
+            status_line = hdr.split(b"\r\n")[0].decode("utf-8", errors="ignore")
+            if " 200 " in status_line:
+                return p_sock
+            p_sock.close()
+        except Exception:
+            pass
+
+    # Direct connection: resolve IPv4 first to avoid 8-second IPv6 timeouts on cloud containers without IPv6 routes
     try:
         for res in socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM):
             af, socktype, proto, canonname, sa = res
             sock = None
             try:
                 sock = socket.socket(af, socktype, proto)
+                if source_address:
+                    sock.bind(source_address)
                 sock.settimeout(timeout)
                 sock.connect(sa)
                 return sock
@@ -290,7 +329,13 @@ def _safe_create_connection(address, timeout=8.0):
                     except Exception: pass
     except Exception:
         pass
-    return socket.create_connection(address, timeout=timeout)
+    if source_address:
+        return _orig_create_connection(address, timeout=timeout, source_address=source_address)
+    return _orig_create_connection(address, timeout=timeout)
+
+
+_orig_create_connection = socket.create_connection
+socket.create_connection = _safe_create_connection
 
 
 class RelayWebSocket:

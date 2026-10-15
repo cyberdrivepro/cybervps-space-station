@@ -83,6 +83,23 @@ function isPidRunning(pid) {
 function fetchJson(urlStr, timeoutMs = 3500) {
   return new Promise((resolve) => {
     try {
+      const proxy = process.env.https_proxy || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.HTTP_PROXY;
+      if (proxy) {
+        try {
+          const cp = require('child_process');
+          const out = cp.execSync(`curl -sSL --max-time 4 "${urlStr}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+          try {
+            resolve({ statusCode: 200, data: JSON.parse(out) });
+            return;
+          } catch (_) {
+            resolve({ statusCode: 200, data: null });
+            return;
+          }
+        } catch (_) {
+          resolve(null);
+          return;
+        }
+      }
       const parsed = new URL(urlStr);
       const client = parsed.protocol === 'https:' ? https : http;
       const req = client.get(urlStr, { timeout: timeoutMs }, (res) => {
