@@ -419,15 +419,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 2. HEALTH & DOWNLOAD ENDPOINTS
-  if (pathname === '/health') {
+  if (pathname === '/health' || pathname === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'OK',
       version: '2.1.0',
-      commit_sha: 'cc24d44',
-      git_commit: 'cc24d44',
-      build_id: 'cvps-2.1.0-cc24d44',
-      built_at: '2026-10-15T06:15:00Z',
+      commit_sha: '302aa7d',
+      git_commit: '302aa7d',
+      build_id: 'cvps-2.1.0-302aa7d',
+      built_at: new Date().toISOString(),
       protocol_version: '2.1.0',
       service: 'CyberVPS Space Station Universal Network Bridge',
       timestamp: new Date().toISOString(),
