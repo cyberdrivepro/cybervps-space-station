@@ -225,6 +225,7 @@ $ConfigObj = [ordered]@{
     token = $Token
     machine_id = $MachineId
     hostname = $env:COMPUTERNAME
+    unattended_access = $true
 }
 $ConfigJson = $ConfigObj | ConvertTo-Json -Depth 4
 Set-Content -Path $ConfigFile -Value $ConfigJson -Force

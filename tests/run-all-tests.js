@@ -225,7 +225,7 @@ async function runTests() {
           exit_code: 0
         }
       }));
-    } else if (['FileList', 'FileRead', 'FileWrite', 'FileDelete', 'ProcessList', 'ProcessKill', 'ProcessStart', 'ProcessDetails', 'ServiceList', 'ServiceAction'].includes(msg.type)) {
+    } else if (['FileList', 'FileRead', 'FileWrite', 'FileDelete', 'ProcessList', 'ProcessKill', 'ProcessStart', 'ProcessDetails', 'ServiceList', 'ServiceAction', 'DesktopStatus', 'DesktopAction'].includes(msg.type)) {
       const payload = msg.payload || {};
       const request_id = payload.request_id;
       let result = {};
@@ -264,6 +264,24 @@ async function runTests() {
         ];
       } else if (msg.type === 'ServiceAction') {
         result = { service: payload.service_name, action: payload.action, status: 'Active' };
+      } else if (msg.type === 'DesktopStatus') {
+        result = {
+          machine_id: remoteNodeId,
+          os_type: 'Linux',
+          hostname: 'vps_ubuntu_station_test',
+          privilege: { is_elevated: true, is_root: true, user: 'root' },
+          unattended_access: true,
+          service_mode: 'systemd (root)',
+          headless: true,
+          agent_pid: 9999,
+          agent_uptime: 3600,
+          rdp: { supported: false, edition: 'Linux xrdp', enabled: false, port: 3389, reason: 'xrdp not installed' },
+          vnc: { installed: true, server_name: 'x11vnc', running: true, port: 5900, has_display: true, display: ':0' },
+          rustdesk: { installed: true, running: true, id: '987654321', direct_ip: '10.77.0.94' },
+          active_sessions: [{ id: '1', user: 'root', session_name: 'console', state: 'Active' }]
+        };
+      } else if (msg.type === 'DesktopAction') {
+        result = { action: payload.action, message: 'Action executed successfully', success: true };
       }
 
       agentWs.send(JSON.stringify({
@@ -714,6 +732,58 @@ async function runTests() {
   autoClientWs.close();
   console.log('  ✅ Auto Privilege Detection verified: token defaulted to auto and resolved without execution failure.');
 
+  // TEST 24: Remote Desktop Protocol Management, Unattended Access & Secure RDP Configuration
+  console.log('\n[TEST 24] Testing Remote Desktop Protocol APIs, Port Bridge & RDP Config Generation...');
+  // 1. Missing machine_id parameter
+  const noMachineStatus = await request(`${SERVER_URL}/api/v1/desktop/status`);
+  assert.strictEqual(noMachineStatus.statusCode, 400, 'Desktop status must require machine_id');
+
+  // 2. Non-existent machine_id
+  const missingNodeStatus = await request(`${SERVER_URL}/api/v1/desktop/status?machine_id=non_existent_node_999`);
+  assert.strictEqual(missingNodeStatus.statusCode, 404, 'Desktop status must return 404 for unknown node');
+
+  // 3. Valid enrolled machine status (using remoteNodeId)
+  const validStatus = await request(`${SERVER_URL}/api/v1/desktop/status?machine_id=${remoteNodeId}`);
+  assert.strictEqual(validStatus.statusCode, 200, 'Desktop status must succeed for enrolled machine');
+  const statusData = JSON.parse(validStatus.body);
+  assert(statusData.rdp, 'Status must report rdp configuration');
+  assert(statusData.vnc, 'Status must report vnc configuration');
+  assert(statusData.rustdesk, 'Status must report rustdesk configuration');
+  assert.strictEqual(statusData.headless, true, 'Desktop status must verify headless agent supervision');
+  console.log('  ✅ Remote Desktop status verified: RDP, VNC, RustDesk & headless supervision operational.');
+
+  // 4. Create Remote Desktop Port Bridge (RDP :3389)
+  const tunnelRes = await request(`${SERVER_URL}/api/v1/desktop/tunnel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, protocol: 'rdp' })
+  });
+  assert.strictEqual(tunnelRes.statusCode, 200, 'Desktop tunnel endpoint must create RDP bridge');
+  const tunnelData = JSON.parse(tunnelRes.body);
+  assert.strictEqual(tunnelData.success, true, 'Bridge creation must succeed');
+  assert(tunnelData.connection_uri.startsWith('127.0.0.1:'), 'Bridge must bind loopback interface');
+  assert(tunnelData.mstsc_command.includes('mstsc /v:127.0.0.1:'), 'mstsc command must target loopback bridge');
+  assert(tunnelData.rdp_download_url, 'Response must include RDP config download URL');
+  console.log(`  ✅ Secure RDP Port Bridge created: ${tunnelData.connection_uri} (Command: "${tunnelData.mstsc_command}")`);
+
+  // 5. Download and verify RDP configuration file
+  const rdpConfigRes = await request(`${SERVER_URL}/api/v1/desktop/rdp-config?machine_id=${remoteNodeId}&port=${tunnelData.mapping.local_port}`);
+  assert.strictEqual(rdpConfigRes.statusCode, 200, 'RDP config endpoint must return 200 OK');
+  assert.strictEqual(rdpConfigRes.headers['content-type'], 'application/x-rdp', 'Content-Type must be application/x-rdp');
+  assert(rdpConfigRes.headers['content-disposition']?.includes('.rdp'), 'Content-Disposition must specify .rdp attachment');
+  assert(rdpConfigRes.body.includes(`full address:s:127.0.0.1:${tunnelData.mapping.local_port}`), 'RDP file must configure target bridge port');
+  assert(rdpConfigRes.body.includes('enablecredsspsupport:i:1'), 'RDP file must enforce NLA / CredSSP');
+  console.log('  ✅ Secure .rdp configuration verified: Loopback tunnel binding & NLA CredSSP enforced.');
+
+  // 6. Desktop action validation (rejection of missing action)
+  const badActionRes = await request(`${SERVER_URL}/api/v1/desktop/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId })
+  });
+  assert.strictEqual(badActionRes.statusCode, 400, 'Desktop action must reject payload without action');
+  console.log('  ✅ Desktop action security validation verified: Malformed requests strictly rejected with 400.');
+
   // TEST 15: Durable State Persistence Across Server Restarts
   console.log('\n[TEST 15] Testing Durable State Persistence Across Process Restarts...');
   // Wait for debounced write
@@ -770,7 +840,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 23 ADVANCED SECURITY, CONTROL PLANE, BRIDGE, AGENT & TERMINAL TESTS PASSED!');
+  console.log('🎉 ALL 24 ADVANCED SECURITY, CONTROL PLANE, BRIDGE, AGENT, TERMINAL & DESKTOP TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

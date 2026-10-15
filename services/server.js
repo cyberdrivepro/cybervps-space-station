@@ -998,6 +998,206 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // =========================================================================
+  // REMOTE DESKTOP & HEADLESS UNATTENDED ACCESS API (RDP / VNC / RustDesk)
+  // =========================================================================
+  if (pathname === '/api/v1/desktop/status' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id parameter is required' }));
+      return;
+    }
+
+    const m = db.machines.get(machineId);
+    if (!m) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Machine '${machineId}' not found in fleet` }));
+      return;
+    }
+
+    const activeBridges = Array.from(db.bridgeMappings.values()).filter(b => b.machine_id === machineId && b.status === 'active');
+    const rdpBridge = activeBridges.find(b => b.remote_port === 3389);
+    const vncBridge = activeBridges.find(b => b.remote_port === 5900 || b.remote_port === 5901);
+
+    try {
+      const data = await sendAgentRequest(machineId, 'DesktopStatus', {}, 10000);
+      if (data) {
+        if (rdpBridge) {
+          data.rdp_bridge = {
+            id: rdpBridge.id,
+            local_port: rdpBridge.local_port,
+            connection_uri: `127.0.0.1:${rdpBridge.local_port}`,
+            mstsc_command: `mstsc /v:127.0.0.1:${rdpBridge.local_port}`
+          };
+        }
+        if (vncBridge) {
+          data.vnc_bridge = {
+            id: vncBridge.id,
+            local_port: vncBridge.local_port,
+            connection_uri: `127.0.0.1:${vncBridge.local_port}`,
+            vnc_uri: `vnc://127.0.0.1:${vncBridge.local_port}`
+          };
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      const isOffline = (m.status === 'offline');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        machine_id: machineId,
+        hostname: m.hostname || machineId,
+        os_type: m.os || 'Linux',
+        status: isOffline ? 'offline' : 'unreachable',
+        unattended_access: true,
+        service_mode: isOffline ? 'offline' : 'unresponsive',
+        headless: true,
+        rdp: {
+          supported: (m.os === 'Windows'),
+          edition: m.os === 'Windows' ? 'Windows Host' : 'Linux',
+          enabled: false,
+          port: 3389,
+          reason: isOffline ? 'Machine is currently offline' : err.message
+        },
+        vnc: {
+          installed: false,
+          running: false,
+          port: 5900,
+          has_display: true
+        },
+        rustdesk: {
+          installed: false,
+          running: false,
+          id: '',
+          direct_ip: vpnPool.allocated.get(machineId) || '10.77.0.x'
+        },
+        active_sessions: [],
+        error: err.message
+      }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/desktop/action' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id, action, protocol, params } = payload;
+        if (!machine_id || !action) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'machine_id and action parameters are required' }));
+          return;
+        }
+
+        const data = await sendAgentRequest(machine_id, 'DesktopAction', { action, protocol, params: params || {} }, 15000);
+        logAudit('desktop_action', 'admin', machine_id, `Executed ${action} on protocol ${protocol || 'desktop'}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/desktop/tunnel' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id, protocol, preferred_local_port } = payload;
+        if (!machine_id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'machine_id is required' }));
+          return;
+        }
+
+        const proto = (protocol || 'rdp').toLowerCase();
+        const rPort = payload.remote_port ? parseInt(payload.remote_port, 10) : (proto === 'vnc' ? 5900 : (proto === 'rustdesk' ? 21118 : 3389));
+
+        let mapping = Array.from(db.bridgeMappings.values()).find(
+          b => b.machine_id === machine_id && b.remote_port === rPort && b.status === 'active'
+        );
+
+        if (!mapping) {
+          const mappingId = 'bridge_rd_' + crypto.randomUUID().slice(0, 8);
+          let lPort = preferred_local_port ? parseInt(preferred_local_port, 10) : (proto === 'vnc' ? 59000 : 33890);
+
+          const usedPorts = new Set(Array.from(db.bridgeMappings.values()).map(b => b.local_port));
+          while (usedPorts.has(lPort)) {
+            lPort++;
+          }
+
+          mapping = {
+            id: mappingId,
+            machine_id,
+            remote_port: rPort,
+            local_port: lPort,
+            protocol: 'TCP',
+            status: 'active',
+            created_at: new Date().toISOString(),
+            active_connections: 0,
+            bytes_transferred: 0,
+            type: `desktop_${proto}`
+          };
+          db.bridgeMappings.set(mappingId, mapping);
+          logAudit('desktop_bridge_created', 'admin', machine_id, `Created secure ${proto.toUpperCase()} bridge: Local 127.0.0.1:${lPort} <---> Remote:${rPort}`);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          mapping,
+          protocol: proto,
+          connection_uri: `127.0.0.1:${mapping.local_port}`,
+          mstsc_command: `mstsc /v:127.0.0.1:${mapping.local_port}`,
+          vnc_uri: `vnc://127.0.0.1:${mapping.local_port}`,
+          rdp_download_url: `/api/v1/desktop/rdp-config?machine_id=${encodeURIComponent(machine_id)}&port=${mapping.local_port}`
+        }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/desktop/rdp-config' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id') || 'fleet-node';
+    const port = parsedUrl.searchParams.get('port') || '33890';
+    const rdpContent = [
+      `full address:s:127.0.0.1:${port}`,
+      'prompt for credentials:i:1',
+      'administrative session:i:1',
+      'screen mode id:i:2',
+      'use multimon:i:0',
+      'session bpp:i:32',
+      'compression:i:1',
+      'keyboardhook:i:2',
+      'audiomode:i:0',
+      'redirectclipboard:i:1',
+      'redirectprinters:i:0',
+      'redirectcomports:i:0',
+      'redirectsmartcards:i:0',
+      'displayconnectionbar:i:1',
+      'autoreconnection enabled:i:1',
+      'authentication level:i:2',
+      'enablecredsspsupport:i:1'
+    ].join('\r\n') + '\r\n';
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-rdp',
+      'Content-Disposition': `attachment; filename="cybervps-${machineId}-rdp.rdp"`,
+      'Content-Length': Buffer.byteLength(rdpContent)
+    });
+    res.end(rdpContent);
+    return;
+  }
+
   if (pathname === '/api/v1/enrollment/token' && method === 'POST') {
     const token = 'cvps_enroll_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
     db.enrollmentTokens.add(token);

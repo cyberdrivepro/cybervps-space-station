@@ -615,6 +615,32 @@ class CyberVPSAgent:
             pass
         return new_id
 
+    def get_config_path(self):
+        cfg_path = os.environ.get("CYBERVPS_CONFIG")
+        if not cfg_path:
+            cfg_path = os.path.join(os.path.expanduser("~"), ".cybervps", "config.json")
+        return cfg_path
+
+    def load_config(self):
+        p = self.get_config_path()
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def save_config(self, data):
+        p = self.get_config_path()
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            return True
+        except Exception:
+            return False
+
     # =========================================================================
     # Universal Device Intelligence (Neofetch & Tailscale-Style Discovery)
     # =========================================================================
@@ -2022,6 +2048,390 @@ class CyberVPSAgent:
                 "payload": {"request_id": req_id, "success": False, "error": str(e)}
             })
 
+    def handle_desktop_status(self, payload):
+        req_id = payload.get("request_id")
+        try:
+            sys_os = platform.system()
+            priv = self.get_privilege_info() if hasattr(self, "get_privilege_info") else {"is_elevated": False, "user": os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"}
+
+            # 1. Unattended Access & Background Supervisor State
+            cfg = self.load_config() if hasattr(self, "load_config") else {}
+            unattended_access = bool(cfg.get("unattended_access", True))
+            uptime_sec = int(time.time() - getattr(self, "uptime_start", time.time()))
+
+            service_mode = "unknown"
+            if sys_os == "Windows":
+                if priv.get("is_elevated") or priv.get("is_system"):
+                    service_mode = "Windows Task / Service (SYSTEM/Elevated)"
+                else:
+                    service_mode = "Windows User Background (HKCU Run/VBS)"
+            else:
+                if os.path.exists("/etc/systemd/system/cybervps-agent.service"):
+                    service_mode = "systemd (root)"
+                elif os.path.exists(os.path.expanduser("~/.config/systemd/user/cybervps-agent.service")):
+                    service_mode = "systemd (user linger)"
+                else:
+                    service_mode = "supervisor (nohup/cron)"
+
+            # 2. Windows RDP Capabilities & Configuration
+            rdp_info = {
+                "supported": False,
+                "edition": "",
+                "enabled": False,
+                "port": 3389,
+                "nla_enabled": False,
+                "service_status": "Unknown",
+                "reason": ""
+            }
+            if sys_os == "Windows":
+                edition_id = ""
+                prod_name = ""
+                if winreg:
+                    try:
+                        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+                        try: prod_name = winreg.QueryValueEx(k, "ProductName")[0]
+                        except Exception: pass
+                        try: edition_id = winreg.QueryValueEx(k, "EditionID")[0]
+                        except Exception: pass
+                        winreg.CloseKey(k)
+                    except Exception: pass
+                rdp_info["edition"] = prod_name or edition_id or "Windows"
+
+                is_home = any(x in (edition_id or prod_name).lower() for x in ["home", "core", "starter"])
+                if is_home:
+                    rdp_info["supported"] = False
+                    rdp_info["reason"] = f"{prod_name or 'Windows Home'} does not support incoming Remote Desktop natively. Use VNC or RustDesk."
+                else:
+                    rdp_info["supported"] = True
+
+                if winreg:
+                    try:
+                        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Control\Terminal Server")
+                        try:
+                            f_deny = winreg.QueryValueEx(k, "fDenyTSConnections")[0]
+                            rdp_info["enabled"] = (f_deny == 0)
+                        except Exception: pass
+                        winreg.CloseKey(k)
+                    except Exception: pass
+
+                    try:
+                        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp")
+                        try: rdp_info["port"] = int(winreg.QueryValueEx(k, "PortNumber")[0])
+                        except Exception: pass
+                        try: rdp_info["nla_enabled"] = bool(winreg.QueryValueEx(k, "UserAuthentication")[0])
+                        except Exception: pass
+                        winreg.CloseKey(k)
+                    except Exception: pass
+
+                try:
+                    out = subprocess.check_output(["powershell", "-NoProfile", "-Command", "(Get-Service TermService -ErrorAction SilentlyContinue).Status"], timeout=4).decode("utf-8", errors="ignore").strip()
+                    if "Running" in out or "4" in out:
+                        rdp_info["service_status"] = "Running"
+                    elif "Stopped" in out or "1" in out:
+                        rdp_info["service_status"] = "Stopped"
+                    else:
+                        rdp_info["service_status"] = out or "Not Found"
+                except Exception:
+                    rdp_info["service_status"] = "Unknown"
+            else:
+                xrdp_installed = os.path.exists("/usr/sbin/xrdp") or os.path.exists("/usr/bin/xrdp")
+                rdp_info["supported"] = xrdp_installed
+                rdp_info["edition"] = "Linux xrdp"
+                if xrdp_installed:
+                    try:
+                        chk = subprocess.run(["systemctl", "is-active", "xrdp"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=4)
+                        rdp_info["enabled"] = (chk.stdout.decode().strip() == "active")
+                        rdp_info["service_status"] = "Running" if rdp_info["enabled"] else "Stopped"
+                    except Exception:
+                        pass
+                else:
+                    rdp_info["reason"] = "xrdp is not installed on this Linux system. Use VNC or RustDesk."
+
+            # 3. VNC Capabilities & Display Environment
+            vnc_info = {
+                "installed": False,
+                "server_name": "",
+                "running": False,
+                "port": 5900,
+                "has_display": True,
+                "display": os.environ.get("DISPLAY", "") or os.environ.get("WAYLAND_DISPLAY", "")
+            }
+            if sys_os == "Windows":
+                for vnc_name, path_sub in [
+                    ("TightVNC", r"C:\Program Files\TightVNC\tvnserver.exe"),
+                    ("UltraVNC", r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe"),
+                    ("TigerVNC", r"C:\Program Files\TigerVNC\winvnc4.exe"),
+                    ("RealVNC", r"C:\Program Files\RealVNC\VNC Server\vncserver.exe")
+                ]:
+                    if os.path.exists(path_sub):
+                        vnc_info["installed"] = True
+                        vnc_info["server_name"] = vnc_name
+                        break
+            else:
+                for vnc_bin in ["x11vnc", "tigervncserver", "vncserver", "tightvncserver", "wayvnc"]:
+                    if shutil.which(vnc_bin) or os.path.exists(f"/usr/bin/{vnc_bin}") or os.path.exists(f"/bin/{vnc_bin}"):
+                        vnc_info["installed"] = True
+                        vnc_info["server_name"] = vnc_bin
+                        break
+                if not vnc_info["display"]:
+                    x11_dir = "/tmp/.X11-unix"
+                    if os.path.exists(x11_dir):
+                        socks = [f for f in os.listdir(x11_dir) if f.startswith("X")]
+                        if socks:
+                            disp_num = socks[0].replace("X", "")
+                            vnc_info["display"] = f":{disp_num}"
+                vnc_info["has_display"] = bool(vnc_info["display"])
+
+            listening = self.discover_listening_ports() if hasattr(self, "discover_listening_ports") else []
+            for lp in listening:
+                p_num = lp.get("port") if isinstance(lp, dict) else lp
+                if p_num in [5900, 5901, 5902]:
+                    vnc_info["running"] = True
+                    vnc_info["port"] = p_num
+                    break
+
+            # 4. RustDesk Capabilities & Service
+            rustdesk_info = {
+                "installed": False,
+                "running": False,
+                "id": "",
+                "direct_ip": getattr(self, "virtual_ip", "") or "10.77.0.x"
+            }
+            rd_bin = None
+            if sys_os == "Windows":
+                for cand in [r"C:\Program Files\RustDesk\rustdesk.exe", r"C:\Program Files (x86)\RustDesk\rustdesk.exe"]:
+                    if os.path.exists(cand):
+                        rd_bin = cand
+                        break
+                if not rd_bin and shutil.which("rustdesk"):
+                    rd_bin = shutil.which("rustdesk")
+            else:
+                for cand in ["/usr/bin/rustdesk", "/usr/lib/rustdesk/rustdesk"]:
+                    if os.path.exists(cand):
+                        rd_bin = cand
+                        break
+                if not rd_bin and shutil.which("rustdesk"):
+                    rd_bin = shutil.which("rustdesk")
+
+            if rd_bin:
+                rustdesk_info["installed"] = True
+                try:
+                    rd_id_out = subprocess.check_output([rd_bin, "--get-id"], timeout=3).decode("utf-8", errors="ignore").strip()
+                    if rd_id_out and rd_id_out.isdigit():
+                        rustdesk_info["id"] = rd_id_out
+                except Exception:
+                    pass
+                if sys_os == "Windows":
+                    try:
+                        out = subprocess.check_output(["powershell", "-NoProfile", "-Command", "(Get-Service rustdesk -ErrorAction SilentlyContinue).Status"], timeout=3).decode("utf-8", errors="ignore").strip()
+                        rustdesk_info["running"] = ("Running" in out or "4" in out)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        chk = subprocess.run(["systemctl", "is-active", "rustdesk"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
+                        rustdesk_info["running"] = (chk.stdout.decode().strip() == "active")
+                    except Exception:
+                        pass
+
+            # 5. Active Desktop Sessions List
+            active_sessions = []
+            if sys_os == "Windows":
+                try:
+                    out = subprocess.check_output(["qwinsta"], timeout=4).decode("utf-8", errors="ignore")
+                    for line in out.splitlines()[1:]:
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            s_name = parts[0].replace(">", "").strip()
+                            s_user = parts[1] if len(parts) >= 3 and not parts[1].isdigit() else "Console/Active"
+                            s_id = parts[2] if len(parts) >= 3 and not parts[1].isdigit() else parts[1]
+                            s_state = parts[3] if len(parts) >= 4 else (parts[2] if len(parts) >= 3 else "Active")
+                            if s_id.isdigit():
+                                active_sessions.append({
+                                    "id": s_id,
+                                    "session_name": s_name,
+                                    "user": s_user,
+                                    "state": s_state
+                                })
+                except Exception:
+                    pass
+            else:
+                try:
+                    out = subprocess.check_output(["who"], timeout=3).decode("utf-8", errors="ignore")
+                    for idx, line in enumerate(out.splitlines()):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            active_sessions.append({
+                                "id": str(idx + 1),
+                                "session_name": parts[1],
+                                "user": parts[0],
+                                "state": "Active",
+                                "time": parts[2] + " " + (parts[3] if len(parts) >= 4 else "")
+                            })
+                except Exception:
+                    pass
+
+            result = {
+                "machine_id": self.machine_id,
+                "os_type": sys_os,
+                "hostname": socket.gethostname(),
+                "privilege": priv,
+                "unattended_access": unattended_access,
+                "service_mode": service_mode,
+                "headless": True,
+                "agent_pid": os.getpid(),
+                "agent_uptime": uptime_sec,
+                "rdp": rdp_info,
+                "vnc": vnc_info,
+                "rustdesk": rustdesk_info,
+                "active_sessions": active_sessions
+            }
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": result}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_desktop_action(self, payload):
+        req_id = payload.get("request_id")
+        action = (payload.get("action") or "").lower().strip()
+        protocol = (payload.get("protocol") or "").lower().strip()
+        params = payload.get("params") or {}
+
+        try:
+            sys_os = platform.system()
+            priv = self.get_privilege_info() if hasattr(self, "get_privilege_info") else {"is_elevated": False}
+
+            if action == "enable_rdp":
+                if sys_os != "Windows":
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": False, "error": "Native RDP host configuration is only available on Windows. For Linux, please use VNC or RustDesk."}
+                    })
+                    return
+
+                if not (priv.get("is_elevated") or priv.get("is_admin") or priv.get("is_system")):
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": False, "error": "Administrator privileges required to enable Windows Remote Desktop. Please run CyberVPS Agent as Administrator or install as SYSTEM service."}
+                    })
+                    return
+
+                edition_id = ""
+                prod_name = ""
+                if winreg:
+                    try:
+                        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+                        try: prod_name = winreg.QueryValueEx(k, "ProductName")[0]
+                        except Exception: pass
+                        try: edition_id = winreg.QueryValueEx(k, "EditionID")[0]
+                        except Exception: pass
+                        winreg.CloseKey(k)
+                    except Exception: pass
+                if any(x in (edition_id or prod_name).lower() for x in ["home", "core", "starter"]):
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": False, "error": f"{prod_name or 'Windows Home'} does not support incoming Remote Desktop connections natively. Please use VNC or RustDesk."}
+                    })
+                    return
+
+                ps_cmd = (
+                    "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name 'fDenyTSConnections' -Value 0 -Force; "
+                    "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name 'UserAuthentication' -Value 1 -Force; "
+                    "Set-Service TermService -StartupType Automatic -ErrorAction SilentlyContinue; "
+                    "Start-Service TermService -ErrorAction SilentlyContinue; "
+                    "Enable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue; "
+                    "(Get-Service TermService).Status"
+                )
+                res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+                out = res.stdout.decode("utf-8", errors="ignore").strip()
+
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": True,
+                        "result": {
+                            "message": "Windows Remote Desktop successfully enabled, NLA enforced, and TermService activated.",
+                            "service_status": "Running" if "Running" in out or "4" in out else "Active"
+                        }
+                    }
+                })
+
+            elif action == "toggle_unattended":
+                new_state = bool(params.get("enabled", True))
+                cfg = self.load_config() if hasattr(self, "load_config") else {}
+                cfg["unattended_access"] = new_state
+                if hasattr(self, "save_config"):
+                    self.save_config(cfg)
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": True,
+                        "result": {
+                            "unattended_access": new_state,
+                            "message": f"Unattended access {'enabled' if new_state else 'disabled'} successfully."
+                        }
+                    }
+                })
+
+            elif action == "terminate_session":
+                sess_id = str(params.get("session_id", "")).strip()
+                if not sess_id:
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": False, "error": "session_id is required"}
+                    })
+                    return
+
+                if not (priv.get("is_elevated") or priv.get("is_admin") or priv.get("is_system") or priv.get("is_root")):
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": False, "error": "Administrator/root privileges required to terminate active user desktop sessions."}
+                    })
+                    return
+
+                if sys_os == "Windows":
+                    res = subprocess.run(["logoff", sess_id], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
+                else:
+                    res = subprocess.run(["loginctl", "terminate-session", sess_id], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
+
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": True,
+                        "result": {
+                            "message": f"Desktop session {sess_id} terminated."
+                        }
+                    }
+                })
+
+            elif action == "service_action":
+                svc_name = params.get("service_name") or ("TermService" if protocol == "rdp" else "rustdesk")
+                sub_action = params.get("action", "restart").lower()
+                self.handle_service_action({
+                    "request_id": req_id,
+                    "service_name": svc_name,
+                    "action": sub_action
+                })
+
+            else:
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": False, "error": f"Unknown desktop action: {action}"}
+                })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
     # =========================================================================
     def _start_windows_terminal_proc(self, shell_cmd_list, want_standard_token, is_elevated):
         startupinfo = subprocess.STARTUPINFO()
@@ -2850,6 +3260,10 @@ class CyberVPSAgent:
             self.handle_service_list(payload)
         elif c_type == "ServiceAction":
             self.handle_service_action(payload)
+        elif c_type == "DesktopStatus":
+            self.handle_desktop_status(payload)
+        elif c_type == "DesktopAction":
+            self.handle_desktop_action(payload)
         elif c_type == "TunnelOpenStream":
             self.handle_tunnel_open(
                 payload.get("tunnel_id"),

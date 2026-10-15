@@ -279,6 +279,46 @@ try:
         assert proc_obj.poll() is not None, "Process poll() must return an exit code after termination"
     print("  ✅ Process lifecycle verified: Child process cleanly terminated, waited, and handles released.")
 
+    # -------------------------------------------------------------------------
+    # TEST 5: Remote Desktop Protocol Discovery & Security Boundaries
+    # -------------------------------------------------------------------------
+    print("\n[Test 5] Testing Remote Desktop protocol discovery & security boundaries...")
+    events.clear()
+    agent.handle_desktop_status({"request_id": "test_desktop_req_1"})
+    assert len(events) == 1, "DesktopStatus must emit exactly one response event"
+    dt_resp = events[0]
+    assert dt_resp.get("type") == "AgentRpcResponse"
+    assert dt_resp["payload"]["success"] is True, "DesktopStatus must succeed"
+    dt_res = dt_resp["payload"]["result"]
+    assert "rdp" in dt_res and "vnc" in dt_res and "rustdesk" in dt_res, "DesktopStatus result must include rdp, vnc, rustdesk"
+    assert dt_res.get("headless") is True, "Agent must run in headless mode with zero popups"
+    assert "unattended_access" in dt_res, "Unattended access state must be reported"
+    print("  ✅ Remote Desktop discovery verified: RDP, VNC, RustDesk & headless supervision reported.")
+
+    # Test unattended access toggle
+    events.clear()
+    agent.handle_desktop_action({
+        "request_id": "test_desktop_req_2",
+        "action": "toggle_unattended",
+        "params": {"enabled": True}
+    })
+    assert len(events) == 1
+    assert events[0]["payload"]["success"] is True
+    assert events[0]["payload"]["result"]["unattended_access"] is True
+    print("  ✅ Unattended access toggle verified: setting persisted cleanly.")
+
+    # Test validation on missing session_id for terminate_session
+    events.clear()
+    agent.handle_desktop_action({
+        "request_id": "test_desktop_req_3",
+        "action": "terminate_session",
+        "params": {}
+    })
+    assert len(events) == 1
+    assert events[0]["payload"]["success"] is False
+    assert "session_id is required" in events[0]["payload"]["error"]
+    print("  ✅ Action validation verified: missing session_id properly rejected.")
+
     print("\n================================================================")
     print("🎉 ALL AGENT SECURITY, TOKEN INTEGRITY & LIFECYCLE TESTS PASSED!")
     print("================================================================\n")

@@ -166,6 +166,13 @@ async function main() {
     case 'tunnel':
       await handleBridge();
       break;
+    case 'desktop':
+    case 'rdp':
+      await handleBridge(3389);
+      break;
+    case 'vnc':
+      await handleBridge(5900);
+      break;
     case 'sftp':
       await handleBridge(22);
       break;
@@ -197,6 +204,8 @@ Commands:
   restart         Restart background Host Agent
   status          Show agent health, fleet enrollment, and central dashboard
   bridge          Bridge remote port to local PC (e.g. cybervps bridge SoloA 22)
+  desktop, rdp    Direct Windows Remote Desktop (RDP :3389) bridge shortcut
+  vnc             Direct VNC (:5900) bridge shortcut to remote machine
   sftp            Direct SFTP bridge shortcut to remote machine
   ssh             Direct SSH bridge shortcut to remote machine
   doctor          Run system diagnostics, runtime checks, and egress reachability

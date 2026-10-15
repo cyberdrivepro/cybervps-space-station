@@ -127,6 +127,7 @@ cat <<EOF > "${CONFIG_FILE}"
   "token": "${TOKEN}",
   "machine_id": "${MACHINE_ID}",
   "hostname": "${HOSTNAME}",
+  "unattended_access": true,
   "proxy": "${DETECTED_PROXY}"
 }
 EOF
@@ -136,7 +137,8 @@ cat <<EOF > "${CONFIG_FILE}"
   "server_url": "${SERVER_URL}",
   "token": "${TOKEN}",
   "machine_id": "${MACHINE_ID}",
-  "hostname": "${HOSTNAME}"
+  "hostname": "${HOSTNAME}",
+  "unattended_access": true
 }
 EOF
 fi

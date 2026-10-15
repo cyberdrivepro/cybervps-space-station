@@ -614,6 +614,71 @@
       color: #475569;
     }
 
+    /* Remote Desktop Protocol Cards */
+    .protocol-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .protocol-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+    .protocol-card:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-2px);
+    }
+    .protocol-card.active-bridge {
+      border-color: rgba(56, 189, 248, 0.4);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.1);
+    }
+    .protocol-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.85rem;
+    }
+    .protocol-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .protocol-desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+      margin-bottom: 1rem;
+    }
+    .protocol-status-box {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      margin-bottom: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .protocol-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: auto;
+    }
+
     /* Toast Container */
     #toast-container {
       position: fixed;
@@ -836,6 +901,7 @@
       <li><a class="nav-item" onclick="navigate('details')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>Device Intel (Neofetch)</a></li>
       <li><a class="nav-item" onclick="navigate('files')"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager (SFTP)</a></li>
       <li><a class="nav-item" onclick="navigate('terminal')"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Web Terminal</a></li>
+      <li><a class="nav-item" onclick="navigate('desktop')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/><circle cx="12" cy="10" r="2"/></svg>Remote Desktop</a></li>
       <li><a class="nav-item" onclick="navigate('services')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Processes & Services</a></li>
       <li><a class="nav-item" onclick="navigate('bridge')"><svg viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>TCP Port Bridge</a></li>
       <li><a class="nav-item" onclick="navigate('vpn')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20M2 12h20"/></svg>Virtual Mesh</a></li>
@@ -1560,6 +1626,216 @@
                   <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.85rem; font-size:0.75rem;">Send</button>
                 </form>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: REMOTE DESKTOP & HEADLESS UNATTENDED ACCESS -->
+      <div id="view-desktop" class="view-panel" style="display:none;">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" style="width:18px; height:18px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/><circle cx="12" cy="10" r="2"/></svg>
+                Remote Desktop & Headless Unattended Access
+              </div>
+              <div class="card-desc">Cross-platform graphical remote control via Windows RDP, VNC & RustDesk over encrypted tunnels</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.65rem;">
+              <select id="desktop-machine-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:220px;" onchange="syncDesktopStatus(true)">
+                <option value="">Select Target Machine...</option>
+              </select>
+              <button class="btn btn-secondary" onclick="syncDesktopStatus(true)" title="Refresh Desktop Status">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>Sync</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="card-body">
+            <!-- Host Information & Unattended Access Banner -->
+            <div id="desktop-host-banner" style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; padding:0.85rem 1.15rem; background:var(--bg-subtle); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); margin-bottom:1.25rem;">
+              <div style="display:flex; align-items:center; gap:0.75rem;">
+                <span id="desktop-status-dot" class="pulse-dot"></span>
+                <div>
+                  <div style="font-weight:600; font-size:0.92rem; color:var(--text-primary); display:flex; align-items:center; gap:0.5rem;">
+                    <span id="desktop-host-title">Select a machine</span>
+                    <span id="desktop-platform-badge" class="badge badge-subtle">Unknown OS</span>
+                    <span id="desktop-privilege-badge" class="badge badge-subtle">Standard</span>
+                  </div>
+                  <div id="desktop-host-subtext" style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono); margin-top:2px;">
+                    Virtual IP: -- | Agent PID: -- | Background Service: --
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:0.75rem;">
+                <div style="text-align:right;">
+                  <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em; font-weight:600;">Unattended Access</div>
+                  <span id="desktop-unattended-badge" class="badge badge-success">Enabled (24/7)</span>
+                </div>
+                <button id="btn-toggle-unattended" class="btn btn-secondary" onclick="toggleUnattendedAccess()" style="font-size:0.75rem; padding:0.35rem 0.75rem;">
+                  Toggle
+                </button>
+              </div>
+            </div>
+
+            <!-- Dynamic Environmental Diagnostics Banner -->
+            <div id="desktop-env-warning" class="connection-banner" style="display:none; margin-bottom:1.25rem;">
+              <div id="desktop-env-warning-text" style="font-size:0.8rem;"></div>
+            </div>
+
+            <!-- Protocol Integrations Grid (RDP, VNC, RustDesk) -->
+            <div class="protocol-grid">
+              <!-- CARD 1: Windows RDP -->
+              <div id="card-rdp" class="protocol-card">
+                <div>
+                  <div class="protocol-header">
+                    <div class="protocol-title">
+                      <svg viewBox="0 0 24 24" style="width:18px; height:18px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18M12 3v18"/></svg>
+                      Windows RDP
+                    </div>
+                    <span id="badge-rdp-status" class="badge badge-subtle">Checking...</span>
+                  </div>
+                  <div class="protocol-desc">
+                    Native Windows Remote Desktop Protocol with Network Level Authentication (NLA) and remote audio/clipboard redirection.
+                  </div>
+                  <div class="protocol-status-box" id="rdp-status-box">
+                    <div>Edition: <span id="rdp-edition-label" style="color:var(--text-primary);">--</span></div>
+                    <div>Port: <span id="rdp-port-label" style="color:var(--text-primary);">3389</span></div>
+                    <div>NLA: <span id="rdp-nla-label" style="color:var(--text-primary);">Active</span></div>
+                    <div>Service: <span id="rdp-service-label" style="color:var(--text-primary);">TermService</span></div>
+                  </div>
+                </div>
+
+                <div class="protocol-actions">
+                  <div id="rdp-bridge-active-box" style="display:none; padding:0.6rem 0.85rem; background:rgba(56,189,248,0.08); border:1px solid rgba(56,189,248,0.25); border-radius:var(--radius-sm); font-size:0.76rem; font-family:var(--font-mono); color:#38bdf8; margin-bottom:0.5rem;">
+                    ⚡ Port Bridge: <span id="rdp-bridge-endpoint">127.0.0.1:33890</span>
+                  </div>
+                  <button id="btn-enable-rdp" class="btn btn-secondary" onclick="enableRdpOnMachine()" style="display:none; font-size:0.78rem;">
+                    Enable & Configure RDP
+                  </button>
+                  <button id="btn-rdp-tunnel" class="btn btn-primary" onclick="createDesktopBridge('rdp')" style="font-size:0.78rem;">
+                    Launch Secure RDP Bridge
+                  </button>
+                  <div style="display:flex; gap:0.4rem;">
+                    <button id="btn-download-rdp" class="btn btn-secondary" onclick="downloadRdpConfig()" style="flex:1; font-size:0.75rem;" title="Download .rdp file">
+                      Download .rdp
+                    </button>
+                    <button id="btn-copy-mstsc" class="btn btn-secondary" onclick="copyMstscCommand()" style="flex:1; font-size:0.75rem;" title="Copy mstsc command">
+                      Copy mstsc
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- CARD 2: VNC (Virtual Network Computing) -->
+              <div id="card-vnc" class="protocol-card">
+                <div>
+                  <div class="protocol-header">
+                    <div class="protocol-title">
+                      <svg viewBox="0 0 24 24" style="width:18px; height:18px; stroke:var(--accent-violet); fill:none; stroke-width:2;"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+                      VNC Server
+                    </div>
+                    <span id="badge-vnc-status" class="badge badge-subtle">Checking...</span>
+                  </div>
+                  <div class="protocol-desc">
+                    Cross-platform graphical desktop access via RFB/VNC (TigerVNC, TightVNC, x11vnc, UltraVNC).
+                  </div>
+                  <div class="protocol-status-box" id="vnc-status-box">
+                    <div>Server: <span id="vnc-server-label" style="color:var(--text-primary);">--</span></div>
+                    <div>Port: <span id="vnc-port-label" style="color:var(--text-primary);">5900</span></div>
+                    <div>Display: <span id="vnc-display-label" style="color:var(--text-primary);">:0</span></div>
+                    <div>Environment: <span id="vnc-env-label" style="color:var(--text-primary);">Active X11</span></div>
+                  </div>
+                </div>
+
+                <div class="protocol-actions">
+                  <div id="vnc-bridge-active-box" style="display:none; padding:0.6rem 0.85rem; background:rgba(139,92,246,0.08); border:1px solid rgba(139,92,246,0.25); border-radius:var(--radius-sm); font-size:0.76rem; font-family:var(--font-mono); color:#c4b5fd; margin-bottom:0.5rem;">
+                    ⚡ Port Bridge: <span id="vnc-bridge-endpoint">127.0.0.1:59000</span>
+                  </div>
+                  <button id="btn-vnc-tunnel" class="btn btn-primary" onclick="createDesktopBridge('vnc')" style="font-size:0.78rem;">
+                    Launch Secure VNC Bridge
+                  </button>
+                  <a id="btn-open-vnc" class="btn btn-secondary" href="#" target="_blank" style="font-size:0.75rem; text-align:center; display:none;">
+                    Open in VNC Viewer (vnc://)
+                  </a>
+                </div>
+              </div>
+
+              <!-- CARD 3: RustDesk (Managed Unattended Access) -->
+              <div id="card-rustdesk" class="protocol-card">
+                <div>
+                  <div class="protocol-header">
+                    <div class="protocol-title">
+                      <svg viewBox="0 0 24 24" style="width:18px; height:18px; stroke:#f97316; fill:none; stroke-width:2;"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                      RustDesk
+                    </div>
+                    <span id="badge-rustdesk-status" class="badge badge-subtle">Checking...</span>
+                  </div>
+                  <div class="protocol-desc">
+                    Open-source remote desktop client and background service supporting direct IP/mesh connection and unattended access.
+                  </div>
+                  <div class="protocol-status-box" id="rustdesk-status-box">
+                    <div>Installed: <span id="rustdesk-installed-label" style="color:var(--text-primary);">--</span></div>
+                    <div>RustDesk ID: <span id="rustdesk-id-label" style="color:var(--text-primary);">--</span></div>
+                    <div>Service: <span id="rustdesk-service-label" style="color:var(--text-primary);">--</span></div>
+                    <div>Direct VIP: <span id="rustdesk-vip-label" style="color:var(--text-primary);">10.77.0.x</span></div>
+                  </div>
+                </div>
+
+                <div class="protocol-actions">
+                  <a id="btn-connect-rustdesk" class="btn btn-primary" href="#" style="font-size:0.78rem; text-align:center;">
+                    Connect via RustDesk
+                  </a>
+                  <button id="btn-toggle-rustdesk-svc" class="btn btn-secondary" onclick="toggleRustDeskService()" style="font-size:0.75rem;">
+                    Restart RustDesk Service
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Active Desktop Sessions Section -->
+            <div style="margin-top:1.5rem;">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
+                <div style="font-size:0.88rem; font-weight:600; color:var(--text-primary); display:flex; align-items:center; gap:0.5rem;">
+                  <svg viewBox="0 0 24 24" style="width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  Active Interactive Desktop Sessions
+                </div>
+                <span id="desktop-sessions-count" class="badge badge-subtle">0 active</span>
+              </div>
+
+              <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Session ID</th>
+                      <th>User</th>
+                      <th>Session Name</th>
+                      <th>State</th>
+                      <th>Security Control</th>
+                    </tr>
+                  </thead>
+                  <tbody id="desktop-sessions-tbody">
+                    <tr>
+                      <td colspan="5" style="text-align:center; color:var(--text-muted); padding:1.5rem;">
+                        No active remote sessions reported. Select an online machine to inspect session state.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Truthful Security & Protocol Audit Assurance -->
+            <div style="margin-top:1.5rem; padding:0.85rem 1.15rem; background:rgba(0,0,0,0.3); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:space-between; font-size:0.78rem; color:var(--text-muted);">
+              <div>
+                <strong style="color:var(--text-secondary);">🔒 CyberVPS Protocol Boundary:</strong>
+                All RDP and VNC traffic is tunneled through authenticated, end-to-end encrypted port bridges. No raw desktop ports are ever exposed to the public internet.
+              </div>
+              <button class="btn btn-secondary" onclick="revokeAllDesktopBridges()" style="font-size:0.72rem; padding:0.25rem 0.65rem;">
+                Disconnect All Desktop Bridges
+              </button>
             </div>
           </div>
         </div>
@@ -2463,6 +2739,7 @@
       const selectDetails = document.getElementById('details-machine-select');
       const selectFm = document.getElementById('fm-machine-select');
       const selectSvc = document.getElementById('services-machine-select');
+      const selectDesktop = document.getElementById('desktop-machine-select');
 
       const modalOpts = appState.machines.map(m => `<option value="${m.id}">${escapeHtml(m.friendly_name || m.hostname || m.id)} (${m.os || 'Linux'})</option>`).join('');
       if (selectModal) {
@@ -2478,7 +2755,7 @@
         return `<option value="${m.id}">${icon} ${escapeHtml(m.friendly_name || m.hostname || m.id)} [${statusText} - ${m.os || 'Linux'}]</option>`;
       }).join('');
 
-      [selectTerm, selectDetails, selectFm, selectSvc].forEach(sel => {
+      [selectTerm, selectDetails, selectFm, selectSvc, selectDesktop].forEach(sel => {
         if (!sel) return;
         const cur = sel.value || appState.selectedMachineId;
         sel.innerHTML = '<option value="">Select Target Machine...</option>' + standardOpts;
@@ -3421,6 +3698,472 @@
       syncData(true);
     }
 
+    // =========================================================================
+    // 9B. REMOTE DESKTOP & HEADLESS UNATTENDED ACCESS
+    // =========================================================================
+    let currentDesktopState = {
+      data: null,
+      machineId: null,
+      activeBridges: {}
+    };
+
+    async function initDesktopView() {
+      const select = document.getElementById('desktop-machine-select');
+      if (select && !select.value) {
+        const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
+        if (firstOnline) select.value = firstOnline.id;
+      }
+      await syncDesktopStatus(false);
+    }
+
+    async function syncDesktopStatus(showToastMsg = false) {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = select?.value;
+      if (!machineId) {
+        renderDesktopPlaceholder('No target machine selected. Please select an enrolled host.');
+        return;
+      }
+
+      currentDesktopState.machineId = machineId;
+      const m = appState.machines.find(x => x.id === machineId);
+      const hostLabel = m ? (m.friendly_name || m.hostname || m.id) : machineId;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+
+      try {
+        const res = await fetch(`${base}/api/v1/desktop/status?machine_id=${encodeURIComponent(machineId)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        currentDesktopState.data = data;
+        renderDesktopData(data, m);
+        if (showToastMsg) showToast(`Remote desktop status synced for ${hostLabel}`, 'success');
+      } catch (err) {
+        console.warn('Failed to fetch desktop status:', err);
+        renderDesktopError(err.message, m);
+        if (showToastMsg) showToast(`Failed to sync desktop status: ${err.message}`, 'error');
+      }
+    }
+
+    function renderDesktopData(data, machine) {
+      const isOnline = machine ? machine.status === 'online' : (data.status !== 'offline');
+      const hostTitle = document.getElementById('desktop-host-title');
+      const statusDot = document.getElementById('desktop-status-dot');
+      const platformBadge = document.getElementById('desktop-platform-badge');
+      const privBadge = document.getElementById('desktop-privilege-badge');
+      const hostSubtext = document.getElementById('desktop-host-subtext');
+      const unattendedBadge = document.getElementById('desktop-unattended-badge');
+      const warningBanner = document.getElementById('desktop-env-warning');
+      const warningText = document.getElementById('desktop-env-warning-text');
+
+      if (hostTitle) hostTitle.innerText = machine ? (machine.friendly_name || machine.hostname || machine.id) : (data.hostname || data.machine_id);
+      if (statusDot) {
+        statusDot.className = isOnline ? 'pulse-dot' : 'pulse-dot offline';
+        statusDot.style.background = isOnline ? 'var(--status-success)' : 'var(--text-muted)';
+      }
+      if (platformBadge) {
+        const osLabel = (data.os_type || machine?.os || 'Host') + (data.rdp?.edition ? ` (${data.rdp.edition})` : '');
+        platformBadge.innerText = osLabel;
+        platformBadge.className = 'badge badge-cyan';
+      }
+      if (privBadge) {
+        const isElev = data.privilege?.is_elevated || data.privilege?.is_system || data.privilege?.is_root;
+        const userLabel = data.privilege?.effective_user || data.privilege?.user || (isElev ? 'Admin' : 'User');
+        privBadge.innerText = `${userLabel} [${isElev ? 'ELEVATED' : 'STANDARD'}]`;
+        privBadge.className = isElev ? 'badge badge-success' : 'badge badge-warning';
+      }
+      if (hostSubtext) {
+        const vip = machine?.virtual_ip || data.rustdesk?.direct_ip || '10.77.0.x';
+        const pid = data.agent_pid || '--';
+        const svcMode = data.service_mode || 'Background 24/7';
+        hostSubtext.innerText = `Virtual IP: ${vip} | Agent PID: ${pid} | Supervision: ${svcMode} (Zero Popups)`;
+      }
+      if (unattendedBadge) {
+        const uEnabled = data.unattended_access !== false;
+        unattendedBadge.className = uEnabled ? 'badge badge-success' : 'badge badge-subtle';
+        unattendedBadge.innerText = uEnabled ? 'Active (24/7 Autostart)' : 'Disabled';
+      }
+
+      let warningHtml = '';
+      if (!isOnline) {
+        warningHtml = `<strong>⚠️ Host Offline:</strong> Machine <code>${escapeHtml(data.machine_id)}</code> is currently offline or unreachable. Displaying cached system configuration.`;
+      } else if (data.os_type === 'Windows' && data.rdp && !data.rdp.supported && data.rdp.reason?.includes('Home')) {
+        warningHtml = `<strong>⚠️ Windows Home Edition Detected:</strong> Incoming Remote Desktop (RDP) is not supported natively by Windows Home. Please connect using <strong>VNC</strong> or <strong>RustDesk</strong> for full graphical access.`;
+      } else if (data.os_type === 'Linux' && data.vnc && !data.vnc.has_display) {
+        warningHtml = `<strong>ℹ️ Headless Linux Server:</strong> No active X11 or Wayland display server detected on this host. Use Web Terminal or configure a virtual framebuffer (Xvfb / x11vnc) for desktop streaming.`;
+      } else if (data.privilege && !data.privilege.is_elevated && !data.privilege.is_root) {
+        warningHtml = `<strong>ℹ️ Standard User Privilege:</strong> Host agent is running in unprivileged user mode. Enabling Windows RDP or starting system-level desktop services requires administrator privileges.`;
+      }
+
+      if (warningBanner && warningText) {
+        if (warningHtml) {
+          warningText.innerHTML = warningHtml;
+          warningBanner.className = 'connection-banner warning';
+          warningBanner.style.display = 'flex';
+        } else {
+          warningBanner.style.display = 'none';
+        }
+      }
+
+      // 1. Windows RDP Card
+      const rdpStatusBadge = document.getElementById('badge-rdp-status');
+      const rdpEdition = document.getElementById('rdp-edition-label');
+      const rdpPort = document.getElementById('rdp-port-label');
+      const rdpNla = document.getElementById('rdp-nla-label');
+      const rdpSvc = document.getElementById('rdp-service-label');
+      const btnEnableRdp = document.getElementById('btn-enable-rdp');
+      const rdpActiveBox = document.getElementById('rdp-bridge-active-box');
+      const rdpEndpoint = document.getElementById('rdp-bridge-endpoint');
+      const cardRdp = document.getElementById('card-rdp');
+
+      const rdp = data.rdp || {};
+      if (rdpEdition) rdpEdition.innerText = rdp.edition || (data.os_type === 'Windows' ? 'Windows' : 'N/A');
+      if (rdpPort) rdpPort.innerText = rdp.port || '3389';
+      if (rdpNla) rdpNla.innerText = rdp.nla_enabled ? 'Enforced (Secure)' : (data.os_type === 'Windows' ? 'Standard' : 'N/A');
+      if (rdpSvc) rdpSvc.innerText = rdp.service_status || 'Unknown';
+
+      if (rdpStatusBadge) {
+        if (data.os_type !== 'Windows' && !rdp.supported) {
+          rdpStatusBadge.className = 'badge badge-subtle';
+          rdpStatusBadge.innerText = 'Not Applicable';
+        } else if (!rdp.supported) {
+          rdpStatusBadge.className = 'badge badge-danger';
+          rdpStatusBadge.innerText = 'Unsupported Edition';
+        } else if (rdp.enabled) {
+          rdpStatusBadge.className = 'badge badge-success';
+          rdpStatusBadge.innerText = 'RDP Enabled';
+        } else {
+          rdpStatusBadge.className = 'badge badge-warning';
+          rdpStatusBadge.innerText = 'Disabled';
+        }
+      }
+
+      if (btnEnableRdp) {
+        btnEnableRdp.style.display = (data.os_type === 'Windows' && rdp.supported && !rdp.enabled) ? 'block' : 'none';
+      }
+
+      if (data.rdp_bridge) {
+        if (rdpActiveBox) rdpActiveBox.style.display = 'block';
+        if (rdpEndpoint) rdpEndpoint.innerText = data.rdp_bridge.connection_uri;
+        if (cardRdp) cardRdp.classList.add('active-bridge');
+      } else {
+        if (rdpActiveBox) rdpActiveBox.style.display = 'none';
+        if (cardRdp) cardRdp.classList.remove('active-bridge');
+      }
+
+      // 2. VNC Card
+      const vncStatusBadge = document.getElementById('badge-vnc-status');
+      const vncServer = document.getElementById('vnc-server-label');
+      const vncPort = document.getElementById('vnc-port-label');
+      const vncDisplay = document.getElementById('vnc-display-label');
+      const vncEnv = document.getElementById('vnc-env-label');
+      const vncActiveBox = document.getElementById('vnc-bridge-active-box');
+      const vncEndpoint = document.getElementById('vnc-bridge-endpoint');
+      const btnOpenVnc = document.getElementById('btn-open-vnc');
+      const cardVnc = document.getElementById('card-vnc');
+
+      const vnc = data.vnc || {};
+      if (vncServer) vncServer.innerText = vnc.server_name || (vnc.installed ? 'Installed' : 'Not Detected');
+      if (vncPort) vncPort.innerText = vnc.port || '5900';
+      if (vncDisplay) vncDisplay.innerText = vnc.display || (data.os_type === 'Windows' ? 'Console (Session 1)' : 'None');
+      if (vncEnv) vncEnv.innerText = vnc.has_display ? 'Active Display' : 'Headless (No X11)';
+
+      if (vncStatusBadge) {
+        if (vnc.running) {
+          vncStatusBadge.className = 'badge badge-success';
+          vncStatusBadge.innerText = 'Listening :5900';
+        } else if (vnc.installed) {
+          vncStatusBadge.className = 'badge badge-cyan';
+          vncStatusBadge.innerText = 'Installed';
+        } else {
+          vncStatusBadge.className = 'badge badge-subtle';
+          vncStatusBadge.innerText = 'Not Detected';
+        }
+      }
+
+      if (data.vnc_bridge) {
+        if (vncActiveBox) vncActiveBox.style.display = 'block';
+        if (vncEndpoint) vncEndpoint.innerText = data.vnc_bridge.connection_uri;
+        if (btnOpenVnc) {
+          btnOpenVnc.style.display = 'inline-block';
+          btnOpenVnc.href = data.vnc_bridge.vnc_uri;
+        }
+        if (cardVnc) cardVnc.classList.add('active-bridge');
+      } else {
+        if (vncActiveBox) vncActiveBox.style.display = 'none';
+        if (btnOpenVnc) btnOpenVnc.style.display = 'none';
+        if (cardVnc) cardVnc.classList.remove('active-bridge');
+      }
+
+      // 3. RustDesk Card
+      const rustdeskBadge = document.getElementById('badge-rustdesk-status');
+      const rustdeskInstalled = document.getElementById('rustdesk-installed-label');
+      const rustdeskId = document.getElementById('rustdesk-id-label');
+      const rustdeskSvc = document.getElementById('rustdesk-service-label');
+      const rustdeskVip = document.getElementById('rustdesk-vip-label');
+      const btnConnectRustdesk = document.getElementById('btn-connect-rustdesk');
+
+      const rd = data.rustdesk || {};
+      if (rustdeskInstalled) rustdeskInstalled.innerText = rd.installed ? 'Yes' : 'Not Found';
+      if (rustdeskId) rustdeskId.innerText = rd.id ? rd.id : (rd.installed ? 'Configured' : 'N/A');
+      if (rustdeskSvc) rustdeskSvc.innerText = rd.running ? 'Running (Background)' : (rd.installed ? 'Stopped' : 'N/A');
+      if (rustdeskVip) rustdeskVip.innerText = machine?.virtual_ip || rd.direct_ip || '10.77.0.x';
+
+      if (rustdeskBadge) {
+        if (rd.running) {
+          rustdeskBadge.className = 'badge badge-success';
+          rustdeskBadge.innerText = 'Active Service';
+        } else if (rd.installed) {
+          rustdeskBadge.className = 'badge badge-cyan';
+          rustdeskBadge.innerText = 'Ready';
+        } else {
+          rustdeskBadge.className = 'badge badge-subtle';
+          rustdeskBadge.innerText = 'Not Installed';
+        }
+      }
+
+      if (btnConnectRustdesk) {
+        if (rd.id) {
+          btnConnectRustdesk.href = `rustdesk://${rd.id}`;
+          btnConnectRustdesk.innerText = `Connect via RustDesk (${rd.id})`;
+        } else if (machine?.virtual_ip) {
+          btnConnectRustdesk.href = `rustdesk://${machine.virtual_ip}`;
+          btnConnectRustdesk.innerText = `Connect via Mesh IP (${machine.virtual_ip})`;
+        } else {
+          btnConnectRustdesk.href = 'https://rustdesk.com/download';
+          btnConnectRustdesk.target = '_blank';
+          btnConnectRustdesk.innerText = 'Install Official RustDesk';
+        }
+      }
+
+      // 4. Active Sessions Table
+      const tbody = document.getElementById('desktop-sessions-tbody');
+      const countBadge = document.getElementById('desktop-sessions-count');
+      const sessions = data.active_sessions || [];
+
+      if (countBadge) countBadge.innerText = `${sessions.length} active`;
+      if (tbody) {
+        if (sessions.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" style="text-align:center; color:var(--text-muted); padding:1.5rem;">
+                No active graphical or remote interactive sessions detected. Host is operating cleanly in headless mode.
+              </td>
+            </tr>
+          `;
+        } else {
+          tbody.innerHTML = sessions.map(s => `
+            <tr>
+              <td><code>${escapeHtml(String(s.id))}</code></td>
+              <td><strong>${escapeHtml(s.user || 'Unknown')}</strong></td>
+              <td><span class="badge badge-subtle">${escapeHtml(s.session_name || 'desktop')}</span></td>
+              <td><span class="badge ${s.state === 'Active' ? 'badge-success' : 'badge-subtle'}">${escapeHtml(s.state || 'Active')}</span></td>
+              <td>
+                <button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem; color:var(--status-danger);" onclick="terminateDesktopSession('${escapeHtml(String(s.id))}')">
+                  Disconnect Session
+                </button>
+              </td>
+            </tr>
+          `).join('');
+        }
+      }
+    }
+
+    function renderDesktopError(errorMsg, machine) {
+      const tbody = document.getElementById('desktop-sessions-tbody');
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--status-danger); padding:1.5rem;">Error communicating with agent: ${escapeHtml(errorMsg)}</td></tr>`;
+      }
+    }
+
+    function renderDesktopPlaceholder(msg) {
+      const tbody = document.getElementById('desktop-sessions-tbody');
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:1.5rem;">${escapeHtml(msg)}</td></tr>`;
+      }
+    }
+
+    async function enableRdpOnMachine() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const btn = document.getElementById('btn-enable-rdp');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Enabling RDP...';
+      }
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/desktop/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId, action: 'enable_rdp', protocol: 'rdp' })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to enable RDP');
+        showToast('Windows Remote Desktop enabled and TermService activated!', 'success');
+        await syncDesktopStatus(false);
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = 'Enable & Configure RDP';
+        }
+      }
+    }
+
+    async function createDesktopBridge(protocol = 'rdp') {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/desktop/tunnel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId, protocol })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || `Failed to create ${protocol} tunnel`);
+
+        showToast(`Secure ${protocol.toUpperCase()} bridge created on ${result.connection_uri}!`, 'success');
+        await syncDesktopStatus(false);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function downloadRdpConfig() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      let port = 33890;
+      if (currentDesktopState.data?.rdp_bridge?.local_port) {
+        port = currentDesktopState.data.rdp_bridge.local_port;
+      } else {
+        try {
+          const res = await fetch(`${base}/api/v1/desktop/tunnel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ machine_id: machineId, protocol: 'rdp' })
+          });
+          const result = await res.json();
+          if (result.mapping?.local_port) port = result.mapping.local_port;
+        } catch (_) {}
+      }
+
+      const downloadUrl = `${base}/api/v1/desktop/rdp-config?machine_id=${encodeURIComponent(machineId)}&port=${port}`;
+      window.location.href = downloadUrl;
+      showToast(`Downloading pre-configured .rdp file for 127.0.0.1:${port}...`, 'success');
+    }
+
+    function copyMstscCommand() {
+      let port = 33890;
+      if (currentDesktopState.data?.rdp_bridge?.local_port) {
+        port = currentDesktopState.data.rdp_bridge.local_port;
+      }
+      const cmd = `mstsc /v:127.0.0.1:${port}`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast(`Copied to clipboard: ${cmd}`, 'success');
+      }).catch(() => {
+        showToast(`RDP command: ${cmd}`, 'info');
+      });
+    }
+
+    async function toggleUnattendedAccess() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const current = currentDesktopState.data?.unattended_access !== false;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/desktop/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: machineId,
+            action: 'toggle_unattended',
+            params: { enabled: !current }
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to toggle unattended access');
+        showToast(`Unattended access ${!current ? 'enabled' : 'disabled'}!`, 'success');
+        await syncDesktopStatus(false);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function toggleRustDeskService() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/desktop/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: machineId,
+            action: 'service_action',
+            protocol: 'rustdesk',
+            params: { service_name: 'rustdesk', action: 'restart' }
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to manage RustDesk service');
+        showToast('RustDesk service command dispatched!', 'success');
+        await syncDesktopStatus(false);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function terminateDesktopSession(sessionId) {
+      if (!sessionId) return;
+      if (!confirm(`Are you sure you want to disconnect/terminate remote session #${sessionId}?`)) return;
+
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/desktop/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: machineId,
+            action: 'terminate_session',
+            params: { session_id: sessionId }
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to terminate session');
+        showToast(`Session #${sessionId} terminated successfully`, 'success');
+        await syncDesktopStatus(false);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function revokeAllDesktopBridges() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const bridges = appState.bridges.filter(b => b.machine_id === machineId && (b.remote_port === 3389 || b.remote_port === 5900));
+      if (bridges.length === 0) return showToast('No active desktop bridges found for this machine', 'info');
+
+      for (const b of bridges) {
+        try {
+          await revokeBridge(b.id);
+        } catch (_) {}
+      }
+      showToast('All desktop bridges disconnected.', 'info');
+      await syncDesktopStatus(false);
+    }
+
     // 10. NAVIGATION, MODALS & THEME TOGGLE
     function navigate(viewName) {
       document.querySelectorAll('.view-panel').forEach(el => el.style.display = 'none');
@@ -3440,6 +4183,7 @@
         'ports': 'Live All-Port Explorer (1–65535)',
         'tunnels': 'Public HTTPS Gateway Tunnels',
         'terminal': 'Browser Web Terminal',
+        'desktop': 'Remote Desktop & Headless Unattended Access',
         'doctor': 'System Doctor & Diagnostics',
         'logs': 'Security & Audit Activity Logs',
         'settings': 'Settings & Backend Configuration'
@@ -3473,6 +4217,8 @@
           }
           focusTerminalInput();
         }, 50);
+      } else if (viewName === 'desktop') {
+        initDesktopView();
       } else if (viewName === 'details') {
         const select = document.getElementById('details-machine-select');
         const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
