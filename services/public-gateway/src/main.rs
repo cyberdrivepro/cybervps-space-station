@@ -30,7 +30,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/tunnel/:tunnel_id/*path", any(proxy_tunnel_path))
         .with_state(state);
 
-    let gateway_port = 8081;
+    let gateway_port: u16 = std::env::var("PORT")
+        .or_else(|_| std::env::var("GATEWAY_PORT"))
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8081);
     let addr: SocketAddr = format!("0.0.0.0:{}", gateway_port).parse()?;
     info!("CyberVPS Space Station Public Gateway listening on http://{}", addr);
 

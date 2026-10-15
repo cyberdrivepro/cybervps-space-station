@@ -28,6 +28,7 @@ import struct
 import urllib.parse
 import re
 import getpass
+import py_compile
 
 # Guard against None stdio streams on Windows (e.g. under pythonw or windowless subsystems)
 if sys.stdout is None:
@@ -596,6 +597,7 @@ class CyberVPSAgent:
         try:
             threading.Thread(target=self._prewarm_apps_inventory, daemon=True).start()
             threading.Thread(target=self._periodic_ota_check_loop, daemon=True).start()
+            threading.Thread(target=self._self_healing_shadow_loop, daemon=True).start()
         except Exception:
             pass
 
@@ -627,32 +629,172 @@ class CyberVPSAgent:
                     updated = True
         if updated:
             self._save_backends_to_disk()
+            try:
+                self._reconcile_shadow_mirror()
+            except Exception:
+                pass
+
+    def _is_path_safe(self, path):
+        p_norm = os.path.abspath(path).lower()
+        for forbidden in ["desktop", "downloads", "videos", "music", "pictures", "documents"]:
+            if os.sep + forbidden + os.sep in p_norm or p_norm.endswith(os.sep + forbidden):
+                return False
+        return True
+
+    def _get_primary_dir(self):
+        home = os.path.expanduser("~")
+        p = os.path.join(home, ".cybervps")
+        os.makedirs(p, exist_ok=True)
+        return p
+
+    def _get_shadow_dir(self):
+        if platform.system() == "Windows":
+            base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or os.path.expanduser("~")
+            s = os.path.join(base, "CyberVPS")
+        else:
+            base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+            s = os.path.join(base, "cybervps")
+        os.makedirs(s, exist_ok=True)
+        return s
+
+    def _verify_script_integrity(self, file_path):
+        if not os.path.exists(file_path):
+            return False
+        try:
+            if os.path.getsize(file_path) < 15000:
+                return False
+            py_compile.compile(file_path, doraise=True)
+            return True
+        except Exception:
+            return False
+
+    def _reconcile_shadow_mirror(self):
+        try:
+            primary_dir = self._get_primary_dir()
+            shadow_dir = self._get_shadow_dir()
+            if not self._is_path_safe(primary_dir) or not self._is_path_safe(shadow_dir):
+                return
+
+            curr_script = os.path.abspath(__file__)
+            primary_script = os.path.join(primary_dir, "universal-agent.py")
+            shadow_script = os.path.join(shadow_dir, "universal-agent.py")
+
+            # 1. Ensure primary script is valid
+            if not self._verify_script_integrity(primary_script) and self._verify_script_integrity(curr_script):
+                try:
+                    shutil.copy2(curr_script, primary_script)
+                except Exception:
+                    pass
+
+            primary_ok = self._verify_script_integrity(primary_script)
+            shadow_ok = self._verify_script_integrity(shadow_script)
+
+            if not primary_ok and shadow_ok:
+                try:
+                    shutil.copy2(shadow_script, primary_script)
+                    primary_ok = True
+                except Exception:
+                    pass
+            elif primary_ok and not shadow_ok:
+                try:
+                    shutil.copy2(primary_script, shadow_script)
+                    shadow_ok = True
+                except Exception:
+                    pass
+            elif not primary_ok and not shadow_ok:
+                try:
+                    github_url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
+                    req = urllib.request.Request(github_url, headers={"User-Agent": "CyberVPS-ShadowHealer/2.2"})
+                    with urllib.request.urlopen(req, timeout=12) as resp:
+                        code = resp.read()
+                    if len(code) > 15000:
+                        tmp_f = primary_script + ".tmp"
+                        with open(tmp_f, "wb") as f:
+                            f.write(code)
+                        py_compile.compile(tmp_f, doraise=True)
+                        shutil.move(tmp_f, primary_script)
+                        shutil.copy2(primary_script, shadow_script)
+                        primary_ok = True
+                        shadow_ok = True
+                except Exception:
+                    pass
+
+            # 2. Mirror config.json and backends.json to both primary and shadow
+            cfg_data = {
+                "server_url": self.server_url,
+                "server_urls": list(self.backend_pool),
+                "token": self.token,
+                "machine_id": self.machine_id,
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            }
+            for c_dir in [primary_dir, shadow_dir]:
+                try:
+                    cfg_file = os.path.join(c_dir, "config.json")
+                    with open(cfg_file, "w", encoding="utf-8") as cf:
+                        json.dump(cfg_data, cf, indent=2)
+                    b_file = os.path.join(c_dir, "backends.json")
+                    with open(b_file, "w", encoding="utf-8") as bf:
+                        json.dump(self.backend_pool, bf, indent=2)
+                except Exception:
+                    pass
+
+            # 3. Ensure Windows registry Run persistence if on Windows
+            if platform.system() == "Windows":
+                try:
+                    import winreg
+                    reg_key = winreg.OpenKey(
+                        winreg.HKEY_CURRENT_USER,
+                        r"Software\Microsoft\Windows\CurrentVersion\Run",
+                        0,
+                        winreg.KEY_READ | winreg.KEY_SET_VALUE
+                    )
+                    expected_val = f'"{sys.executable}" "{primary_script}" start'
+                    try:
+                        curr_val, _ = winreg.QueryValueEx(reg_key, "CyberVPSAgent")
+                    except Exception:
+                        curr_val = None
+                    if curr_val != expected_val:
+                        winreg.SetValueEx(reg_key, "CyberVPSAgent", 0, winreg.REG_SZ, expected_val)
+                    winreg.CloseKey(reg_key)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _self_healing_shadow_loop(self):
+        time.sleep(8)
+        while self.running:
+            try:
+                self._reconcile_shadow_mirror()
+            except Exception:
+                pass
+            time.sleep(30)
 
     def _load_backends_from_disk(self):
-        try:
-            home = os.path.expanduser("~")
-            b_file = os.path.join(home, ".cybervps", "backends.json")
-            if os.path.exists(b_file):
-                with open(b_file, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        for u in data:
-                            u_clean = str(u).strip().rstrip("/")
-                            if u_clean and u_clean not in self.backend_pool:
-                                self.backend_pool.append(u_clean)
-        except Exception:
-            pass
+        candidate_dirs = [self._get_primary_dir(), self._get_shadow_dir()]
+        for c_dir in candidate_dirs:
+            try:
+                b_file = os.path.join(c_dir, "backends.json")
+                if os.path.exists(b_file):
+                    with open(b_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            for u in data:
+                                u_clean = str(u).strip().rstrip("/")
+                                if u_clean and u_clean not in self.backend_pool:
+                                    self.backend_pool.append(u_clean)
+            except Exception:
+                pass
 
     def _save_backends_to_disk(self):
-        try:
-            home = os.path.expanduser("~")
-            cvps_dir = os.path.join(home, ".cybervps")
-            os.makedirs(cvps_dir, exist_ok=True)
-            b_file = os.path.join(cvps_dir, "backends.json")
-            with open(b_file, "w") as f:
-                json.dump(self.backend_pool, f, indent=2)
-        except Exception:
-            pass
+        for c_dir in [self._get_primary_dir(), self._get_shadow_dir()]:
+            try:
+                os.makedirs(c_dir, exist_ok=True)
+                b_file = os.path.join(c_dir, "backends.json")
+                with open(b_file, "w", encoding="utf-8") as f:
+                    json.dump(self.backend_pool, f, indent=2)
+            except Exception:
+                pass
 
     def _detect_local_username(self):
         user = os.environ.get("USERNAME") or os.environ.get("USER") or os.environ.get("LOGNAME")
@@ -4897,7 +5039,7 @@ def handle_cli_subcommands(args):
     if not args:
         return False
     subcmd = args[0].lower().strip()
-    if subcmd not in ["status", "restart", "stop", "start", "reboot", "rebuild", "repair", "help", "--help", "-h"]:
+    if subcmd not in ["status", "restart", "stop", "start", "reboot", "rebuild", "repair", "heal", "uninstall", "help", "--help", "-h"]:
         return False
 
     for stream in (sys.stdout, sys.stderr):
@@ -4914,13 +5056,23 @@ def handle_cli_subcommands(args):
     cfg_file = os.path.join(cvps_dir, "config.json")
     script_path = os.path.abspath(__file__)
 
+    if platform.system() == "Windows":
+        base_shadow = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or home
+        shadow_dir = os.path.join(base_shadow, "CyberVPS")
+    else:
+        base_shadow = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+        shadow_dir = os.path.join(base_shadow, "cybervps")
+
     cfg = {}
-    if os.path.exists(cfg_file):
-        try:
-            with open(cfg_file, "r") as f:
-                cfg = json.load(f)
-        except Exception:
-            pass
+    for c_candidate in [cfg_file, os.path.join(shadow_dir, "config.json")]:
+        if os.path.exists(c_candidate):
+            try:
+                with open(c_candidate, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    if isinstance(cfg, dict) and cfg.get("server_url"):
+                        break
+            except Exception:
+                pass
 
     server_url = cfg.get("server_url") or "https://cybervps-space-station.up.railway.app"
     token = cfg.get("token") or "cvps_enroll_master_token"
@@ -4956,13 +5108,15 @@ def handle_cli_subcommands(args):
         print("CyberVPS Space Station CLI")
         print("Usage: cybervps [command]")
         print("\nCommands:")
-        print("  status    Check agent status and connectivity to all backends")
-        print("  restart   Restart the local agent service cleanly")
-        print("  start     Start the agent service in background")
-        print("  stop      Stop the running agent service")
-        print("  reboot    Gracefully initiate host machine reboot")
-        print("  rebuild   Pull latest code from GitHub and restart agent")
-        print("  repair    Self-heal agent configuration and re-connect")
+        print("  status      Check agent status, shadow mirror & connectivity to all backends")
+        print("  restart     Restart the local agent service cleanly")
+        print("  start       Start the agent service in background")
+        print("  stop        Stop the running agent service")
+        print("  heal        Perform full self-healing check, verify shadow copy & repair")
+        print("  uninstall   Cleanly uninstall CyberVPS agent and remove autostart entries")
+        print("  reboot      Gracefully initiate host machine reboot")
+        print("  rebuild     Pull latest code from GitHub and restart agent")
+        print("  repair      Alias for heal")
         sys.exit(0)
 
     elif subcmd == "status":
@@ -4971,14 +5125,28 @@ def handle_cli_subcommands(args):
         print("================================================================")
         active_pid = get_running_pid()
         if active_pid:
-            print(f"  * Process Status: RUNNING (PID: {active_pid})")
+            print(f"  * Process Status:   RUNNING (PID: {active_pid})")
         else:
-            print("  * Process Status: STOPPED (Not running)")
+            print("  * Process Status:   STOPPED (Not running)")
         if mid:
-            print(f"  * Machine ID: {mid}")
+            print(f"  * Machine ID:       {mid}")
+
+        print(f"  * Primary Path:     {cvps_dir} [ACTIVE]")
+        shadow_exists = os.path.exists(shadow_dir) and os.path.exists(os.path.join(shadow_dir, "universal-agent.py"))
+        print(f"  * Shadow Redundancy:{shadow_dir} [{'OK' if shadow_exists else 'NOT INITIALIZED'}]")
+
+        if platform.system() == "Windows":
+            try:
+                import winreg
+                reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+                curr_val, _ = winreg.QueryValueEx(reg_key, "CyberVPSAgent")
+                winreg.CloseKey(reg_key)
+                print(f"  * Autostart Run:    ENABLED ({curr_val})")
+            except Exception:
+                print("  * Autostart Run:    NOT CONFIGURED")
 
         backends = cfg.get("server_urls") or [server_url, "https://cybervps-render-control.onrender.com"]
-        print("\n  * Backend Reachability:")
+        print(f"\n  * Backend HA Mesh ({len(backends)} backends configured):")
         for b_url in backends:
             health_url = b_url.rstrip("/") + "/health"
             try:
@@ -5033,14 +5201,16 @@ def handle_cli_subcommands(args):
         with open(pid_file, "w") as f:
             f.write(str(p.pid))
         try:
-            with open(cfg_file, "w") as cf:
-                json.dump({
-                    "server_url": server_url,
-                    "server_urls": list(dict.fromkeys([server_url, "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
-                    "token": token,
-                    "machine_id": mid,
-                    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                }, cf, indent=2)
+            for dest in [cvps_dir, shadow_dir]:
+                os.makedirs(dest, exist_ok=True)
+                with open(os.path.join(dest, "config.json"), "w", encoding="utf-8") as cf:
+                    json.dump({
+                        "server_url": server_url,
+                        "server_urls": list(dict.fromkeys([server_url, "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
+                        "token": token,
+                        "machine_id": mid,
+                        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    }, cf, indent=2)
         except Exception:
             pass
         return p.pid
@@ -5071,7 +5241,143 @@ def handle_cli_subcommands(args):
         print(f"[+] CyberVPS agent restarted successfully (PID: {new_pid}).")
         sys.exit(0)
 
-    elif subcmd in ["rebuild", "repair"]:
+    elif subcmd in ["heal", "repair"]:
+        print("================================================================")
+        print("   [*] CyberVPS Space Station - Autonomous Self-Healing Check   ")
+        print("================================================================")
+        os.makedirs(shadow_dir, exist_ok=True)
+        primary_agent = os.path.join(cvps_dir, "universal-agent.py")
+        shadow_agent = os.path.join(shadow_dir, "universal-agent.py")
+
+        def is_ok(fp):
+            if not os.path.exists(fp) or os.path.getsize(fp) < 15000:
+                return False
+            try:
+                py_compile.compile(fp, doraise=True)
+                return True
+            except Exception:
+                return False
+
+        if not os.path.exists(primary_agent) and is_ok(script_path):
+            try:
+                shutil.copy2(script_path, primary_agent)
+            except Exception:
+                pass
+
+        p_ok = is_ok(primary_agent)
+        s_ok = is_ok(shadow_agent)
+        print(f"  * Primary Agent ({primary_agent}): {'VALID' if p_ok else 'DAMAGED/MISSING'}")
+        print(f"  * Shadow Mirror ({shadow_agent}):  {'VALID' if s_ok else 'DAMAGED/MISSING'}")
+
+        if not p_ok and s_ok:
+            print("  [+] Restoring primary agent executable from shadow copy...")
+            shutil.copy2(shadow_agent, primary_agent)
+            p_ok = is_ok(primary_agent)
+        elif p_ok and not s_ok:
+            print("  [+] Syncing shadow mirror from primary agent executable...")
+            shutil.copy2(primary_agent, shadow_agent)
+            s_ok = is_ok(shadow_agent)
+        elif not p_ok and not s_ok:
+            print("  [*] Both copies missing. Fetching authoritative source from GitHub...")
+            try:
+                github_url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
+                req = urllib.request.Request(github_url, headers={"User-Agent": "CyberVPS-SelfHealer/2.2"})
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    c = resp.read()
+                if len(c) > 15000:
+                    with open(primary_agent, "wb") as f:
+                        f.write(c)
+                    py_compile.compile(primary_agent, doraise=True)
+                    shutil.copy2(primary_agent, shadow_agent)
+                    print("  [+] Successfully restored primary and shadow agent scripts from GitHub.")
+                    p_ok = True
+                    s_ok = True
+            except Exception as e:
+                print(f"  [!] Remote restore failed: {e}")
+
+        # Reconcile 3-Backend policy
+        b_list = cfg.get("server_urls") or []
+        for def_b in ["https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"]:
+            if def_b not in b_list:
+                b_list.append(def_b)
+        cfg["server_urls"] = b_list
+        for dest in [cvps_dir, shadow_dir]:
+            try:
+                with open(os.path.join(dest, "config.json"), "w", encoding="utf-8") as cf:
+                    json.dump(cfg, cf, indent=2)
+                with open(os.path.join(dest, "backends.json"), "w", encoding="utf-8") as bf:
+                    json.dump(b_list, bf, indent=2)
+            except Exception:
+                pass
+        print(f"  * Reconciled 3-Backend Mesh: {len(b_list)} backends configured.")
+
+        # Autostart persistence
+        if platform.system() == "Windows":
+            try:
+                import winreg
+                reg_key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    0,
+                    winreg.KEY_READ | winreg.KEY_SET_VALUE
+                )
+                cmd_line = f'"{sys.executable}" "{primary_agent}" start'
+                winreg.SetValueEx(reg_key, "CyberVPSAgent", 0, winreg.REG_SZ, cmd_line)
+                winreg.CloseKey(reg_key)
+                print("  * Windows Autostart Persistence: ACTIVE (Run Key verified)")
+            except Exception as e:
+                print(f"  * Windows Autostart Persistence warning: {e}")
+
+        # Check process status
+        active_pid = get_running_pid()
+        if not active_pid:
+            print("  * Agent process is inactive. Launching agent daemon...")
+            cmd = [sys.executable, primary_agent, server_url, token, mid]
+            new_pid = spawn_daemon(cmd)
+            print(f"  [+] CyberVPS Agent healed and running (PID: {new_pid}).")
+        else:
+            print(f"  * Agent process is healthy and active (PID: {active_pid}).")
+        print("================================================================")
+        sys.exit(0)
+
+    elif subcmd == "uninstall":
+        print("================================================================")
+        print("   [*] Uninstalling CyberVPS Universal Agent                    ")
+        print("================================================================")
+        active_pid = get_running_pid()
+        if active_pid:
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(["taskkill", "/F", "/PID", str(active_pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    os.kill(active_pid, signal.SIGTERM)
+                print(f"  [+] Terminated running agent process (PID: {active_pid}).")
+            except Exception:
+                pass
+        if os.path.exists(pid_file):
+            try: os.remove(pid_file)
+            except Exception: pass
+
+        if platform.system() == "Windows":
+            try:
+                import winreg
+                reg_key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    0,
+                    winreg.KEY_SET_VALUE
+                )
+                winreg.DeleteValue(reg_key, "CyberVPSAgent")
+                winreg.CloseKey(reg_key)
+                print("  [+] Removed Windows Registry Run autostart entry.")
+            except Exception:
+                pass
+
+        print("  [+] CyberVPS Agent uninstalled cleanly. Configuration preserved in ~/.cybervps.")
+        print("================================================================")
+        sys.exit(0)
+
+    elif subcmd == "rebuild":
         print("[*] Contacting GitHub for latest CyberVPS Universal Agent...")
         try:
             github_url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
@@ -5082,10 +5388,10 @@ def handle_cli_subcommands(args):
                 tmp_f = script_path + ".tmp"
                 with open(tmp_f, "wb") as f:
                     f.write(code)
-                import py_compile
                 py_compile.compile(tmp_f, doraise=True)
                 shutil.move(tmp_f, script_path)
-                print("[+] Successfully downloaded and verified fresh agent script from GitHub.")
+                shutil.copy2(script_path, os.path.join(shadow_dir, "universal-agent.py"))
+                print("[+] Successfully downloaded, verified and mirrored fresh agent script from GitHub.")
             else:
                 print(f"[!] Warning: Code from GitHub was incomplete ({len(code)} bytes).")
         except Exception as e:

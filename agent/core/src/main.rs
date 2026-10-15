@@ -21,7 +21,7 @@ use url::Url;
 #[derive(Parser, Debug)]
 #[command(author, version, about = "CyberVPS Space Station Agent", long_about = None)]
 struct Args {
-    #[arg(short, long, default_value = "ws://localhost:8080/api/v1/relay/connect")]
+    #[arg(short, long, env = "RELAY_URL", default_value = "ws://localhost:8080/api/v1/relay/connect")]
     server: String,
 
     #[arg(short, long)]

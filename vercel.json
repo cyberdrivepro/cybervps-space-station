@@ -1,0 +1,83 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "cybervps-render-control": {
+      "root": ".",
+      "framework": "container",
+      "runtime": "container",
+      "buildCommand": "npm install",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "control-plane",
+          "format": "url",
+          "env": "CONTROL_PLANE_URL"
+        },
+        {
+          "type": "service",
+          "service": "public-gateway",
+          "format": "url",
+          "env": "PUBLIC_GATEWAY_URL"
+        },
+        {
+          "type": "service",
+          "service": "relay",
+          "format": "url",
+          "env": "RELAY_URL"
+        }
+      ]
+    },
+    "control-plane": {
+      "root": "services/control-plane",
+      "runtime": "rust",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "public-gateway",
+          "format": "url",
+          "env": "PUBLIC_GATEWAY_URL"
+        }
+      ]
+    },
+    "public-gateway": {
+      "root": "services/public-gateway",
+      "runtime": "rust"
+    },
+    "relay": {
+      "root": "services/relay",
+      "runtime": "rust"
+    },
+    "core": {
+      "root": "agent/core",
+      "runtime": "rust",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "relay",
+          "format": "url",
+          "env": "RELAY_URL"
+        }
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/tunnel/(.*)",
+      "destination": {
+        "service": "public-gateway"
+      }
+    },
+    {
+      "source": "/api/v1/relay/(.*)",
+      "destination": {
+        "service": "relay"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "cybervps-render-control"
+      }
+    }
+  ]
+}

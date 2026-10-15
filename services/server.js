@@ -1326,6 +1326,23 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  function broadcastBackendPoolToAgents() {
+    const backendList = Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }));
+    let broadcastCount = 0;
+    for (const [mId, ws] of db.connectedAgents.entries()) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({
+            type: 'SyncBackendPool',
+            payload: { backends: backendList }
+          }));
+          broadcastCount++;
+        } catch (_) {}
+      }
+    }
+    return broadcastCount;
+  }
+
   if (pathname === '/api/v1/backends' && method === 'GET') {
     const list = Array.from(db.backends.values());
     const primary = list.find(b => b.role === 'primary') || list[0];
@@ -1376,9 +1393,10 @@ const server = http.createServer(async (req, res) => {
         };
         db.backends.set(bId, backend);
         savePersistentState();
-        logAudit('backend_registered', 'admin', null, `Registered backend ${bId} [${url}] (Role: ${backend.role}, State: ${backend.state})`);
+        const bcastCount = broadcastBackendPoolToAgents();
+        logAudit('backend_registered', 'admin', null, `Registered backend ${bId} [${url}] (Role: ${backend.role}, State: ${backend.state}). Auto-synced to ${bcastCount} fleet nodes.`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, backend }));
+        res.end(JSON.stringify({ success: true, backend, synced_nodes_count: bcastCount }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -1398,9 +1416,10 @@ const server = http.createServer(async (req, res) => {
       }
       db.backends.delete(bId);
       savePersistentState();
-      logAudit('backend_removed', 'admin', null, `Removed backend ${bId}`);
+      const bcastCount = broadcastBackendPoolToAgents();
+      logAudit('backend_removed', 'admin', null, `Removed backend ${bId}. Auto-synced to ${bcastCount} fleet nodes.`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, message: `Backend ${bId} removed.` }));
+      res.end(JSON.stringify({ success: true, message: `Backend ${bId} removed.`, synced_nodes_count: bcastCount }));
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Backend not found' }));
@@ -1478,9 +1497,10 @@ const server = http.createServer(async (req, res) => {
           }
         }
         savePersistentState();
-        logAudit('backend_failover', 'admin', null, `Promoted ${target_backend_id} to primary active backend`);
+        const bcastCount = broadcastBackendPoolToAgents();
+        logAudit('backend_failover', 'admin', null, `Promoted ${target_backend_id} to primary active backend. Auto-synced to ${bcastCount} fleet nodes.`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, active_backend: target_backend_id, message: `Failover complete. ${target_backend_id} is now primary.` }));
+        res.end(JSON.stringify({ success: true, active_backend: target_backend_id, message: `Failover complete. ${target_backend_id} is now primary.`, synced_nodes_count: bcastCount }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -1490,19 +1510,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/v1/backends/broadcast' && method === 'POST') {
+    const broadcastCount = broadcastBackendPoolToAgents();
     const backendList = Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }));
-    let broadcastCount = 0;
-    for (const [mId, ws] of db.connectedAgents.entries()) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.send(JSON.stringify({
-            type: 'SyncBackendPool',
-            payload: { backends: backendList }
-          }));
-          broadcastCount++;
-        } catch (_) {}
-      }
-    }
     logAudit('backends_broadcast', 'admin', null, `Broadcasted backend pool (${backendList.length} backends) to ${broadcastCount} connected nodes`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, message: `Broadcasted ${backendList.length} backends to ${broadcastCount} connected nodes.` }));

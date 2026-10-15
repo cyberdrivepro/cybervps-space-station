@@ -29,7 +29,8 @@ impl ControlPlaneConfig {
         let _ = dotenvy::dotenv();
         Self {
             host: env::var("CYBERVPS_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-            port: env::var("CYBERVPS_PORT")
+            port: env::var("PORT")
+                .or_else(|_| env::var("CYBERVPS_PORT"))
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(8080),

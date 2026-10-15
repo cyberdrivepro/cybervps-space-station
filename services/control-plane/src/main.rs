@@ -110,7 +110,10 @@ async fn create_tunnel(
 ) -> impl IntoResponse {
     let id = format!("tun_{}", &Uuid::new_v4().simple().to_string()[..8]);
     let subdomain = format!("{}-{}", req.target_port, &id);
-    let public_url = format!("http://localhost:8081/tunnel/{}/", id);
+    let gateway_base = std::env::var("PUBLIC_GATEWAY_URL")
+        .or_else(|_| std::env::var("GATEWAY_URL"))
+        .unwrap_or_else(|_| "http://localhost:8081".to_string());
+    let public_url = format!("{}/tunnel/{}/", gateway_base.trim_end_matches('/'), id);
 
     let tunnel = TunnelConfig {
         id: id.clone(),
