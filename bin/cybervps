@@ -734,6 +734,19 @@ Examples:
     console.log(`  sftp -P ${mapping.localPort} user@127.0.0.1`);
     console.log(`\nConnect with native SSH client:`);
     console.log(`  ssh -p ${mapping.localPort} user@127.0.0.1`);
+  } else if (remotePort === 3389) {
+    console.log(`\nWindows Remote Desktop (RDP):`);
+    console.log(`  mstsc /v:127.0.0.1:${mapping.localPort}`);
+    if (process.platform === 'win32') {
+      console.log(`[*] Automatically launching Windows Remote Desktop client (mstsc.exe)...`);
+      try {
+        const { spawn } = require('child_process');
+        spawn('mstsc.exe', [`/v:127.0.0.1:${mapping.localPort}`], { detached: true, stdio: 'ignore' }).unref();
+      } catch (_) {}
+    }
+  } else if (remotePort === 5900) {
+    console.log(`\nConnect with native VNC viewer:`);
+    console.log(`  vnc://127.0.0.1:${mapping.localPort}`);
   } else {
     console.log(`\nLocal Web URL:`);
     console.log(`  http://127.0.0.1:${mapping.localPort}`);

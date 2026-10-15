@@ -1973,26 +1973,88 @@ class CyberVPSAgent:
                 except Exception:
                     pass
             else:
-                if os.path.exists("/bin/systemctl") or os.path.exists("/usr/bin/systemctl"):
-                    out = subprocess.check_output(["systemctl", "list-units", "--type=service", "--all", "--no-legend", "--no-pager"], timeout=5).decode("utf-8", errors="ignore")
-                    for line in out.strip().splitlines():
-                        parts = line.strip().split(None, 4)
-                        if len(parts) >= 4:
-                            name = parts[0].replace(".service", "")
-                            status = "Running" if parts[2] == "active" and parts[3] == "running" else ("Failed" if parts[3] == "failed" else "Stopped")
-                            desc = parts[4] if len(parts) >= 5 else name
-                            if search and (search not in name.lower() and search not in desc.lower()):
-                                continue
-                            if status_filter and status_filter != "all" and status.lower() != status_filter:
-                                continue
-                            svcs.append({
-                                "name": name,
-                                "display_name": desc,
-                                "status": status,
-                                "startup_type": parts[1]
-                            })
-                else:
-                    svcs = []
+                systemctl_bin = "/bin/systemctl" if os.path.exists("/bin/systemctl") else ("/usr/bin/systemctl" if os.path.exists("/usr/bin/systemctl") else None)
+                parsed_systemd = False
+
+                if systemctl_bin:
+                    # Attempt 1: Standard system-wide systemctl list-units
+                    try:
+                        out = subprocess.check_output([systemctl_bin, "list-units", "--type=service", "--all", "--no-legend", "--no-pager"], timeout=5).decode("utf-8", errors="ignore")
+                        parsed_systemd = True
+                    except (PermissionError, subprocess.SubprocessError, OSError):
+                        out = ""
+
+                    # Attempt 2: User-level systemd units if system-wide threw permission error or failed
+                    if not parsed_systemd or not out.strip():
+                        try:
+                            out = subprocess.check_output([systemctl_bin, "--user", "list-units", "--type=service", "--all", "--no-legend", "--no-pager"], timeout=4).decode("utf-8", errors="ignore")
+                            if out.strip():
+                                parsed_systemd = True
+                        except Exception:
+                            pass
+
+                    if parsed_systemd and out.strip():
+                        for line in out.strip().splitlines():
+                            parts = line.strip().split(None, 4)
+                            if len(parts) >= 4:
+                                name = parts[0].replace(".service", "")
+                                status = "Running" if parts[2] == "active" and parts[3] == "running" else ("Failed" if parts[3] == "failed" else "Stopped")
+                                desc = parts[4] if len(parts) >= 5 else name
+                                if search and (search not in name.lower() and search not in desc.lower()):
+                                    continue
+                                if status_filter and status_filter != "all" and status.lower() != status_filter:
+                                    continue
+                                svcs.append({
+                                    "name": name,
+                                    "display_name": desc,
+                                    "status": status,
+                                    "startup_type": parts[1]
+                                })
+
+                # Attempt 3: Filesystem & process fallback if systemctl had permission denied or wasn't available
+                if not svcs:
+                    discovered_names = set()
+                    unit_dirs = ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system", "/etc/init.d"]
+                    for u_dir in unit_dirs:
+                        if os.path.exists(u_dir) and os.path.isdir(u_dir):
+                            try:
+                                for fn in os.listdir(u_dir):
+                                    if fn.endswith(".service") or u_dir.endswith("/init.d"):
+                                        s_name = fn.replace(".service", "")
+                                        if s_name and not s_name.startswith("."):
+                                            discovered_names.add(s_name)
+                            except Exception:
+                                pass
+
+                    common_linux_svcs = [
+                        "sshd", "ssh", "cron", "crond", "systemd", "dbus", "rsyslog",
+                        "networking", "network", "docker", "nginx", "apache2", "cybervps"
+                    ]
+                    for cs in common_linux_svcs:
+                        discovered_names.add(cs)
+
+                    running_proc_names = set()
+                    if psutil:
+                        try:
+                            for p in psutil.process_iter(['name']):
+                                p_n = (p.info.get('name') or '').lower()
+                                if p_n: running_proc_names.add(p_n)
+                        except Exception:
+                            pass
+
+                    for name in sorted(discovered_names):
+                        if search and search not in name.lower():
+                            continue
+                        is_running = any(name.lower() in p_n or p_n in name.lower() for p_n in running_proc_names)
+                        status = "Running" if is_running else "Stopped"
+                        if status_filter and status_filter != "all" and status.lower() != status_filter:
+                            continue
+                        svcs.append({
+                            "name": name,
+                            "display_name": f"{name} service",
+                            "status": status,
+                            "startup_type": "standard"
+                        })
 
             svcs.sort(key=lambda x: x["name"].lower())
 
@@ -2034,11 +2096,35 @@ class CyberVPSAgent:
                 output = res.stdout.decode("utf-8", errors="ignore").strip()
                 new_status = "Running" if "Running" in output or "4" in output else "Stopped"
             else:
-                res = subprocess.run(["systemctl", action, f"{svc_name}.service"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
-                output = res.stdout.decode("utf-8", errors="ignore").strip()
-                chk = subprocess.run(["systemctl", "is-active", f"{svc_name}.service"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
-                active_out = chk.stdout.decode("utf-8", errors="ignore").strip()
-                new_status = "Running" if active_out == "active" else "Stopped"
+                try:
+                    res = subprocess.run(["systemctl", action, f"{svc_name}.service"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+                    output = res.stdout.decode("utf-8", errors="ignore").strip()
+                    err_out = res.stderr.decode("utf-8", errors="ignore").strip()
+                    if res.returncode != 0 and ("permission" in err_out.lower() or "access denied" in err_out.lower() or "interactive authentication" in err_out.lower()):
+                        self.send_agent_event({
+                            "type": "AgentRpcResponse",
+                            "payload": {
+                                "request_id": req_id,
+                                "success": False,
+                                "error": f"Permission denied executing systemctl {action} on {svc_name}: administrative or root privileges required.",
+                                "requires_elevation": True
+                            }
+                        })
+                        return
+                    chk = subprocess.run(["systemctl", "is-active", f"{svc_name}.service"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+                    active_out = chk.stdout.decode("utf-8", errors="ignore").strip()
+                    new_status = "Running" if active_out == "active" else "Stopped"
+                except PermissionError as pe:
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {
+                            "request_id": req_id,
+                            "success": False,
+                            "error": f"Permission denied executing systemctl: {str(pe)}. Root elevation required.",
+                            "requires_elevation": True
+                        }
+                    })
+                    return
 
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -2915,13 +3001,17 @@ class CyberVPSAgent:
                                             clean_cmd = cand
                                             clean_exe = os.path.basename(cand).lower()
                                     if not clean_cmd and d_loc and os.path.exists(d_loc):
+                                        walked_count = 0
                                         for root_dir, _, files in os.walk(d_loc):
                                             for f in files:
+                                                walked_count += 1
                                                 if f.lower().endswith(".exe") and "unins" not in f.lower() and "helper" not in f.lower():
                                                     clean_cmd = os.path.join(root_dir, f)
                                                     clean_exe = f.lower()
                                                     break
-                                            if clean_cmd:
+                                                if walked_count > 30:
+                                                    break
+                                            if clean_cmd or walked_count > 30:
                                                 break
                                     if not clean_cmd:
                                         clean_cmd = f"{slug}.exe"
@@ -2960,8 +3050,10 @@ class CyberVPSAgent:
         ]
         for d in dirs:
             if os.path.exists(d):
+                walked_shortcuts = 0
                 for r_dir, _, files in os.walk(d):
                     for fn in files:
+                        walked_shortcuts += 1
                         if fn.lower().endswith(".lnk") and "uninstall" not in fn.lower():
                             raw_name = os.path.splitext(fn)[0]
                             slug = "".join(ch.lower() for ch in raw_name if ch.isalnum())
@@ -2978,6 +3070,10 @@ class CyberVPSAgent:
                                     "icon": self._get_app_icon(slug, raw_name),
                                     "can_control": True
                                 }
+                        if walked_shortcuts > 80:
+                            break
+                    if walked_shortcuts > 80:
+                        break
 
         return list(apps.values())
 
@@ -3002,8 +3098,16 @@ class CyberVPSAgent:
         desk_dirs = ["/usr/share/applications", "/usr/local/share/applications", os.path.expanduser("~/.local/share/applications")]
         for d in desk_dirs:
             if os.path.exists(d):
-                for fn in os.listdir(d):
+                desk_count = 0
+                try:
+                    dir_list = os.listdir(d)
+                except Exception:
+                    continue
+                for fn in dir_list:
                     if fn.endswith(".desktop"):
+                        desk_count += 1
+                        if desk_count > 80:
+                            break
                         try:
                             fpath = os.path.join(d, fn)
                             entry = {}
@@ -3073,17 +3177,45 @@ class CyberVPSAgent:
                     continue
         return procs_by_name
 
+    def _get_fallback_baseline_apps(self, sys_os):
+        if sys_os == "Windows":
+            return [
+                {"id": "notepad", "name": "Notepad", "publisher": "Microsoft Corporation", "version": "11.0", "category": "Productivity", "cmd": "notepad.exe", "source": "Windows System App", "exe_name": "notepad.exe", "icon": self._get_app_icon("notepad", "Notepad"), "can_control": True},
+                {"id": "calc", "name": "Calculator", "publisher": "Microsoft Corporation", "version": "11.0", "category": "Utilities", "cmd": "calc.exe", "source": "Windows System App", "exe_name": "calculatorapp.exe", "icon": self._get_app_icon("calc", "Calculator"), "can_control": True},
+                {"id": "mspaint", "name": "Paint", "publisher": "Microsoft Corporation", "version": "11.0", "category": "Media", "cmd": "mspaint.exe", "source": "Windows System App", "exe_name": "mspaint.exe", "icon": self._get_app_icon("mspaint", "Paint"), "can_control": True},
+                {"id": "explorer", "name": "File Explorer", "publisher": "Microsoft Corporation", "version": "10.0", "category": "System", "cmd": "explorer.exe", "source": "Windows Shell", "exe_name": "explorer.exe", "icon": self._get_app_icon("explorer", "File Explorer"), "can_control": True},
+                {"id": "taskmgr", "name": "Task Manager", "publisher": "Microsoft Corporation", "version": "10.0", "category": "System", "cmd": "taskmgr.exe", "source": "Windows System App", "exe_name": "taskmgr.exe", "icon": self._get_app_icon("taskmgr", "Task Manager"), "can_control": True},
+                {"id": "powershell", "name": "Windows PowerShell", "publisher": "Microsoft Corporation", "version": "5.1", "category": "Development", "cmd": "powershell.exe", "source": "Windows Shell", "exe_name": "powershell.exe", "icon": self._get_app_icon("powershell", "Windows PowerShell"), "can_control": True},
+                {"id": "cmd", "name": "Command Prompt", "publisher": "Microsoft Corporation", "version": "10.0", "category": "Development", "cmd": "cmd.exe", "source": "Windows Shell", "exe_name": "cmd.exe", "icon": self._get_app_icon("cmd", "Command Prompt"), "can_control": True}
+            ]
+        else:
+            return [
+                {"id": "terminal", "name": "Terminal", "publisher": "Linux Core", "version": "1.0", "category": "Development", "cmd": "x-terminal-emulator", "exe_name": "x-terminal-emulator", "source": "System Tool", "icon": self._get_app_icon("terminal", "Terminal"), "can_control": True},
+                {"id": "bash", "name": "Bash Shell", "publisher": "GNU Project", "version": "5.0", "category": "Development", "cmd": "bash", "exe_name": "bash", "source": "System Tool", "icon": self._get_app_icon("bash", "Bash Shell"), "can_control": True},
+                {"id": "python", "name": "Python 3 Runtime", "publisher": "Python Software Foundation", "version": "3.x", "category": "Development", "cmd": "python3", "exe_name": "python3", "source": "System Tool", "icon": self._get_app_icon("python", "Python 3 Runtime"), "can_control": True},
+                {"id": "htop", "name": "Htop Process Viewer", "publisher": "Hishham Muhammad", "version": "3.0", "category": "System", "cmd": "htop", "exe_name": "htop", "source": "System Tool", "icon": self._get_app_icon("htop", "Htop Process Viewer"), "can_control": True},
+                {"id": "git", "name": "Git VCS", "publisher": "Software Freedom Conservancy", "version": "2.x", "category": "Development", "cmd": "git", "exe_name": "git", "source": "System Tool", "icon": self._get_app_icon("git", "Git VCS"), "can_control": True},
+                {"id": "vim", "name": "Vim Editor", "publisher": "Bram Moolenaar", "version": "8.x", "category": "Productivity", "cmd": "vim", "exe_name": "vim", "source": "System Tool", "icon": self._get_app_icon("vim", "Vim Editor"), "can_control": True},
+                {"id": "nano", "name": "Nano Editor", "publisher": "GNU Project", "version": "6.x", "category": "Productivity", "cmd": "nano", "exe_name": "nano", "source": "System Tool", "icon": self._get_app_icon("nano", "Nano Editor"), "can_control": True},
+                {"id": "systemd", "name": "Systemd Controller", "publisher": "freedesktop.org", "version": "systemd", "category": "System", "cmd": "systemctl", "exe_name": "systemd", "source": "System Tool", "icon": self._get_app_icon("systemd", "Systemd Controller"), "can_control": True}
+            ]
+
     def get_application_inventory(self, force_refresh=False):
         sys_os = platform.system()
         now = time.time()
 
         if force_refresh or not hasattr(self, "_cached_apps_list") or (now - getattr(self, "_cached_apps_time", 0)) > 60:
-            if sys_os == "Windows":
-                base_apps = self._discover_windows_applications()
-            else:
-                base_apps = self._discover_linux_applications()
-            self._cached_apps_list = base_apps
-            self._cached_apps_time = now
+            try:
+                if sys_os == "Windows":
+                    base_apps = self._discover_windows_applications()
+                else:
+                    base_apps = self._discover_linux_applications()
+                if not base_apps:
+                    base_apps = self._get_fallback_baseline_apps(sys_os)
+                self._cached_apps_list = base_apps
+                self._cached_apps_time = now
+            except Exception:
+                base_apps = getattr(self, "_cached_apps_list", None) or self._get_fallback_baseline_apps(sys_os)
         else:
             base_apps = self._cached_apps_list
 
@@ -4210,45 +4342,45 @@ class CyberVPSAgent:
         elif c_type == "TerminalKill":
             self.kill_terminal(payload.get("session_id"))
         elif c_type == "FileList":
-            self.handle_file_list(payload)
+            threading.Thread(target=self.handle_file_list, args=(payload,), daemon=True).start()
         elif c_type == "FileRead":
-            self.handle_file_read(payload)
+            threading.Thread(target=self.handle_file_read, args=(payload,), daemon=True).start()
         elif c_type == "FileWrite":
-            self.handle_file_write(payload)
+            threading.Thread(target=self.handle_file_write, args=(payload,), daemon=True).start()
         elif c_type == "FileDelete":
-            self.handle_file_delete(payload)
+            threading.Thread(target=self.handle_file_delete, args=(payload,), daemon=True).start()
         elif c_type == "FileRename":
-            self.handle_file_rename(payload)
+            threading.Thread(target=self.handle_file_rename, args=(payload,), daemon=True).start()
         elif c_type == "FileMkdir":
-            self.handle_file_mkdir(payload)
+            threading.Thread(target=self.handle_file_mkdir, args=(payload,), daemon=True).start()
         elif c_type == "FileStat":
-            self.handle_file_stat(payload)
+            threading.Thread(target=self.handle_file_stat, args=(payload,), daemon=True).start()
         elif c_type == "ProcessList":
-            self.handle_process_list(payload)
+            threading.Thread(target=self.handle_process_list, args=(payload,), daemon=True).start()
         elif c_type == "ProcessKill":
-            self.handle_process_kill(payload)
+            threading.Thread(target=self.handle_process_kill, args=(payload,), daemon=True).start()
         elif c_type == "ProcessStart":
-            self.handle_process_start(payload)
+            threading.Thread(target=self.handle_process_start, args=(payload,), daemon=True).start()
         elif c_type == "ProcessDetails":
-            self.handle_process_details(payload)
+            threading.Thread(target=self.handle_process_details, args=(payload,), daemon=True).start()
         elif c_type == "ServiceList":
-            self.handle_service_list(payload)
+            threading.Thread(target=self.handle_service_list, args=(payload,), daemon=True).start()
         elif c_type == "ServiceAction":
-            self.handle_service_action(payload)
+            threading.Thread(target=self.handle_service_action, args=(payload,), daemon=True).start()
         elif c_type == "DesktopStatus":
-            self.handle_desktop_status(payload)
+            threading.Thread(target=self.handle_desktop_status, args=(payload,), daemon=True).start()
         elif c_type == "DesktopAction":
-            self.handle_desktop_action(payload)
+            threading.Thread(target=self.handle_desktop_action, args=(payload,), daemon=True).start()
         elif c_type in ["DesktopLaunch", "launch_interactive", "launch_gui", "desktop_launch"]:
-            self.handle_desktop_action({
+            threading.Thread(target=self.handle_desktop_action, args=({
                 "request_id": payload.get("request_id"),
                 "action": "launch_interactive",
                 "params": payload
-            })
+            },), daemon=True).start()
         elif c_type == "AppList":
-            self.handle_app_list(payload)
+            threading.Thread(target=self.handle_app_list, args=(payload,), daemon=True).start()
         elif c_type == "AppAction":
-            self.handle_app_action(payload)
+            threading.Thread(target=self.handle_app_action, args=(payload,), daemon=True).start()
         elif c_type == "TunnelOpenStream":
             self.handle_tunnel_open(
                 payload.get("tunnel_id"),

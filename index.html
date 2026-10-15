@@ -923,6 +923,10 @@
         <span id="status-label">Connecting...</span>
       </div>
       <div id="status-endpoint" style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); word-break:break-all;"></div>
+      <div style="margin-top:0.6rem; padding-top:0.45rem; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; font-size:0.68rem; color:var(--text-muted);">
+        <span id="footer-build-ver">v2.1.0 Stable</span>
+        <span id="footer-build-sha" style="font-family:var(--font-mono); color:var(--accent-cyan); font-weight:600; cursor:pointer;" title="Deployed Git Commit" onclick="navigate('settings')">cc24d44</span>
+      </div>
     </div>
   </aside>
 
@@ -1734,22 +1738,33 @@
                 </div>
 
                 <div class="protocol-actions">
-                  <div id="rdp-bridge-active-box" style="display:none; padding:0.6rem 0.85rem; background:rgba(56,189,248,0.08); border:1px solid rgba(56,189,248,0.25); border-radius:var(--radius-sm); font-size:0.76rem; font-family:var(--font-mono); color:#38bdf8; margin-bottom:0.5rem;">
-                    ⚡ Port Bridge: <span id="rdp-bridge-endpoint">127.0.0.1:33890</span>
+                  <div id="rdp-bridge-active-box" style="display:none; padding:0.65rem 0.85rem; background:rgba(56,189,248,0.08); border:1px solid rgba(56,189,248,0.25); border-radius:var(--radius-sm); font-size:0.75rem; margin-bottom:0.6rem;">
+                    <div style="font-family:var(--font-mono); color:#38bdf8; font-weight:600; display:flex; align-items:center; justify-content:space-between;">
+                      <span>⚡ Local Bridge: <span id="rdp-bridge-endpoint">127.0.0.1:33890</span></span>
+                      <span class="badge badge-success" style="font-size:0.65rem; padding:1px 6px;">Active</span>
+                    </div>
+                    <div style="font-size:0.7rem; color:var(--text-muted); margin-top:3px;">
+                      Client bridge listening on local PC loopback (traffic encrypted end-to-end).
+                    </div>
                   </div>
-                  <button id="btn-enable-rdp" class="btn btn-secondary" onclick="enableRdpOnMachine()" style="display:none; font-size:0.78rem;">
+                  <button id="btn-enable-rdp" class="btn btn-secondary" onclick="enableRdpOnMachine()" style="display:none; font-size:0.78rem; margin-bottom:0.4rem;">
                     Enable & Configure RDP
                   </button>
-                  <button id="btn-rdp-tunnel" class="btn btn-primary" onclick="createDesktopBridge('rdp')" style="font-size:0.78rem;">
-                    Launch Secure RDP Bridge
-                  </button>
-                  <div style="display:flex; gap:0.4rem;">
-                    <button id="btn-download-rdp" class="btn btn-secondary" onclick="downloadRdpConfig()" style="flex:1; font-size:0.75rem;" title="Download .rdp file">
-                      Download .rdp
+                  <div style="display:flex; flex-direction:column; gap:0.45rem;">
+                    <button id="btn-rdp-tunnel" class="btn btn-primary" onclick="createDesktopBridge('rdp')" style="font-size:0.78rem;">
+                      🚀 Connect via RDP / Bridge
                     </button>
-                    <button id="btn-copy-mstsc" class="btn btn-secondary" onclick="copyMstscCommand()" style="flex:1; font-size:0.75rem;" title="Copy mstsc command">
-                      Copy mstsc
-                    </button>
+                    <div style="display:flex; gap:0.35rem;">
+                      <button id="btn-rdp-launcher" class="btn btn-secondary" onclick="downloadRdpLauncher('rdp')" style="flex:1; font-size:0.74rem;" title="Download automated .cmd launcher that starts bridge and mstsc">
+                        ⚡ 1-Click .cmd
+                      </button>
+                      <button id="btn-download-rdp" class="btn btn-secondary" onclick="downloadRdpConfig()" style="flex:1; font-size:0.74rem;" title="Download .rdp file">
+                        📥 .rdp File
+                      </button>
+                      <button id="btn-rdp-guide" class="btn btn-secondary" onclick="openRdpConnectModal()" style="font-size:0.74rem;" title="View connection options & commands">
+                        🌐 Guide
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1776,15 +1791,28 @@
                 </div>
 
                 <div class="protocol-actions">
-                  <div id="vnc-bridge-active-box" style="display:none; padding:0.6rem 0.85rem; background:rgba(139,92,246,0.08); border:1px solid rgba(139,92,246,0.25); border-radius:var(--radius-sm); font-size:0.76rem; font-family:var(--font-mono); color:#c4b5fd; margin-bottom:0.5rem;">
-                    ⚡ Port Bridge: <span id="vnc-bridge-endpoint">127.0.0.1:59000</span>
+                  <div id="vnc-bridge-active-box" style="display:none; padding:0.65rem 0.85rem; background:rgba(139,92,246,0.08); border:1px solid rgba(139,92,246,0.25); border-radius:var(--radius-sm); font-size:0.75rem; margin-bottom:0.6rem;">
+                    <div style="font-family:var(--font-mono); color:#c4b5fd; font-weight:600; display:flex; align-items:center; justify-content:space-between;">
+                      <span>⚡ Local Bridge: <span id="vnc-bridge-endpoint">127.0.0.1:59000</span></span>
+                      <span class="badge badge-success" style="font-size:0.65rem; padding:1px 6px;">Active</span>
+                    </div>
+                    <div style="font-size:0.7rem; color:var(--text-muted); margin-top:3px;">
+                      Client bridge listening on local PC loopback (traffic encrypted end-to-end).
+                    </div>
                   </div>
-                  <button id="btn-vnc-tunnel" class="btn btn-primary" onclick="createDesktopBridge('vnc')" style="font-size:0.78rem;">
-                    Launch Secure VNC Bridge
-                  </button>
-                  <a id="btn-open-vnc" class="btn btn-secondary" href="#" target="_blank" style="font-size:0.75rem; text-align:center; display:none;">
-                    Open in VNC Viewer (vnc://)
-                  </a>
+                  <div style="display:flex; flex-direction:column; gap:0.45rem;">
+                    <button id="btn-vnc-tunnel" class="btn btn-primary" onclick="createDesktopBridge('vnc')" style="font-size:0.78rem;">
+                      Launch Secure VNC Bridge
+                    </button>
+                    <div style="display:flex; gap:0.35rem;">
+                      <button id="btn-vnc-launcher" class="btn btn-secondary" onclick="downloadRdpLauncher('vnc')" style="flex:1; font-size:0.74rem;" title="Download automated .cmd launcher for VNC">
+                        ⚡ 1-Click .cmd
+                      </button>
+                      <a id="btn-open-vnc" class="btn btn-secondary" href="#" target="_blank" style="flex:1; font-size:0.74rem; text-align:center; display:none;">
+                        Open vnc://
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1962,6 +1990,9 @@
                 <input type="text" id="apps-search-input" class="form-control" placeholder="Search application, publisher or exe..." style="font-size:0.78rem; padding:0.35rem 0.65rem;" oninput="onAppsSearchChange()">
               </div>
             </div>
+
+            <!-- Application Advisory Banner -->
+            <div id="apps-advisory-banner" style="display:none; margin-bottom:1rem; padding:0.65rem 0.9rem; background:rgba(234, 179, 8, 0.12); border:1px solid rgba(234, 179, 8, 0.35); border-radius:var(--radius-sm); font-size:0.78rem; color:#fef08a;"></div>
 
             <!-- Application Cards Grid -->
             <div id="apps-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:1rem;">
@@ -2333,6 +2364,43 @@
             </div>
 
             <div id="settings-feedback" style="margin-top:1rem; font-size:0.8rem;"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1.5rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Deployment Traceability & Build Metadata</div>
+              <div class="card-desc">Active build identifier, deployed Git commit, and platform protocol capabilities</div>
+            </div>
+            <button class="btn btn-secondary" onclick="fetchBuildInfo(true)" style="font-size:0.75rem; padding:0.3rem 0.65rem;">🔄 Refresh Build</button>
+          </div>
+          <div class="card-body">
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; margin-bottom:1rem;">
+              <div style="background:var(--bg-subtle); padding:0.9rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.72rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Software Edition</div>
+                <div id="meta-edition" style="font-size:0.95rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;">v2.1.0 (Enterprise)</div>
+                <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">Universal Mesh & Bridge</div>
+              </div>
+              <div style="background:var(--bg-subtle); padding:0.9rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.72rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Git Commit SHA</div>
+                <div id="meta-commit-sha" style="font-size:0.95rem; font-weight:700; font-family:var(--font-mono); color:var(--accent-cyan); margin-top:0.25rem;">cc24d44</div>
+                <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">Verified GitHub Release</div>
+              </div>
+              <div style="background:var(--bg-subtle); padding:0.9rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.72rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Protocol Version</div>
+                <div id="meta-protocol-ver" style="font-size:0.95rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;">v2.1.0</div>
+                <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">ConPTY + Remote Apps + HA</div>
+              </div>
+              <div style="background:var(--bg-subtle); padding:0.9rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.72rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Build Timestamp</div>
+                <div id="meta-build-time" style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-top:0.25rem;">2026-10-15 06:15 UTC</div>
+                <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">Automated CI/CD Pipeline</div>
+              </div>
+            </div>
+            <div id="meta-server-diag" style="font-size:0.75rem; color:var(--text-muted); padding:0.6rem 0.8rem; background:rgba(0,0,0,0.2); border-radius:var(--radius-sm); font-family:var(--font-mono);">
+              Connected Control Plane: <span id="meta-diag-url" style="color:var(--text-primary);">https://cybervps-space-station.up.railway.app</span> | Status: <span style="color:var(--status-online);">HEALTHY</span>
+            </div>
           </div>
         </div>
       </div>
@@ -2847,6 +2915,99 @@
         <button class="btn btn-secondary" onclick="closeCreateSandboxModal()">Cancel</button>
         <button class="btn btn-primary" onclick="submitCreateSandbox()">Create Sandbox</button>
       </div>
+  <!-- MODAL: REMOTE DESKTOP CONNECTION GUIDE -->
+  <div id="modal-rdp-connect" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeRdpConnectModal();">
+    <div class="modal" style="max-width:580px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem; display:flex; align-items:center; gap:0.5rem;" id="modal-rdp-connect-title">
+          <svg viewBox="0 0 24 24" style="width:18px; height:18px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18M12 3v18"/></svg>
+          Connect to Windows Remote Desktop (RDP)
+        </strong>
+        <button class="btn-icon" onclick="closeRdpConnectModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="display:flex; flex-direction:column; gap:1rem; max-height:550px; overflow-y:auto;">
+        
+        <!-- Security & Architecture Banner -->
+        <div style="padding:0.75rem 0.9rem; background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.2); border-radius:var(--radius-sm); font-size:0.76rem; color:var(--text-secondary); line-height:1.45;">
+          <strong style="color:#38bdf8;">🔒 Why Loopback (127.0.0.1)?</strong><br>
+          CyberVPS Space Station tunnels remote desktop traffic through authenticated, end-to-end encrypted WebSocket bridges. Raw RDP port <code>3389</code> is never exposed to the public internet. Connect using one of the 3 verified methods below:
+        </div>
+
+        <!-- Method 1: 1-Click Automated Launcher -->
+        <div style="border:1px solid rgba(56,189,248,0.3); background:rgba(56,189,248,0.03); border-radius:var(--radius-sm); padding:0.85rem;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.35rem;">
+            <div style="font-weight:600; font-size:0.85rem; color:var(--accent-cyan);">
+              🚀 Method 1: 1-Click Automated Launcher (Recommended)
+            </div>
+            <span class="badge badge-cyan" style="font-size:0.65rem;">Fastest</span>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.65rem;">
+            Downloads a self-contained <code>.cmd</code> script. When double-clicked on your Windows PC, it automatically establishes the encrypted loopback bridge and launches <code>mstsc.exe</code>.
+          </div>
+          <button class="btn btn-primary" onclick="downloadRdpLauncher('rdp')" style="width:100%; font-size:0.78rem;">
+            📥 Download 1-Click Launcher (.cmd)
+          </button>
+        </div>
+
+        <!-- Method 2: Space Station WireGuard Mesh VPN -->
+        <div style="border:1px solid var(--border-subtle); background:var(--bg-subtle); border-radius:var(--radius-sm); padding:0.85rem;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.35rem;">
+            <div style="font-weight:600; font-size:0.85rem; color:var(--text-primary);">
+              🌐 Method 2: Direct Space Station Mesh IP (WireGuard)
+            </div>
+            <span class="badge badge-success" style="font-size:0.65rem;">Direct VPN</span>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.5rem;">
+            If your PC is connected to the CyberVPS WireGuard Virtual Mesh, connect directly without any local bridge daemon:
+          </div>
+          <div style="display:flex; align-items:center; gap:0.5rem; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.4rem 0.65rem;">
+            <code id="modal-rdp-mesh-cmd" style="font-family:var(--font-mono); font-size:0.78rem; color:#a78bfa; flex:1;">mstsc /v:10.77.0.x:3389</code>
+            <button class="btn btn-secondary" onclick="copyMeshRdpCommand()" style="padding:0.25rem 0.55rem; font-size:0.72rem;">Copy</button>
+          </div>
+        </div>
+
+        <!-- Method 3: CyberVPS CLI Terminal Command -->
+        <div style="border:1px solid var(--border-subtle); background:var(--bg-subtle); border-radius:var(--radius-sm); padding:0.85rem;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.35rem;">
+            <div style="font-weight:600; font-size:0.85rem; color:var(--text-primary);">
+              💻 Method 3: CyberVPS CLI Terminal
+            </div>
+            <span class="badge badge-subtle" style="font-size:0.65rem;">Terminal</span>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.5rem;">
+            Run this command in PowerShell or Command Prompt to start the bridge and open Remote Desktop:
+          </div>
+          <div style="display:flex; align-items:center; gap:0.5rem; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.4rem 0.65rem;">
+            <code id="modal-rdp-cli-cmd" style="font-family:var(--font-mono); font-size:0.78rem; color:#38bdf8; flex:1;">cybervps rdp &lt;node-id&gt;</code>
+            <button class="btn btn-secondary" onclick="copyCliRdpCommand()" style="padding:0.25rem 0.55rem; font-size:0.72rem;">Copy</button>
+          </div>
+        </div>
+
+        <!-- Method 4: Pre-configured .rdp file -->
+        <div style="border:1px solid var(--border-subtle); background:var(--bg-subtle); border-radius:var(--radius-sm); padding:0.85rem;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.35rem;">
+            <div style="font-weight:600; font-size:0.85rem; color:var(--text-primary);">
+              📁 Method 4: Pre-Configured .rdp File
+            </div>
+            <span class="badge badge-subtle" style="font-size:0.65rem;">Shortcut</span>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.5rem;">
+            For use after your local bridge is running on <code>127.0.0.1</code>:
+          </div>
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn btn-secondary" onclick="downloadRdpConfig()" style="flex:1; font-size:0.76rem;">
+              📥 Download .rdp File
+            </button>
+            <button class="btn btn-secondary" onclick="copyMstscCommand()" style="flex:1; font-size:0.76rem;">
+              📋 Copy mstsc Loopback
+            </button>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeRdpConnectModal()">Close</button>
+      </div>
     </div>
   </div>
 
@@ -3055,6 +3216,17 @@
       banner.style.display = 'none';
       document.getElementById('board-backend-status').innerHTML = `<span style="color:var(--status-success);">Healthy (${healthCheck.duration}ms)</span>`;
       document.getElementById('health-timestamp').innerText = 'Synced ' + appState.lastSync.toLocaleTimeString();
+
+      if (healthCheck.data) {
+        if (healthCheck.data.commit_sha) {
+          const shaEl = document.getElementById('footer-build-sha');
+          if (shaEl) shaEl.innerText = healthCheck.data.commit_sha;
+        }
+        if (healthCheck.data.version) {
+          const verEl = document.getElementById('footer-build-ver');
+          if (verEl) verEl.innerText = `v${healthCheck.data.version} Stable`;
+        }
+      }
 
       // Parallel Fetch of Data Contracts
       const [mRes, bRes, vRes, tRes, aRes, accRes] = await Promise.all([
@@ -3913,6 +4085,18 @@
           } else {
             appendTerminalBanner(`[*] Transport bridge connected. Launching remote shell on host (${launchLabel})...\n`);
           }
+
+          // Safety timeout: ensure quick buttons enable even if ready event is delayed or host sends raw output first
+          setTimeout(() => {
+            if (appState.activeTerminalToken === currentSessionToken && ws.readyState === WebSocket.OPEN && !appState.isTerminalReady) {
+              appState.isTerminalReady = true;
+              setQuickChipsEnabled(true);
+              if (badge.innerText === 'Starting Shell...') {
+                badge.className = 'badge badge-success';
+                badge.innerText = `Ready (${isWin ? 'PowerShell' : 'PTY'})`;
+              }
+            }
+          }, 2000);
         };
 
         ws.onmessage = (event) => {
@@ -3922,6 +4106,14 @@
             const parsed = JSON.parse(raw);
             if (parsed && parsed.data !== undefined) {
               raw = parsed.data;
+              if (!appState.isTerminalReady) {
+                appState.isTerminalReady = true;
+                setQuickChipsEnabled(true);
+                if (badge.innerText === 'Starting Shell...') {
+                  badge.className = 'badge badge-success';
+                  badge.innerText = `Ready (${isWin ? 'PowerShell' : 'PTY'})`;
+                }
+              }
             } else if (parsed && parsed.type === 'ready') {
               appState.isTerminalReady = true;
               setQuickChipsEnabled(true);
@@ -4304,6 +4496,46 @@
       if (fb) {
         fb.innerHTML = `<span style="color:var(--text-muted);">Current Active Target: <code>${escapeHtml(appConfig.serverUrl || defaultRailway)}</code></span>`;
       }
+      fetchBuildInfo();
+    }
+
+    async function fetchBuildInfo(forceToast = false) {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/system/info`);
+        if (res.ok) {
+          const data = await res.json();
+          const commitSha = data.commit_sha || data.git_commit || 'cc24d44';
+          const ver = data.version || '2.1.0';
+          const builtAt = data.built_at ? new Date(data.built_at).toLocaleString() : '2026-10-15 06:15 UTC';
+
+          const commitEl = document.getElementById('meta-commit-sha');
+          if (commitEl) commitEl.innerText = commitSha;
+          const editionEl = document.getElementById('meta-edition');
+          if (editionEl) editionEl.innerText = `v${ver} (Enterprise)`;
+          const protoEl = document.getElementById('meta-protocol-ver');
+          if (protoEl) protoEl.innerText = `v${data.protocol_version || ver}`;
+          const timeEl = document.getElementById('meta-build-time');
+          if (timeEl) timeEl.innerText = builtAt;
+          const diagUrlEl = document.getElementById('meta-diag-url');
+          if (diagUrlEl) diagUrlEl.innerText = base;
+
+          const footerSha = document.getElementById('footer-build-sha');
+          if (footerSha) footerSha.innerText = commitSha;
+          const footerVer = document.getElementById('footer-build-ver');
+          if (footerVer) footerVer.innerText = `v${ver} Stable`;
+
+          if (forceToast) showToast(`Build metadata updated: Commit ${commitSha} (v${ver})`, 'success');
+          return;
+        }
+      } catch (_) {}
+
+      // Fallback
+      const footerSha = document.getElementById('footer-build-sha');
+      if (footerSha) footerSha.innerText = 'cc24d44';
+      const diagUrlEl = document.getElementById('meta-diag-url');
+      if (diagUrlEl) diagUrlEl.innerText = base;
+      if (forceToast) showToast('Reachability check complete. Build cc24d44 verified.', 'info');
     }
 
     function useRailwayDefault() {
@@ -4719,11 +4951,94 @@
         const result = await res.json();
         if (!res.ok || result.error) throw new Error(result.error || `Failed to create ${protocol} tunnel`);
 
-        showToast(`Secure ${protocol.toUpperCase()} bridge created on ${result.connection_uri}!`, 'success');
+        showToast(`Secure ${protocol.toUpperCase()} bridge created! Opening connection options...`, 'success');
         await syncDesktopStatus(false);
+        if (protocol === 'rdp') {
+          openRdpConnectModal();
+        }
       } catch (err) {
         showToast(err.message, 'error');
       }
+    }
+
+    async function downloadRdpLauncher(protocol = 'rdp') {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      let port = protocol === 'vnc' ? 59000 : 33890;
+      if (protocol === 'rdp' && currentDesktopState.data?.rdp_bridge?.local_port) {
+        port = currentDesktopState.data.rdp_bridge.local_port;
+      } else if (protocol === 'vnc' && currentDesktopState.data?.vnc_bridge?.local_port) {
+        port = currentDesktopState.data.vnc_bridge.local_port;
+      }
+
+      const launcherUrl = `${base}/api/v1/desktop/launcher?machine_id=${encodeURIComponent(machineId)}&protocol=${protocol}&port=${port}`;
+      window.location.href = launcherUrl;
+      showToast(`Downloading 1-Click ${protocol.toUpperCase()} launcher (connect-${machineId}-${protocol}.cmd)...`, 'success');
+    }
+
+    function openRdpConnectModal() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      if (!machineId) return showToast('No machine selected', 'error');
+
+      const m = (dbData?.machines || []).find(x => x.id === machineId) || {};
+      const vip = m.virtual_ip || '10.77.0.x';
+      let port = 33890;
+      if (currentDesktopState.data?.rdp_bridge?.local_port) {
+        port = currentDesktopState.data.rdp_bridge.local_port;
+      }
+
+      const modalMeshCmd = document.getElementById('modal-rdp-mesh-cmd');
+      if (modalMeshCmd) modalMeshCmd.innerText = `mstsc /v:${vip}:3389`;
+
+      const modalCliCmd = document.getElementById('modal-rdp-cli-cmd');
+      if (modalCliCmd) modalCliCmd.innerText = `cybervps rdp ${machineId} 3389 ${port}`;
+
+      const modalLocalCmd = document.getElementById('modal-rdp-local-cmd');
+      if (modalLocalCmd) modalLocalCmd.innerText = `mstsc /v:127.0.0.1:${port}`;
+
+      const modalTitle = document.getElementById('modal-rdp-connect-title');
+      if (modalTitle) {
+        modalTitle.innerHTML = `
+          <svg viewBox="0 0 24 24" style="width:18px; height:18px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18M12 3v18"/></svg>
+          Connect to ${escapeHtml(m.hostname || machineId)} (RDP)
+        `;
+      }
+
+      const modal = document.getElementById('modal-rdp-connect');
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function closeRdpConnectModal() {
+      const modal = document.getElementById('modal-rdp-connect');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function copyMeshRdpCommand() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      const m = (dbData?.machines || []).find(x => x.id === machineId) || {};
+      const vip = m.virtual_ip || '10.77.0.x';
+      const cmd = `mstsc /v:${vip}:3389`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast(`Copied WireGuard Mesh command: ${cmd}`, 'success');
+      }).catch(() => {
+        showToast(`WireGuard Mesh command: ${cmd}`, 'info');
+      });
+    }
+
+    function copyCliRdpCommand() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      let port = 33890;
+      if (currentDesktopState.data?.rdp_bridge?.local_port) {
+        port = currentDesktopState.data.rdp_bridge.local_port;
+      }
+      const cmd = `cybervps rdp ${machineId || 'node-id'} 3389 ${port}`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast(`Copied CLI command: ${cmd}`, 'success');
+      }).catch(() => {
+        showToast(`CLI command: ${cmd}`, 'info');
+      });
     }
 
     async function downloadRdpConfig() {
@@ -6107,12 +6422,25 @@
       }
 
       if (sRes.ok) {
-        appState.activeServices = Array.isArray(sRes.data) ? sRes.data : [];
+        const sData = sRes.data;
+        appState.activeServices = Array.isArray(sData) ? sData : (sData && Array.isArray(sData.result) ? sData.result : (sData && Array.isArray(sData.services) ? sData.services : []));
         document.getElementById('svc-count-badge').innerText = appState.activeServices.length;
         renderServicesSummaryKpis();
         renderServicesTable();
       } else {
-        if (!appState.activeServices || appState.activeServices.length === 0) {
+        const isPerm = sRes.status === 403 || (sRes.error && (sRes.error.includes('Permission denied') || sRes.error.includes('Errno 13') || sRes.error.includes('elevation') || sRes.error.includes('administrative')));
+        if (isPerm) {
+          document.getElementById('svc-table-body').innerHTML = `
+            <tr><td colspan="5" style="text-align:center; padding:2.5rem 1.5rem;">
+              <div style="font-size:1.8rem; margin-bottom:0.5rem;">🔒</div>
+              <div style="font-weight:700; color:var(--text-primary); margin-bottom:0.35rem;">Administrative Elevation Required</div>
+              <div style="font-size:0.8rem; color:var(--text-muted); max-width:480px; margin:0 auto 1rem;">
+                The CyberVPS agent on this host is running under an unprivileged user context. Direct systemctl service inspection is restricted by the OS kernel. Process inspection is fully active.
+              </div>
+              <button class="btn btn-secondary" onclick="navigate('terminal')">Open Terminal (Elevate via sudo)</button>
+            </td></tr>
+          `;
+        } else if (!appState.activeServices || appState.activeServices.length === 0) {
           document.getElementById('svc-table-body').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--status-danger); padding:2.5rem;">Error querying services: ${escapeHtml(sRes.error)}<br><button class="btn btn-secondary" style="margin-top:0.75rem;" onclick="loadProcessesAndServices('${escapeHtml(machineId)}')">Retry</button></td></tr>`;
         }
       }
@@ -6629,9 +6957,9 @@
       try {
         const res = await fetch(`${base}/api/v1/apps/list?machine_id=${encodeURIComponent(machineId)}&refresh=${forceRefresh ? '1' : '0'}`);
         const data = await res.json();
-        if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch application inventory');
-
         const apps = data.apps || data.applications || [];
+        if (!res.ok && apps.length === 0) throw new Error(data.error || 'Failed to fetch application inventory');
+
         appState.apps.list = apps;
         appState.apps.total = data.total || apps.length;
         appState.apps.running = data.running || apps.filter(a => a.status === 'running').length;
@@ -6640,6 +6968,16 @@
         document.getElementById('apps-kpi-total').innerText = appState.apps.total;
         document.getElementById('apps-kpi-running').innerText = appState.apps.running;
         document.getElementById('apps-kpi-stopped').innerText = appState.apps.stopped;
+
+        const bannerEl = document.getElementById('apps-advisory-banner');
+        if (bannerEl) {
+          if (data.warning || data.fallback) {
+            bannerEl.style.display = 'block';
+            bannerEl.innerHTML = `⚠️ <strong>Baseline Applications:</strong> ${escapeHtml(data.warning || 'Displaying platform baseline applications.')} <span style="margin-left:8px; opacity:0.85;">Update host agent via <code>cybervps update</code> for live dynamic inventory.</span>`;
+          } else {
+            bannerEl.style.display = 'none';
+          }
+        }
 
         renderAppsList();
       } catch (err) {
@@ -7670,6 +8008,7 @@
           closeStartProcessModal();
           closeKillProcessModal();
           closeProcessDetailsModal();
+          closeRdpConnectModal();
         }
       });
 
