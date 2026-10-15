@@ -505,11 +505,20 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const selectedProfile = profile || 'privileged';
+        const machine = db.machines.get(machine_id);
+        const selectedProfile = profile || 'auto';
+        let resolvedProfile = selectedProfile;
+        if (selectedProfile === 'auto') {
+          const caps = machine?.capabilities || {};
+          const isElevated = !!(caps.can_run_privileged || caps.is_elevated || caps.is_root || caps.is_admin);
+          resolvedProfile = isElevated ? 'privileged' : 'standard';
+        }
+
         const termToken = 'term_tok_' + crypto.randomBytes(16).toString('hex');
         db.terminalAuthTokens.set(termToken, {
           machine_id,
           profile: selectedProfile,
+          resolved_profile: resolvedProfile,
           created_at: Date.now(),
           expires_at: Date.now() + 60000 // 60s single-use token
         });
@@ -520,6 +529,7 @@ const server = http.createServer(async (req, res) => {
           token: termToken,
           machine_id,
           profile: selectedProfile,
+          resolved_profile: resolvedProfile,
           expires_in: 60
         }));
       } catch (e) {
@@ -1293,11 +1303,11 @@ function verifyTerminalAuthorization(request, parsedUrl) {
     if (record.machine_id !== machineId) {
       return { authorized: false, error: 'Forbidden: Terminal token not authorized for this machine', status: 403 };
     }
-    const requestedProfile = parsedUrl.searchParams.get('profile') || 'privileged';
-    if (record.profile && record.profile !== 'any' && record.profile !== requestedProfile) {
+    const requestedProfile = parsedUrl.searchParams.get('profile') || (record.profile || 'auto');
+    if (record.profile && record.profile !== 'any' && record.profile !== 'auto' && record.profile !== requestedProfile && record.resolved_profile !== requestedProfile) {
       return { authorized: false, error: `Forbidden: Terminal token is restricted to profile '${record.profile}', cannot execute '${requestedProfile}'`, status: 403 };
     }
-    return { authorized: true, user: 'browser-authenticated', machineId, profile: record.profile };
+    return { authorized: true, user: 'browser-authenticated', machineId, profile: record.profile, resolved_profile: record.resolved_profile };
   }
 
   return { authorized: false, error: 'Unauthorized: Invalid or expired terminal token', status: 401 };
@@ -1384,9 +1394,9 @@ wssTerminal.on('connection', (ws, request) => {
 
   const sessionId = 'term_' + crypto.randomUUID().slice(0, 8);
   const shellPref = parsed.searchParams.get('shell') || null;
-  let profilePref = parsed.searchParams.get('profile') || null;
+  let profilePref = parsed.searchParams.get('profile') || 'auto';
 
-  if (auth.profile && auth.profile !== 'default') {
+  if (auth.profile && auth.profile !== 'default' && auth.profile !== 'any') {
     profilePref = auth.profile;
   }
 

@@ -1126,6 +1126,9 @@
               <select id="fm-machine-select" class="form-control" style="min-width:220px;" onchange="onFmMachineChange(this.value)">
                 <option value="">Select Target Machine...</option>
               </select>
+              <div id="fm-privilege-badge" class="badge badge-subtle" style="font-family:var(--font-mono); font-size:0.72rem; display:none;" title="Active privilege context for file operations">
+                AUTO · Standard User
+              </div>
               <div id="fm-sftp-pill" class="badge badge-subtle" style="font-family:var(--font-mono); font-size:0.72rem; cursor:pointer;" onclick="copySftpCommand()" title="Click to copy SFTP connection command">
                 SFTP: Ready (Port 22)
               </div>
@@ -1451,8 +1454,9 @@
                 <option value="">Select Target Machine...</option>
               </select>
               <select id="terminal-profile-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:145px; background:rgba(0,240,255,0.06); border-color:rgba(0,240,255,0.3); color:var(--accent-cyan); font-weight:600;" onchange="initTerminalSession(false)" title="Terminal Execution Profile">
-                <option value="privileged">⚡ Root / Admin</option>
+                <option value="auto" selected>⚡ Auto (Detect & Select)</option>
                 <option value="standard">👤 Standard User</option>
+                <option value="privileged">🔒 Administrator / Root</option>
               </select>
             </div>
             <div style="display:flex; gap:0.5rem; align-items:center;">
@@ -2841,7 +2845,7 @@
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       const wsProtocol = base.startsWith('https') ? 'wss:' : 'ws:';
       const wsHost = base.replace(/^https?:\/\//, '');
-      const profilePref = document.getElementById('terminal-profile-select')?.value || 'privileged';
+      const profilePref = document.getElementById('terminal-profile-select')?.value || 'auto';
 
       let singleUseToken = '';
       try {
@@ -2898,10 +2902,11 @@
           if (appState.activeTerminalToken !== currentSessionToken) return;
           badge.className = 'badge badge-warning';
           badge.innerText = 'Starting Shell...';
+          const launchLabel = profilePref === 'auto' ? 'Auto Privilege Detection' : profilePref;
           if (appState.termInstance) {
-            appState.termInstance.writeln(`\x1b[90m[*] Transport bridge connected. Launching remote shell on host (${profilePref})...\x1b[0m\r\n`);
+            appState.termInstance.writeln(`\x1b[90m[*] Transport bridge connected. Launching remote shell on host (${launchLabel})...\x1b[0m\r\n`);
           } else {
-            appendTerminalBanner(`[*] Transport bridge connected. Launching remote shell on host (${profilePref})...\n`);
+            appendTerminalBanner(`[*] Transport bridge connected. Launching remote shell on host (${launchLabel})...\n`);
           }
         };
 
@@ -2922,14 +2927,26 @@
               const profBadge = document.getElementById('terminal-profile-badge');
               if (profBadge) {
                 profBadge.style.display = 'inline-block';
+                const isAuto = parsed.requested_profile === 'auto' || profilePref === 'auto';
+                const prefix = isAuto ? '⚡ AUTO · ' : '';
                 if (parsed.is_elevated || parsed.profile === 'privileged') {
                   profBadge.className = 'badge badge-warning';
-                  profBadge.innerText = '⚡ Root / Admin';
+                  const titleLabel = isWin ? 'Administrator' : 'Root';
+                  profBadge.innerText = `${prefix}${titleLabel}`;
                   profBadge.title = `Elevated Execution Context (${parsed.user || 'admin'})`;
                 } else {
                   profBadge.className = 'badge badge-subtle';
-                  profBadge.innerText = `👤 ${parsed.user || 'Standard'}`;
+                  profBadge.innerText = `${prefix}Standard User`;
                   profBadge.title = `Standard User Context (${parsed.user || 'user'})`;
+                }
+              }
+
+              if (parsed.auto_note) {
+                const autoInfoMsg = `\x1b[36m[*] Auto Privilege Detection: ${parsed.auto_note}\x1b[0m\r\n`;
+                if (appState.termInstance) {
+                  appState.termInstance.writeln(autoInfoMsg);
+                } else {
+                  appendTerminalBanner(autoInfoMsg);
                 }
               }
 
@@ -3873,6 +3890,31 @@
       appState.machineFmPaths[machineId] = data.current_path;
       appState.currentFmItems = data.items || [];
       document.getElementById('fm-path-input').value = data.current_path;
+
+      const privBadge = document.getElementById('fm-privilege-badge');
+      if (privBadge) {
+        const priv = data.privilege || {};
+        const m = (appState.fleetData || []).find(x => x.id === machineId);
+        const caps = m?.capabilities || {};
+        const isElevated = priv.is_elevated !== undefined ? priv.is_elevated : (caps.is_elevated || caps.is_root || caps.is_admin);
+        const effUser = priv.effective_user || caps.effective_user || caps.user || m?.username || 'User';
+        const isSystem = priv.is_system || caps.is_system;
+
+        privBadge.style.display = 'inline-block';
+        if (isSystem) {
+          privBadge.className = 'badge badge-warning';
+          privBadge.innerText = `AUTO · SYSTEM (${effUser})`;
+          privBadge.title = `File Manager operating in NT AUTHORITY\\SYSTEM context (${effUser})`;
+        } else if (isElevated) {
+          privBadge.className = 'badge badge-warning';
+          privBadge.innerText = (data.os === 'Windows' || (m && m.os === 'Windows')) ? `AUTO · Administrator (${effUser})` : `AUTO · Root (${effUser})`;
+          privBadge.title = `File Manager operating with administrative elevation (${effUser})`;
+        } else {
+          privBadge.className = 'badge badge-subtle';
+          privBadge.innerText = `AUTO · Standard User (${effUser})`;
+          privBadge.title = `File Manager operating as standard user (${effUser})`;
+        }
+      }
 
       const drivesContainer = document.getElementById('fm-drives-container');
       if (drivesContainer) {

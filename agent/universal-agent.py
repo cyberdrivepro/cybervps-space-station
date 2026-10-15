@@ -816,24 +816,88 @@ class CyberVPSAgent:
         }
         return self.device_profile
 
-    def get_capabilities(self):
-        is_root = False
-        is_admin = False
+    def get_privilege_info(self):
         if platform.system() == "Windows":
+            is_elevated = False
+            is_system = False
+            user = os.environ.get("USERNAME", getattr(self, "username", "User") or "User")
+            domain = os.environ.get("USERDOMAIN", "")
             try:
                 import ctypes
                 is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
             except Exception:
                 is_admin = False
-            is_root = is_admin
-        else:
-            try:
-                is_root = (os.geteuid() == 0)
-                is_admin = is_root
-            except AttributeError:
-                is_root = False
-                is_admin = False
 
+            try:
+                import ctypes
+                from ctypes import wintypes
+                TOKEN_QUERY = 0x0008
+                TokenElevation = 20
+                h_token = wintypes.HANDLE()
+                h_proc = ctypes.windll.kernel32.GetCurrentProcess()
+                if ctypes.windll.advapi32.OpenProcessToken(h_proc, TOKEN_QUERY, ctypes.byref(h_token)):
+                    class TOKEN_ELEVATION(ctypes.Structure):
+                        _fields_ = [("TokenIsElevated", wintypes.DWORD)]
+                    elevation = TOKEN_ELEVATION()
+                    cb_size = wintypes.DWORD(ctypes.sizeof(TOKEN_ELEVATION))
+                    ret_size = wintypes.DWORD()
+                    if ctypes.windll.advapi32.GetTokenInformation(
+                        h_token, TokenElevation, ctypes.byref(elevation), cb_size, ctypes.byref(ret_size)
+                    ):
+                        is_elevated = bool(elevation.TokenIsElevated)
+                    ctypes.windll.kernel32.CloseHandle(h_token)
+                else:
+                    is_elevated = is_admin
+            except Exception:
+                is_elevated = is_admin
+
+            if user.upper() == "SYSTEM" or domain.upper() == "NT AUTHORITY" or "SYSTEM" in domain.upper():
+                is_system = True
+                is_elevated = True
+
+            priv_level = "system" if is_system else ("elevated" if is_elevated else "standard")
+            eff_user = "NT AUTHORITY\\SYSTEM" if is_system else user
+            fm_priv = "system" if is_system else ("administrator" if is_elevated else "standard")
+            return {
+                "effective_user": eff_user,
+                "is_elevated": is_elevated,
+                "is_system": is_system,
+                "is_root": is_elevated,
+                "is_admin": is_elevated,
+                "can_run_privileged": is_elevated,
+                "can_run_standard": True,
+                "privilege_level": priv_level,
+                "file_manager_privilege": fm_priv
+            }
+        else:
+            euid = os.geteuid() if hasattr(os, "geteuid") else 1000
+            egid = os.getegid() if hasattr(os, "getegid") else 1000
+            is_root = (euid == 0)
+            user = os.environ.get("USER")
+            if not user:
+                try:
+                    import pwd
+                    user = pwd.getpwuid(euid).pw_name
+                except Exception:
+                    user = "root" if is_root else "user"
+
+            priv_level = "root" if is_root else "standard"
+            return {
+                "effective_user": user,
+                "effective_uid": euid,
+                "effective_gid": egid,
+                "is_root": is_root,
+                "is_admin": is_root,
+                "is_elevated": is_root,
+                "is_system": False,
+                "can_run_privileged": is_root,
+                "can_run_standard": True,
+                "privilege_level": priv_level,
+                "file_manager_privilege": "root" if is_root else "standard"
+            }
+
+    def get_capabilities(self):
+        priv = self.get_privilege_info()
         has_systemd = os.path.exists("/run/systemd/system")
         writable_fs = False
         try:
@@ -849,11 +913,17 @@ class CyberVPSAgent:
         shell = "powershell.exe" if platform.system() == "Windows" else ("/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh")
 
         return {
-            "username": self.username,
-            "user": self.username,
-            "is_root": is_root,
-            "is_admin": is_admin,
-            "is_elevated": is_admin,
+            "username": priv["effective_user"],
+            "user": priv["effective_user"],
+            "effective_user": priv["effective_user"],
+            "privilege_level": priv["privilege_level"],
+            "is_root": priv["is_root"],
+            "is_admin": priv["is_admin"],
+            "is_elevated": priv["is_elevated"],
+            "is_system": priv.get("is_system", False),
+            "can_run_privileged": priv["can_run_privileged"],
+            "can_run_standard": priv["can_run_standard"],
+            "file_manager_privilege": priv["file_manager_privilege"],
             "has_systemd": has_systemd,
             "writable_fs": writable_fs,
             "pty_supported": pty_supported,
@@ -1264,11 +1334,18 @@ class CyberVPSAgent:
                 "drives": drives,
                 "disk": disk_info,
                 "os": platform.system(),
-                "sep": os.sep
+                "sep": os.sep,
+                "privilege": self.get_privilege_info()
             }
             self.send_agent_event({
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except PermissionError as pe:
+            priv = self.get_privilege_info()
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Permission Denied: User '{priv['effective_user']}' cannot access directory '{raw_path}'. ({pe})"}
             })
         except Exception as e:
             self.send_agent_event({
@@ -1322,6 +1399,12 @@ class CyberVPSAgent:
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": res}
             })
+        except PermissionError as pe:
+            priv = self.get_privilege_info()
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Permission Denied: User '{priv['effective_user']}' cannot read '{raw_path}'. ({pe})"}
+            })
         except Exception as e:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -1359,6 +1442,12 @@ class CyberVPSAgent:
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": res}
             })
+        except PermissionError as pe:
+            priv = self.get_privilege_info()
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Permission Denied: User '{priv['effective_user']}' cannot write to '{raw_path}'. ({pe})"}
+            })
         except Exception as e:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -1391,6 +1480,12 @@ class CyberVPSAgent:
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": res}
             })
+        except PermissionError as pe:
+            priv = self.get_privilege_info()
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Permission Denied: User '{priv['effective_user']}' cannot delete '{raw_path}'. ({pe})"}
+            })
         except Exception as e:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -1412,6 +1507,12 @@ class CyberVPSAgent:
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": res}
             })
+        except PermissionError as pe:
+            priv = self.get_privilege_info()
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Permission Denied: User '{priv['effective_user']}' cannot rename '{old_raw}'. ({pe})"}
+            })
         except Exception as e:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -1428,6 +1529,12 @@ class CyberVPSAgent:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except PermissionError as pe:
+            priv = self.get_privilege_info()
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Permission Denied: User '{priv['effective_user']}' cannot create directory '{raw_path}'. ({pe})"}
             })
         except Exception as e:
             self.send_agent_event({
@@ -2127,18 +2234,14 @@ class CyberVPSAgent:
     def start_terminal_session(self, session_id, cols=80, rows=24, shell=None, profile=None):
         cols = int(cols or 80)
         rows = int(rows or 24)
-        p_pref = (profile or "").lower().strip()
+        p_pref = (profile or "auto").lower().strip()
+        is_auto = (p_pref in ["auto", "detect", ""] or not p_pref)
 
         if platform.system() == "Windows":
-            is_elevated = False
-            try:
-                import ctypes
-                is_elevated = bool(ctypes.windll.shell32.IsUserAnAdmin())
-            except Exception:
-                is_elevated = False
-
-            current_user = os.environ.get("USERNAME", "User")
-            is_system = (current_user.upper() == "SYSTEM" or "SYSTEM" in os.environ.get("USERDOMAIN", "").upper())
+            priv_info = self.get_privilege_info()
+            is_elevated = priv_info["is_elevated"]
+            is_system = priv_info["is_system"]
+            current_user = priv_info["effective_user"]
 
             if p_pref in ["root", "privileged", "admin"]:
                 if not is_elevated:
@@ -2146,7 +2249,7 @@ class CyberVPSAgent:
                         "type": "TerminalOutput",
                         "payload": {
                             "session_id": session_id,
-                            "data": f"\r\n[!] Security Policy: Privileged Administrator profile requested, but agent is running as unprivileged user '{current_user}'. Elevation cannot be bypassed without host administrative privileges.\r\n"
+                            "data": f"\r\n[!] Security Policy: Privileged Administrator profile requested, but agent is running as unprivileged user '{current_user}'. Elevation cannot be bypassed without host administrative privileges. Switch to 'Standard User' or 'Auto' mode.\r\n"
                         }
                     })
                     self.send_agent_event({"type": "TerminalExit", "payload": {"session_id": session_id, "exit_code": 1}})
@@ -2154,17 +2257,33 @@ class CyberVPSAgent:
                 active_profile = "privileged"
                 active_user = f"Administrator ({current_user})" if not is_system else "NT AUTHORITY\\SYSTEM"
                 profile_desc = "Administrator (Elevated)" if not is_system else "NT AUTHORITY\\SYSTEM (Elevated)"
+                auto_note = ""
                 want_standard_token = False
+            elif is_auto:
+                if is_elevated:
+                    active_profile = "privileged"
+                    active_user = f"Administrator ({current_user})" if not is_system else "NT AUTHORITY\\SYSTEM"
+                    profile_desc = "⚡ AUTO · Administrator" if not is_system else "⚡ AUTO · SYSTEM"
+                    auto_note = f"Host has administrative privileges ({current_user}). Auto-selected elevated shell."
+                    want_standard_token = False
+                else:
+                    active_profile = "standard"
+                    active_user = current_user
+                    profile_desc = f"⚡ AUTO · Standard User ({current_user})"
+                    auto_note = f"Host is unprivileged ({current_user}). Auto-selected standard shell to prevent execution failure."
+                    want_standard_token = False
             else:
                 if is_elevated:
                     active_profile = "standard"
                     active_user = current_user
                     profile_desc = f"Standard User ({current_user})"
+                    auto_note = ""
                     want_standard_token = True
                 else:
                     active_profile = "standard"
                     active_user = current_user
                     profile_desc = f"Standard User ({current_user})"
+                    auto_note = ""
                     want_standard_token = False
 
             shell_choice = (shell or "powershell").lower().strip()
@@ -2194,6 +2313,9 @@ class CyberVPSAgent:
                         "cols": cols,
                         "rows": rows,
                         "profile": active_profile,
+                        "requested_profile": p_pref,
+                        "profile_desc": profile_desc,
+                        "auto_note": auto_note,
                         "user": active_user,
                         "is_elevated": is_elevated and (active_profile == "privileged")
                     }
@@ -2208,13 +2330,9 @@ class CyberVPSAgent:
             import pty, pwd
             master, slave = pty.openpty()
 
-            is_root = False
-            try:
-                is_root = (os.geteuid() == 0)
-            except Exception:
-                is_root = False
-
-            current_user = os.environ.get("USER", "root" if is_root else "user")
+            priv_info = self.get_privilege_info()
+            is_root = priv_info["is_root"]
+            current_user = priv_info["effective_user"]
             shell_cmd = shell or ("/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh")
 
             if p_pref in ["root", "privileged", "admin"]:
@@ -2225,7 +2343,7 @@ class CyberVPSAgent:
                         "type": "TerminalOutput",
                         "payload": {
                             "session_id": session_id,
-                            "data": f"\r\n[!] Security Policy: Root profile requested, but agent is running as unprivileged user '{current_user}' (UID: {os.geteuid()}). Refusing to launch non-root shell as root.\r\n"
+                            "data": f"\r\n[!] Security Policy: Root profile requested, but agent is running as unprivileged user '{current_user}' (UID: {os.geteuid()}). Refusing to launch non-root shell as root. Switch to 'Standard User' or 'Auto' mode.\r\n"
                         }
                     })
                     self.send_agent_event({"type": "TerminalExit", "payload": {"session_id": session_id, "exit_code": 1}})
@@ -2233,8 +2351,24 @@ class CyberVPSAgent:
                 active_profile = "privileged"
                 active_user = "root"
                 profile_desc = "Root (Elevated)"
+                auto_note = ""
                 preexec_fn = os.setsid
                 child_env = os.environ.copy()
+            elif is_auto:
+                if is_root:
+                    active_profile = "privileged"
+                    active_user = "root"
+                    profile_desc = "⚡ AUTO · Root"
+                    auto_note = "Host has root privileges. Auto-selected root shell."
+                    preexec_fn = os.setsid
+                    child_env = os.environ.copy()
+                else:
+                    active_profile = "standard"
+                    active_user = current_user
+                    profile_desc = f"⚡ AUTO · Standard User ({current_user})"
+                    auto_note = f"Host is unprivileged (UID: {os.geteuid()}). Auto-selected standard shell."
+                    preexec_fn = os.setsid
+                    child_env = os.environ.copy()
             else:
                 if is_root:
                     std_user = os.environ.get("SUDO_USER")
@@ -2301,6 +2435,7 @@ class CyberVPSAgent:
                     active_profile = "standard"
                     active_user = target_name
                     profile_desc = f"Standard User ({target_name})"
+                    auto_note = ""
                     child_env = os.environ.copy()
                     child_env["HOME"] = target_dir
                     child_env["USER"] = target_name
@@ -2310,6 +2445,7 @@ class CyberVPSAgent:
                     active_profile = "standard"
                     active_user = current_user
                     profile_desc = f"Standard User ({current_user})"
+                    auto_note = ""
                     preexec_fn = os.setsid
                     child_env = os.environ.copy()
 
@@ -2347,6 +2483,9 @@ class CyberVPSAgent:
                         "cols": cols,
                         "rows": rows,
                         "profile": active_profile,
+                        "requested_profile": p_pref,
+                        "profile_desc": profile_desc,
+                        "auto_note": auto_note,
                         "user": active_user,
                         "is_elevated": is_root and (active_profile == "privileged")
                     }

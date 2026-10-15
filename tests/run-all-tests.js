@@ -694,6 +694,26 @@ async function runTests() {
   assert(replayedTokenRejected, 'Replayed single-use token must be rejected with HTTP 401');
   console.log('  ✅ Replayed single-use token rejected (single-use consumption verified).');
 
+  // 21h. Intelligent Auto Privilege Detection: Default 'auto' profile token minting & connection
+  const autoTokenRes = await request(`${SERVER_URL}/api/v1/terminal/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, pairing_key: 'test_pair_key_123' })
+  });
+  assert.strictEqual(autoTokenRes.statusCode, 200, 'Terminal token endpoint must issue token with default auto profile');
+  const autoTokenData = JSON.parse(autoTokenRes.body);
+  assert(autoTokenData.token, 'Auto token must be issued');
+  assert.strictEqual(autoTokenData.profile, 'auto', 'Token profile must default to auto');
+  assert(autoTokenData.resolved_profile, 'Token response must include resolved_profile');
+
+  const autoClientWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=auto&token=${encodeURIComponent(autoTokenData.token)}`);
+  await new Promise((resolve, reject) => {
+    autoClientWs.on('open', resolve);
+    autoClientWs.on('error', reject);
+  });
+  autoClientWs.close();
+  console.log('  ✅ Auto Privilege Detection verified: token defaulted to auto and resolved without execution failure.');
+
   // TEST 15: Durable State Persistence Across Server Restarts
   console.log('\n[TEST 15] Testing Durable State Persistence Across Process Restarts...');
   // Wait for debounced write
