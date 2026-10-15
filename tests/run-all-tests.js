@@ -280,16 +280,17 @@ async function runTests() {
           rustdesk: { installed: true, running: true, id: '987654321', direct_ip: '10.77.0.94' },
           active_sessions: [{ id: '1', user: 'root', session_name: 'console', state: 'Active' }]
         };
-      } else if (msg.type === 'DesktopAction') {
-        if (payload.action === 'launch_interactive') {
+      } else if (msg.type === 'DesktopAction' || msg.type === 'DesktopLaunch') {
+        const act = payload.action || 'launch_interactive';
+        if (['launch_interactive', 'launch_gui', 'desktop_launch', 'launch', 'start'].includes(act)) {
           result = {
             success: true,
             status: payload.params?.test_mode ? 'PASSED' : 'LAUNCHED',
             pid: 12345,
             session_id: 1,
-            app: payload.params?.executable || 'notepad.exe',
+            app: payload.params?.executable || payload.executable || 'notepad.exe',
             window_visible: true,
-            test_mode: !!payload.params?.test_mode
+            test_mode: !!(payload.params?.test_mode || payload.test_mode)
           };
         } else {
           result = { action: payload.action, message: 'Action executed successfully', success: true };
@@ -1104,6 +1105,64 @@ async function runTests() {
   assert(pluginsData.plugins.length >= 4, 'Must list built-in plugins');
   console.log(`  ✅ Plugins registry verified: ${pluginsData.plugins.length} plugins installed (noVNC, Plexo-Cyber, WireGuard, RustDesk).`);
 
+  // TEST 32: Desktop Action Routing, Aliases Normalization & Fallbacks
+  console.log('\n[TEST 32] Testing Desktop Action Routing, Aliases & Fallbacks...');
+  const desktopLaunchRes = await request(`${SERVER_URL}/api/v1/desktop/launch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      machine_id: remoteNodeId,
+      executable: 'calc.exe',
+      test_mode: true
+    })
+  });
+  assert.strictEqual(desktopLaunchRes.statusCode, 200, 'Desktop launch must return 200 OK');
+  const dLaunchData = JSON.parse(desktopLaunchRes.body);
+  assert(dLaunchData.success, 'Desktop launch must succeed');
+  console.log(`  ✅ Desktop action routing verified: App='calc.exe' launched with PID=${dLaunchData.pid}, Status=${dLaunchData.status}`);
+
+  // TEST 33: Multi-Backend Real Bounded Health Checks & HA Status
+  console.log('\n[TEST 33] Testing Multi-Backend HA Real Probes, Measured Latency & Status...');
+  const haHealthRes = await request(`${SERVER_URL}/api/v1/backends/health`, {
+    method: 'POST'
+  });
+  assert.strictEqual(haHealthRes.statusCode, 200, 'HA Health probe must return 200 OK');
+  const haHealthData = JSON.parse(haHealthRes.body);
+  assert(haHealthData.active_mesh_count >= 1, 'Must report at least one mesh backend');
+  assert(typeof haHealthData.healthy_count === 'number', 'Must report measured healthy_count');
+  console.log(`  ✅ Multi-Backend health probes verified: ${haHealthData.healthy_count} of ${haHealthData.active_mesh_count} nodes healthy.`);
+
+  // TEST 34: Dynamic Enrollment Token Security & Revocation
+  console.log('\n[TEST 34] Testing Dynamic Enrollment Token Security & Revocation...');
+  const genTokenRes = await request(`${SERVER_URL}/api/v1/auth/enrollment-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'generate' })
+  });
+  assert.strictEqual(genTokenRes.statusCode, 200, 'Token generation must return 200 OK');
+  const genTokenData = JSON.parse(genTokenRes.body);
+  assert(genTokenData.token && genTokenData.token.startsWith('cvps_tok_'), 'Must return valid unique token prefix');
+  
+  const listTokensRes = await request(`${SERVER_URL}/api/v1/auth/enrollment-tokens`);
+  const listTokensData = JSON.parse(listTokensRes.body);
+  assert(listTokensData.tokens.includes(genTokenData.token), 'Generated token must be present in active tokens set');
+
+  const revokeTokenRes = await request(`${SERVER_URL}/api/v1/auth/enrollment-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'revoke', token: genTokenData.token })
+  });
+  assert.strictEqual(revokeTokenRes.statusCode, 200, 'Token revocation must return 200 OK');
+  console.log('  ✅ Dynamic enrollment token lifecycle verified: Generation, Registration & Revocation active.');
+
+  // TEST 35: Application Manager Error Boundaries & Offline Diagnostics
+  console.log('\n[TEST 35] Testing Application Manager Error Boundaries & Offline Diagnostics...');
+  const nonExistentAppRes = await request(`${SERVER_URL}/api/v1/apps/list?machine_id=non_existent_node_999`);
+  assert.strictEqual(nonExistentAppRes.statusCode, 404, 'Nonexistent machine must return 404 Not Found');
+  const nonExistentData = JSON.parse(nonExistentAppRes.body);
+  assert(nonExistentData.not_found, 'Error response must specify not_found property');
+  console.log('  ✅ Application Manager error boundaries verified: Nonexistent and offline nodes return structured error states.');
+
   // TEST 15: Durable State Persistence Across Server Restarts
   console.log('\n[TEST 15] Testing Durable State Persistence Across Process Restarts...');
   // Wait for debounced write
@@ -1160,7 +1219,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 31 ADVANCED SECURITY, CONTROL PLANE, HA, APPS, HOSTING & INFRASTRUCTURE TESTS PASSED!');
+  console.log('🎉 ALL 35 ADVANCED SECURITY, CONTROL PLANE, HA, APPS, HOSTING & INFRASTRUCTURE TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

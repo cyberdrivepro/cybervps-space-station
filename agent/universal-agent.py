@@ -94,7 +94,10 @@ if sys.version_info >= (3, 7):
     except Exception:
         pass
 
-PROTOCOL_VERSION = "1.0.0"
+PROTOCOL_VERSION = "2.1.0"
+AGENT_CAPABILITIES = [
+    "apps", "desktop_launch", "wireguard", "docker", "sandboxes", "rdp", "vnc", "terminal", "file_manager", "interactive_gui"
+]
 
 
 class ConPTYTerminal:
@@ -958,6 +961,14 @@ class CyberVPSAgent:
             "process_inspection": True,
             "file_manager": True,
             "service_control": True,
+            "apps": True,
+            "desktop_launch": True,
+            "rdp": True,
+            "vnc": True,
+            "interactive_gui": True,
+            "supported_desktop_actions": [
+                "launch_interactive", "launch_gui", "desktop_launch", "enable_rdp", "toggle_unattended", "terminate_session", "service_action"
+            ],
             "shell": shell
         }
 
@@ -2318,9 +2329,14 @@ class CyberVPSAgent:
 
     def handle_desktop_action(self, payload):
         req_id = payload.get("request_id")
-        action = (payload.get("action") or "").lower().strip()
-        protocol = (payload.get("protocol") or "").lower().strip()
         params = payload.get("params") or {}
+        # Support action specified directly or in params or nested under sub_action
+        action = (payload.get("action") or params.get("action") or payload.get("sub_action") or "").lower().strip()
+        protocol = (payload.get("protocol") or params.get("protocol") or "desktop").lower().strip()
+
+        # If action is missing but executable/app specified, infer launch_interactive
+        if not action and (payload.get("executable") or params.get("executable") or payload.get("app") or params.get("app")):
+            action = "launch_interactive"
 
         try:
             sys_os = platform.system()
@@ -2441,10 +2457,13 @@ class CyberVPSAgent:
                     "action": sub_action
                 })
 
-            elif action in ["launch_gui", "launch_interactive", "desktop_launch"]:
-                app_cmd = params.get("executable") or params.get("app") or params.get("cmd") or "notepad.exe"
+            elif action in [
+                "launch_gui", "launch_interactive", "desktop_launch", "launch",
+                "start", "start_app", "gui_launch", "interactive_launch", "run", "run_app", "desktop_app"
+            ]:
+                app_cmd = params.get("executable") or params.get("app") or params.get("cmd") or payload.get("executable") or payload.get("app") or "notepad.exe"
                 cfg = self.load_config() if hasattr(self, "load_config") else {}
-                test_mode = bool(params.get("test_mode", False) or cfg.get("gui_test_mode", False))
+                test_mode = bool(params.get("test_mode", False) or payload.get("test_mode", False) or cfg.get("gui_test_mode", False))
                 launch_res = self.launch_interactive_desktop_process(app_cmd, test_mode=test_mode)
                 self.send_agent_event({
                     "type": "AgentRpcResponse",
@@ -4220,7 +4239,7 @@ class CyberVPSAgent:
             self.handle_desktop_status(payload)
         elif c_type == "DesktopAction":
             self.handle_desktop_action(payload)
-        elif c_type == "DesktopLaunch":
+        elif c_type in ["DesktopLaunch", "launch_interactive", "launch_gui", "desktop_launch"]:
             self.handle_desktop_action({
                 "request_id": payload.get("request_id"),
                 "action": "launch_interactive",

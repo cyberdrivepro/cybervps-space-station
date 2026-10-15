@@ -1905,6 +1905,8 @@
             </div>
           </div>
         </div>
+      </div>
+
       <!-- VIEW: REMOTE APPLICATION MANAGER -->
       <div id="view-apps" class="view-panel" style="display:none;">
         <div class="card" style="margin-bottom:1.25rem;">
@@ -4235,7 +4237,33 @@
         details: vpn.ok ? `Virtual IP coordinator active (${vpn.data?.length || 0} peers registered)` : 'API unavailable'
       });
 
-      // Check 5: Client-Side Egress Check
+      // Check 5: Multi-Backend Mesh Status
+      const beRes = await apiRequest('/api/v1/backends');
+      results.push({
+        title: 'Multi-Backend HA Routing & Mesh',
+        status: beRes.ok ? (beRes.data?.ha_status === 'operational' ? 'pass' : 'warn') : 'warn',
+        details: beRes.ok ? `HA Status: ${(beRes.data.ha_status || 'operational').toUpperCase()} (${beRes.data.total_backends || 0} nodes registered, Active: ${beRes.data.active_backend || 'primary'})` : 'Local fallback backend only'
+      });
+
+      // Check 6: Enrolled Fleet Health
+      const fleetRes = await apiRequest('/api/v1/machines');
+      const mList = fleetRes.ok ? (fleetRes.data?.machines || fleetRes.data || []) : [];
+      const onlineM = mList.filter(m => m.status === 'online');
+      results.push({
+        title: 'Enrolled Host Fleet & Agents',
+        status: onlineM.length > 0 ? 'pass' : (mList.length > 0 ? 'warn' : 'pass'),
+        details: mList.length > 0 ? `${onlineM.length} of ${mList.length} machines reporting online via heartbeat` : 'No machines enrolled yet'
+      });
+
+      // Check 7: Admin RBAC & Security Session
+      const authRes = await apiRequest('/api/v1/auth/status');
+      results.push({
+        title: 'Admin Session & RBAC Gate',
+        status: authRes.ok ? 'pass' : 'warn',
+        details: authRes.ok ? (authRes.data?.authenticated ? `Authenticated as '${authRes.data.user?.username}' (Role: ${authRes.data.user?.role})` : 'Unauthenticated visitor session (Control endpoints require Admin login)') : 'Auth service check failed'
+      });
+
+      // Check 8: Client-Side Egress Check
       try {
         const gh = await fetch('https://github.com', { mode: 'no-cors' });
         results.push({
@@ -4265,6 +4293,19 @@
     }
 
     // 9. SETTINGS MANAGEMENT
+    function initSettingsView() {
+      const urlInput = document.getElementById('setting-server-url');
+      const keyInput = document.getElementById('setting-pairing-key');
+      const intervalInput = document.getElementById('setting-refresh-interval');
+      if (urlInput) urlInput.value = appConfig.serverUrl || defaultRailway;
+      if (keyInput) keyInput.value = appConfig.pairingKey || '';
+      if (intervalInput) intervalInput.value = String(appConfig.refreshInterval || 4000);
+      const fb = document.getElementById('settings-feedback');
+      if (fb) {
+        fb.innerHTML = `<span style="color:var(--text-muted);">Current Active Target: <code>${escapeHtml(appConfig.serverUrl || defaultRailway)}</code></span>`;
+      }
+    }
+
     function useRailwayDefault() {
       document.getElementById('setting-server-url').value = defaultRailway;
       saveSettings();
@@ -4880,7 +4921,13 @@
           resBox.style.display = 'block';
           resBox.style.background = 'rgba(239,68,68,0.12)';
           resBox.style.color = '#ef4444';
-          resBox.innerHTML = `❌ Error: ${escapeHtml(err.message)}`;
+          resBox.style.border = '1px solid rgba(239,68,68,0.3)';
+          const isActionMismatch = err.message && (err.message.includes('Unknown desktop action') || err.message.includes('launch_interactive'));
+          if (isActionMismatch) {
+            resBox.innerHTML = `❌ <strong>Host Agent Update Required:</strong><br><span style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px; display:inline-block;">The selected machine's CyberVPS agent is running an older revision without physical desktop launch capabilities.</span><br><div style="margin-top:8px; padding:6px 10px; background:rgba(0,0,0,0.3); border-radius:4px; font-family:var(--font-mono); font-size:0.75rem; color:var(--accent-cyan);">Run on host: cybervps restart</div>`;
+          } else {
+            resBox.innerHTML = `❌ Error: ${escapeHtml(err.message)}`;
+          }
         }
       }
     }
@@ -4975,6 +5022,18 @@
         const select = document.getElementById('services-machine-select');
         const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
         if (mId) loadProcessesAndServices(mId);
+      } else if (viewName === 'doctor') {
+        runDoctorDiagnostic();
+      } else if (viewName === 'logs') {
+        renderLogsTable();
+        apiRequest('/api/v1/audit/logs').then(res => {
+          if (res.ok) {
+            appState.audit = res.data || [];
+            renderLogsTable();
+          }
+        });
+      } else if (viewName === 'settings') {
+        initSettingsView();
       }
     }
 
@@ -6586,7 +6645,30 @@
       } catch (err) {
         showToast(err.message, 'error');
         if (grid) {
-          grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--status-danger);">⚠️ ${escapeHtml(err.message)}</div>`;
+          const isTimeout = err.message && (err.message.includes('timed out') || err.message.includes('15000ms'));
+          const isOffline = err.message && (err.message.includes('offline') || err.message.includes('503'));
+          grid.innerHTML = `
+            <div style="grid-column:1/-1; background:var(--bg-surface); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:2.5rem 1.5rem; text-align:center;">
+              <div style="font-size:2.2rem; margin-bottom:0.75rem;">${isOffline ? '🔌' : (isTimeout ? '⏱️' : '⚠️')}</div>
+              <div style="font-size:1.05rem; font-weight:700; color:var(--text-primary); margin-bottom:0.5rem;">
+                ${isOffline ? 'Target Host Machine is Offline' : (isTimeout ? 'Application Scan Timed Out (15s)' : 'Failed to Retrieve Applications')}
+              </div>
+              <div style="font-size:0.82rem; color:var(--text-muted); max-width:540px; margin:0 auto 1.5rem;">
+                ${escapeHtml(err.message)}
+                ${isTimeout ? '<br><span style="margin-top:0.4rem; display:inline-block; color:var(--text-secondary);">The host agent may be temporarily busy, paused, or running an older revision without Remote Application Manager support.</span>' : ''}
+              </div>
+              <div style="display:flex; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="syncAppsInventory(true)">🔄 Retry Application Scan</button>
+                <button class="btn btn-secondary" onclick="navigate('terminal')">💻 Open Terminal</button>
+                <button class="btn btn-secondary" onclick="navigate('machines')">🛰️ View Fleet Status</button>
+              </div>
+              ${isTimeout || isOffline ? `
+              <div style="margin-top:1.5rem; padding:0.75rem 1rem; background:rgba(0,0,0,0.25); border-radius:var(--radius-sm); font-size:0.75rem; color:var(--text-secondary); max-width:480px; margin-left:auto; margin-right:auto; text-align:left;">
+                <strong>Troubleshooting Tip:</strong> Ensure agent service is active on host:
+                <pre style="margin-top:0.35rem; font-family:var(--font-mono); color:var(--accent-cyan); overflow-x:auto;">cybervps status\ncybervps restart</pre>
+              </div>` : ''}
+            </div>
+          `;
         }
       }
     }
