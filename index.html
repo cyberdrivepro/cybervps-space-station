@@ -491,12 +491,13 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      height: 520px;
+      height: 560px;
       box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
       transition: height 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
     }
     .terminal-container.expanded {
-      height: 750px;
+      height: 82vh;
     }
     .terminal-header {
       background: #070c16;
@@ -509,6 +510,7 @@
       font-family: var(--font-mono);
       color: var(--text-muted);
       user-select: none;
+      flex-shrink: 0;
     }
     .terminal-quick-bar {
       display: flex;
@@ -519,6 +521,7 @@
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       overflow-x: auto;
       white-space: nowrap;
+      flex-shrink: 0;
     }
     .quick-chip-label {
       font-size: 0.72rem;
@@ -547,8 +550,37 @@
       color: #ffffff;
       transform: translateY(-1px);
     }
+    #terminal-screen-wrapper {
+      flex: 1 1 0%;
+      min-height: 0;
+      position: relative;
+      background: #080b11;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #terminal-xterm {
+      flex: 1 1 0%;
+      min-height: 0;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    #terminal-xterm .xterm {
+      height: 100%;
+      padding: 4px 8px;
+      box-sizing: border-box;
+    }
+    #terminal-xterm .xterm-viewport {
+      overflow-y: auto !important;
+    }
+    #terminal-xterm .xterm-screen {
+      margin-bottom: 0 !important;
+    }
     .terminal-body {
-      flex: 1;
+      flex: 1 1 0%;
+      min-height: 0;
       padding: 1rem 1.25rem;
       font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, Monaco, monospace;
       font-size: 0.84rem;
@@ -567,6 +599,7 @@
       border-top: 1px solid rgba(255, 255, 255, 0.08);
       padding: 0.6rem 1rem;
       background: #070c16;
+      flex-shrink: 0;
     }
     .terminal-input {
       flex: 1;
@@ -1510,8 +1543,8 @@
               </div>
 
               <!-- Streamed Terminal Screen -->
-              <div id="terminal-screen-wrapper" style="position:relative; width:100%; min-height:420px; background:#080b11; border-radius:6px; overflow:hidden;">
-                <div id="terminal-xterm" style="width:100%; height:450px; padding:6px 10px; box-sizing:border-box;"></div>
+              <div id="terminal-screen-wrapper">
+                <div id="terminal-xterm"></div>
                 <div id="terminal-output" class="terminal-body" style="display:none;" onclick="focusTerminalInput()">
                   <div style="color:var(--text-muted); padding:2rem; text-align:center;">
                     Select a machine or wait for auto-connect...
@@ -2682,6 +2715,31 @@
       setQuickChipsEnabled(appState.isTerminalReady || false);
     }
 
+    function fitTerminalSafely() {
+      if (!appState.termInstance) return;
+      const xtermWrapper = document.getElementById('terminal-xterm');
+      if (!xtermWrapper || xtermWrapper.offsetParent === null) return;
+
+      if (appState.fitAddon) {
+        try {
+          appState.fitAddon.fit();
+        } catch (_) {}
+      }
+
+      if (appState.activeTerminalWs && appState.activeTerminalWs.readyState === WebSocket.OPEN && appState.termInstance) {
+        try {
+          appState.activeTerminalWs.send(JSON.stringify({
+            type: 'resize',
+            cols: appState.termInstance.cols,
+            rows: appState.termInstance.rows
+          }));
+        } catch (_) {}
+      }
+      try {
+        appState.termInstance.scrollToBottom();
+      } catch (_) {}
+    }
+
     async function initTerminalSession(forceClear = false) {
       const select = document.getElementById('terminal-machine-select');
       if (!select) return;
@@ -2757,6 +2815,9 @@
             cursorStyle: 'block',
             fontSize: 13,
             fontFamily: 'Geist Mono, Consolas, monospace',
+            scrollback: 5000,
+            scrollOnUserInput: true,
+            smoothScrollDuration: 0,
             theme: {
               background: '#080b11',
               foreground: '#e2e8f0',
@@ -2795,6 +2856,7 @@
             if (appState.activeTerminalWs && appState.activeTerminalWs.readyState === WebSocket.OPEN) {
               appState.activeTerminalWs.send(JSON.stringify({ type: 'input', data }));
             }
+            try { term.scrollToBottom(); } catch (_) {}
           });
 
           term.onResize(size => {
@@ -2804,10 +2866,18 @@
           });
 
           window.addEventListener('resize', () => {
-            if (appState.fitAddon) {
-              try { appState.fitAddon.fit(); } catch (_) {}
-            }
+            fitTerminalSafely();
           });
+
+          if (typeof ResizeObserver !== 'undefined' && !appState.terminalResizeObserver) {
+            const screenWrap = document.getElementById('terminal-screen-wrapper');
+            if (screenWrap) {
+              appState.terminalResizeObserver = new ResizeObserver(() => {
+                requestAnimationFrame(fitTerminalSafely);
+              });
+              appState.terminalResizeObserver.observe(screenWrap);
+            }
+          }
         }
 
         if (forceClear && appState.termInstance) {
@@ -2816,11 +2886,10 @@
         }
 
         setTimeout(() => {
-          if (appState.fitAddon) {
-            try { appState.fitAddon.fit(); } catch (_) {}
-          }
+          fitTerminalSafely();
           if (appState.termInstance) {
             appState.termInstance.focus();
+            appState.termInstance.scrollToBottom();
           }
         }, 50);
 
@@ -2836,6 +2905,9 @@
         }
       }
 
+      if (useXterm && appState.termInstance) {
+        fitTerminalSafely();
+      }
       const cols = appState.termInstance ? appState.termInstance.cols : 80;
       const rows = appState.termInstance ? appState.termInstance.rows : 24;
 
@@ -2902,9 +2974,11 @@
           if (appState.activeTerminalToken !== currentSessionToken) return;
           badge.className = 'badge badge-warning';
           badge.innerText = 'Starting Shell...';
+          fitTerminalSafely();
           const launchLabel = profilePref === 'auto' ? 'Auto Privilege Detection' : profilePref;
           if (appState.termInstance) {
             appState.termInstance.writeln(`\x1b[90m[*] Transport bridge connected. Launching remote shell on host (${launchLabel})...\x1b[0m\r\n`);
+            appState.termInstance.scrollToBottom();
           } else {
             appendTerminalBanner(`[*] Transport bridge connected. Launching remote shell on host (${launchLabel})...\n`);
           }
@@ -2953,7 +3027,9 @@
               const readyMsg = `\x1b[32m[+] Interactive shell session established [${backendDisplay} | User: ${parsed.user || 'default'}${parsed.pid ? ` | PID: ${parsed.pid}` : ''}]. Ready for input.\x1b[0m\r\n\r\n`;
               if (appState.termInstance) {
                 appState.termInstance.writeln(readyMsg);
+                fitTerminalSafely();
                 appState.termInstance.focus();
+                appState.termInstance.scrollToBottom();
               } else {
                 appendTerminalBanner(readyMsg);
               }
@@ -2974,6 +3050,7 @@
               const exitMsg = `\r\n\x1b[33m[-] Remote shell process exited (code: ${exitCode})\x1b[0m\r\n`;
               if (appState.termInstance) {
                 appState.termInstance.writeln(exitMsg);
+                appState.termInstance.scrollToBottom();
               } else {
                 appendTerminalBanner(exitMsg);
               }
@@ -2989,6 +3066,7 @@
 
           if (appState.termInstance) {
             appState.termInstance.write(raw);
+            appState.termInstance.scrollToBottom();
           } else {
             appendTerminalRaw(raw);
           }
@@ -3119,9 +3197,11 @@
     function clearTerminalScreen() {
       if (appState.termInstance) {
         appState.termInstance.clear();
+        appState.termInstance.scrollToBottom();
       }
       const output = document.getElementById('terminal-output');
       if (output) output.innerHTML = '';
+      fitTerminalSafely();
       showToast('Terminal screen cleared', 'info');
     }
 
@@ -3158,18 +3238,10 @@
     function toggleTerminalFullscreen() {
       const container = document.querySelector('.terminal-container');
       const btn = document.getElementById('btn-terminal-fullscreen');
-      const xtermEl = document.getElementById('terminal-xterm');
       if (!container) return;
       const isExpanded = container.classList.toggle('expanded');
       if (btn) btn.innerHTML = isExpanded ? '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M4 14h6v6m10-10h-6V4m0 6 7-7M3 21l7-7"/></svg>Collapse' : '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>Maximize';
-      if (xtermEl) {
-        xtermEl.style.height = isExpanded ? 'calc(100vh - 220px)' : '450px';
-      }
-      if (appState.fitAddon) {
-        setTimeout(() => {
-          try { appState.fitAddon.fit(); } catch (_) {}
-        }, 80);
-      }
+      setTimeout(fitTerminalSafely, 120);
       const output = document.getElementById('terminal-output');
       if (output) output.scrollTop = output.scrollHeight;
     }
@@ -3388,6 +3460,7 @@
       // Auto-connect terminal if navigating to terminal view
       if (viewName === 'terminal') {
         setTimeout(() => {
+          fitTerminalSafely();
           const select = document.getElementById('terminal-machine-select');
           if (select) {
             if (!select.value) {
