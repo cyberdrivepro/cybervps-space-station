@@ -429,7 +429,14 @@ function verifyAdminAuthorization(req) {
   // 3. Custom headers: X-Admin-Token, X-Session-Token, X-CVPS-Pairing-Key, X-Pairing-Key
   const customToken = req.headers['x-admin-token'] || req.headers['x-session-token'] || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
 
-  const candidateToken = bearerToken || cookieToken || customToken;
+  // 4. Query parameters: ?pairing_key=... or ?pair=... or ?token=...
+  let queryToken = '';
+  try {
+    const qUrl = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
+    queryToken = qUrl.searchParams.get('pairing_key') || qUrl.searchParams.get('pair') || qUrl.searchParams.get('token') || '';
+  } catch (_) {}
+
+  const candidateToken = bearerToken || cookieToken || customToken || queryToken;
 
   // Validate candidate token if provided
   if (candidateToken) {

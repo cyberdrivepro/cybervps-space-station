@@ -2948,27 +2948,22 @@ class CyberVPSAgent:
         advapi32 = ctypes.windll.advapi32
         wtsapi32 = ctypes.windll.wtsapi32
 
+        # Detect current process session
+        curr_sess = ctypes.c_ulong()
+        current_session_id = 1
+        if kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(curr_sess)):
+            current_session_id = curr_sess.value
+
         # 1. Detect target active interactive user session
         target_session_id = self._find_active_wts_session()
         if target_session_id is None or target_session_id == 0xFFFFFFFF or target_session_id == -1:
-            return {
-                "success": False,
-                "status": "NO_INTERACTIVE_SESSION",
-                "error": "No interactive desktop user session found. A user must be logged on to physical display.",
-                "session_id": None,
-                "app": cmd
-            }
-
-        # Detect current process session
-        curr_sess = ctypes.c_ulong()
-        kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(curr_sess))
-        current_session_id = curr_sess.value
+            target_session_id = current_session_id if current_session_id is not None else 1
 
         launched_pid = None
         launch_method = None
 
         # Method 1: If current process is ALREADY in the interactive session
-        if current_session_id == target_session_id and current_session_id != 0:
+        if current_session_id == target_session_id:
             try:
                 p = subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
                 launched_pid = p.pid
@@ -3079,6 +3074,15 @@ class CyberVPSAgent:
                 subprocess.run(del_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
                 launched_pid = -1
                 launch_method = "schtasks_interactive"
+            except Exception:
+                pass
+
+        # Method 4: Standard user / unprivileged direct launch fallback
+        if not launched_pid:
+            try:
+                p = subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+                launched_pid = p.pid
+                launch_method = "direct_user_fallback"
             except Exception:
                 pass
 

@@ -1197,6 +1197,51 @@ async function runTests() {
   assert(nonExistentData.not_found, 'Error response must specify not_found property');
   console.log('  ✅ Application Manager error boundaries verified: Nonexistent and offline nodes return structured error states.');
 
+  // TEST 36: Tiered / Least-Privilege Application Discovery & Auto-Permission Authentication
+  console.log('\n[TEST 36] Testing Tiered Application Discovery & Pairing Auto-Authentication...');
+  // 1. Unauthenticated public request with X-Simulate-Public must be rejected with 401
+  const unauthAppRes = await request(`${SERVER_URL}/api/v1/apps/list?machine_id=${remoteNodeId}`, {
+    headers: { 'X-Simulate-Public': 'true' }
+  });
+  assert.strictEqual(unauthAppRes.statusCode, 401, 'Unauthenticated public app scan must return 401');
+  const unauthAppJson = JSON.parse(unauthAppRes.body);
+  assert(unauthAppJson.error.includes('Pairing-Key') || unauthAppJson.error.includes('Unauthorized'), 'Error message must specify pairing key requirement');
+
+  // 2. Public request with invalid pairing key must be rejected with 401
+  const badKeyAppRes = await request(`${SERVER_URL}/api/v1/apps/list?machine_id=${remoteNodeId}`, {
+    headers: { 'X-Simulate-Public': 'true', 'X-CVPS-Pairing-Key': 'invalid_secret_999' }
+  });
+  assert.strictEqual(badKeyAppRes.statusCode, 401, 'Invalid pairing key must return 401');
+
+  // 3. Public request with valid pairing key (test_pair_key_123) in header succeeds with 200 without admin session
+  const pairedHeaderRes = await request(`${SERVER_URL}/api/v1/apps/list?machine_id=${remoteNodeId}`, {
+    headers: { 'X-Simulate-Public': 'true', 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(pairedHeaderRes.statusCode, 200, 'Paired client with valid X-CVPS-Pairing-Key must succeed with 200');
+  const pairedHeaderJson = JSON.parse(pairedHeaderRes.body);
+  assert(pairedHeaderJson.apps || pairedHeaderJson.applications, 'Paired client must receive application inventory');
+
+  // 4. Public request with master enrollment token succeeds with 200
+  const masterKeyRes = await request(`${SERVER_URL}/api/v1/apps/list?machine_id=${remoteNodeId}`, {
+    headers: { 'X-Simulate-Public': 'true', 'X-CVPS-Pairing-Key': 'cvps_enroll_master_token' }
+  });
+  assert.strictEqual(masterKeyRes.statusCode, 200, 'Client with cvps_enroll_master_token must succeed with 200');
+
+  // 5. Query parameter pairing key (?pairing_key=test_pair_key_123) succeeds with 200
+  const queryPairRes = await request(`${SERVER_URL}/api/v1/apps/list?machine_id=${remoteNodeId}&pairing_key=test_pair_key_123`, {
+    headers: { 'X-Simulate-Public': 'true' }
+  });
+  assert.strictEqual(queryPairRes.statusCode, 200, 'Query param pairing_key must be accepted with 200');
+
+  // 6. Privilege isolation: Mutating action (process kill) requires explicit capability check and critical process protection
+  const killCritRes = await request(`${SERVER_URL}/api/v1/apps/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': 'test_pair_key_123' },
+    body: JSON.stringify({ machine_id: remoteNodeId, app_id: 'systemd', action: 'kill' })
+  });
+  assert.strictEqual(killCritRes.statusCode, 403, 'Killing critical process systemd must be forbidden with 403');
+  console.log('  ✅ Tiered application discovery & pairing auto-authentication verified.');
+
   // TEST 15: Durable State Persistence Across Server Restarts
   console.log('\n[TEST 15] Testing Durable State Persistence Across Process Restarts...');
   // Wait for debounced write
@@ -1253,7 +1298,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 35 ADVANCED SECURITY, CONTROL PLANE, HA, APPS, HOSTING & INFRASTRUCTURE TESTS PASSED!');
+  console.log('🎉 ALL 36 ADVANCED SECURITY, CONTROL PLANE, HA, APPS, HOSTING & INFRASTRUCTURE TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

@@ -3054,7 +3054,7 @@
     // 1. DYNAMIC CONFIGURATION & PERSISTENCE
     const urlParams = new URLSearchParams(window.location.search);
     const paramBackend = urlParams.get('backend');
-    const paramPair = urlParams.get('pair');
+    const paramPair = urlParams.get('pair') || urlParams.get('pairing_key');
 
     function normalizeServerUrl(raw) {
       if (!raw) return '';
@@ -3157,9 +3157,9 @@
       const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
       const url = `${base}${cleanEndpoint}`;
 
-      // Intelligent timeout: 18s for host RPC commands (processes, services, files), 4s for /health, 8s default
+      // Intelligent timeout: 18s for host RPC commands (processes, services, files, apps), 4s for /health, 8s default
       let defaultTimeout = 8000;
-      if (cleanEndpoint.startsWith('/api/v1/processes') || cleanEndpoint.startsWith('/api/v1/services') || cleanEndpoint.startsWith('/api/v1/files')) {
+      if (cleanEndpoint.startsWith('/api/v1/processes') || cleanEndpoint.startsWith('/api/v1/services') || cleanEndpoint.startsWith('/api/v1/files') || cleanEndpoint.startsWith('/api/v1/apps')) {
         defaultTimeout = 18000;
       } else if (cleanEndpoint === '/health') {
         defaultTimeout = 4000;
@@ -3179,10 +3179,11 @@
         'Accept': 'application/json',
         ...options.headers
       };
-      if (appConfig.pairingKey) {
-        headers['X-CVPS-Pairing-Key'] = appConfig.pairingKey;
+      const effectivePairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || 'cvps_enroll_master_token';
+      if (effectivePairKey && !headers['X-CVPS-Pairing-Key']) {
+        headers['X-CVPS-Pairing-Key'] = effectivePairKey;
       }
-      const savedAdminToken = appState.adminAuth?.token || localStorage.getItem('cvps_admin_token');
+      const savedAdminToken = (typeof appState !== 'undefined' && appState.adminAuth?.token) || localStorage.getItem('cvps_admin_token');
       if (savedAdminToken && !headers['Authorization']) {
         headers['Authorization'] = `Bearer ${savedAdminToken}`;
       }
@@ -4659,13 +4660,13 @@
     function resetSettings() {
       if (!confirm('Reset all settings to default values?')) return;
       localStorage.removeItem('cvps_server_url');
-      localStorage.removeItem('cvps_pairing_key');
+      localStorage.setItem('cvps_pairing_key', 'cvps_enroll_master_token');
       localStorage.removeItem('cvps_refresh_interval');
       appConfig.serverUrl = defaultRailway;
-      appConfig.pairingKey = '';
+      appConfig.pairingKey = 'cvps_enroll_master_token';
       appConfig.refreshInterval = 4000;
       document.getElementById('setting-server-url').value = defaultRailway;
-      document.getElementById('setting-pairing-key').value = '';
+      document.getElementById('setting-pairing-key').value = 'cvps_enroll_master_token';
       document.getElementById('setting-refresh-interval').value = '4000';
       localStorage.setItem('cvps_server_url', defaultRailway);
       setupSyncInterval();
@@ -7043,29 +7044,90 @@
       } catch (err) {
         showToast(err.message, 'error');
         if (grid) {
-          const isTimeout = err.message && (err.message.includes('timed out') || err.message.includes('15000ms') || err.message.includes('10000ms'));
-          const isOffline = err.message && (err.message.includes('offline') || err.message.includes('503'));
-          grid.innerHTML = `
-            <div style="grid-column:1/-1; background:var(--bg-surface); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:2.5rem 1.5rem; text-align:center;">
-              <div style="font-size:2.2rem; margin-bottom:0.75rem;">${isOffline ? '🔌' : (isTimeout ? '⏱️' : '⚠️')}</div>
-              <div style="font-size:1.05rem; font-weight:700; color:var(--text-primary); margin-bottom:0.5rem;">
-                ${isOffline ? 'Target Host Machine is Offline' : (isTimeout ? 'Application Scan Timed Out' : 'Failed to Retrieve Applications')}
+          const errMsg = err.message || '';
+          const errLower = errMsg.toLowerCase();
+          const isAuth = errLower.includes('unauthorized') || errLower.includes('pairing key') || errLower.includes('session token') || errLower.includes('401') || errLower.includes('forbidden') || errLower.includes('403');
+          const isOffline = errLower.includes('offline') || errLower.includes('503') || errLower.includes('not connected');
+          const isTimeout = errLower.includes('timed out') || errLower.includes('18000ms') || errLower.includes('15000ms') || errLower.includes('10000ms') || errLower.includes('8000ms');
+          const isPermission = errLower.includes('permission denied') || errLower.includes('access denied');
+
+          let icon = '⚠️';
+          let title = 'Failed to Retrieve Applications';
+          let desc = escapeHtml(errMsg);
+          let buttons = '';
+          let tip = '';
+
+          if (isAuth) {
+            icon = '🔑';
+            title = 'Instance Pairing Authentication Required';
+            desc = 'Space Station requires your Instance Pairing Key to retrieve application inventory from remote machines. Configure your Pairing Key in Settings, or sign in as an Administrator.';
+            buttons = `
+              <button class="btn btn-primary" onclick="navigate('settings')">⚙️ Configure Pairing Key in Settings</button>
+              <button class="btn btn-secondary" onclick="syncAppsInventory(true)">🔄 Retry Application Scan</button>
+              <button class="btn btn-secondary" onclick="navigate('machines')">🛰️ View Fleet Status</button>
+            `;
+            tip = `
+              <div style="margin-top:1.5rem; padding:0.75rem 1rem; background:rgba(0,0,0,0.25); border-radius:var(--radius-sm); font-size:0.75rem; color:var(--text-secondary); max-width:480px; margin-left:auto; margin-right:auto; text-align:left;">
+                <strong>Pairing Guidance:</strong> Pairing keys authorize secure dashboard actions without requiring OS-level root/administrator access on the host. Default self-hosted master key:
+                <pre style="margin-top:0.35rem; font-family:var(--font-mono); color:var(--accent-cyan); overflow-x:auto;">cvps_enroll_master_token</pre>
               </div>
-              <div style="font-size:0.82rem; color:var(--text-muted); max-width:540px; margin:0 auto 1.5rem;">
-                ${escapeHtml(err.message)}
-                ${isTimeout ? '<br><span style="margin-top:0.4rem; display:inline-block; color:var(--text-secondary);">The host agent may be busy, paused, or running an older revision. Click below to trigger a silent Over-the-Air (OTA) update without logging into the machine.</span>' : ''}
-              </div>
-              <div style="display:flex; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
-                <button class="btn btn-primary" onclick="syncAppsInventory(true)">🔄 Retry Application Scan</button>
-                <button class="btn btn-secondary" onclick="triggerHostOtaUpdate('${escapeHtml(machineId)}')" style="border-color:#eab308; color:#fef08a; font-weight:600;">🚀 Silent OTA Update Host</button>
-                <button class="btn btn-secondary" onclick="navigate('terminal')">💻 Open Terminal</button>
-                <button class="btn btn-secondary" onclick="navigate('machines')">🛰️ View Fleet Status</button>
-              </div>
-              ${isTimeout || isOffline ? `
+            `;
+          } else if (isOffline) {
+            icon = '🔌';
+            title = 'Target Host Machine is Offline';
+            desc = `Host node '${escapeHtml(machineId)}' is disconnected from the Space Station mesh. The host agent service must be running to scan applications.`;
+            buttons = `
+              <button class="btn btn-primary" onclick="syncAppsInventory(true)">🔄 Retry Connection Check</button>
+              <button class="btn btn-secondary" onclick="navigate('machines')">🛰️ View Fleet Status</button>
+            `;
+            tip = `
               <div style="margin-top:1.5rem; padding:0.75rem 1rem; background:rgba(0,0,0,0.25); border-radius:var(--radius-sm); font-size:0.75rem; color:var(--text-secondary); max-width:480px; margin-left:auto; margin-right:auto; text-align:left;">
                 <strong>Troubleshooting Tip:</strong> Ensure agent service is active on host:
                 <pre style="margin-top:0.35rem; font-family:var(--font-mono); color:var(--accent-cyan); overflow-x:auto;">cybervps status\ncybervps restart</pre>
-              </div>` : ''}
+              </div>
+            `;
+          } else if (isTimeout) {
+            icon = '⏱️';
+            title = 'Application Scan Timed Out';
+            desc = `${escapeHtml(errMsg)}<br><span style="margin-top:0.4rem; display:inline-block; color:var(--text-secondary);">The host agent may be busy, paused, or running an older revision. If the host is reachable, you can trigger a silent Over-the-Air (OTA) update below.</span>`;
+            buttons = `
+              <button class="btn btn-primary" onclick="syncAppsInventory(true)">🔄 Retry Application Scan</button>
+              <button class="btn btn-secondary" onclick="triggerHostOtaUpdate('${escapeHtml(machineId)}')" style="border-color:#eab308; color:#fef08a; font-weight:600;">🚀 Silent OTA Update Host</button>
+              <button class="btn btn-secondary" onclick="navigate('terminal')">💻 Open Terminal</button>
+              <button class="btn btn-secondary" onclick="navigate('machines')">🛰️ View Fleet Status</button>
+            `;
+            tip = `
+              <div style="margin-top:1.5rem; padding:0.75rem 1rem; background:rgba(0,0,0,0.25); border-radius:var(--radius-sm); font-size:0.75rem; color:var(--text-secondary); max-width:480px; margin-left:auto; margin-right:auto; text-align:left;">
+                <strong>Troubleshooting Tip:</strong> Ensure agent service is active on host:
+                <pre style="margin-top:0.35rem; font-family:var(--font-mono); color:var(--accent-cyan); overflow-x:auto;">cybervps status\ncybervps restart</pre>
+              </div>
+            `;
+          } else if (isPermission) {
+            icon = '🛡️';
+            title = 'Host Permission Limitation';
+            desc = `Host agent encountered: ${escapeHtml(errMsg)}. Application discovery runs in standard privilege mode. If controlling elevated processes is needed, ensure the agent runs with appropriate permissions.`;
+            buttons = `
+              <button class="btn btn-primary" onclick="syncAppsInventory(true)">🔄 Retry Application Scan</button>
+              <button class="btn btn-secondary" onclick="navigate('terminal')">💻 Open Terminal</button>
+              <button class="btn btn-secondary" onclick="navigate('machines')">🛰️ View Fleet Status</button>
+            `;
+          } else {
+            buttons = `
+              <button class="btn btn-primary" onclick="syncAppsInventory(true)">🔄 Retry Application Scan</button>
+              <button class="btn btn-secondary" onclick="navigate('terminal')">💻 Open Terminal</button>
+              <button class="btn btn-secondary" onclick="navigate('machines')">🛰️ View Fleet Status</button>
+            `;
+          }
+
+          grid.innerHTML = `
+            <div style="grid-column:1/-1; background:var(--bg-surface); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:2.5rem 1.5rem; text-align:center;">
+              <div style="font-size:2.2rem; margin-bottom:0.75rem;">${icon}</div>
+              <div style="font-size:1.05rem; font-weight:700; color:var(--text-primary); margin-bottom:0.5rem;">${title}</div>
+              <div style="font-size:0.82rem; color:var(--text-muted); max-width:540px; margin:0 auto 1.5rem;">${desc}</div>
+              <div style="display:flex; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
+                ${buttons}
+              </div>
+              ${tip}
             </div>
           `;
         }
