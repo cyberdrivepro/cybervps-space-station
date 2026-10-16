@@ -583,6 +583,7 @@ class CyberVPSAgent:
         self.username = self._detect_local_username()
         self.active_terminals = {}
         self.active_tunnel_streams = {}
+        self.active_app_streams = {}
         self.lock = threading.Lock()
         self.uptime_start = time.time()
         self._prev_win_times = None
@@ -3833,6 +3834,515 @@ class CyberVPSAgent:
             })
 
     # =========================================================================
+    # LIVE APPLICATION VIEWER & BACKGROUND WINDOW CAPTURE ENGINE
+    # =========================================================================
+    def _get_process_windows(self, target_pid=None):
+        windows = []
+        target_pids = set()
+        if target_pid is not None:
+            if isinstance(target_pid, (list, tuple, set)):
+                for p in target_pid:
+                    try:
+                        if p and int(p) > 0: target_pids.add(int(p))
+                    except Exception: pass
+            else:
+                try:
+                    if int(target_pid) > 0: target_pids.add(int(target_pid))
+                except Exception: pass
+
+        sys_os = platform.system()
+        if sys_os == "Windows":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                user32 = ctypes.windll.user32
+
+                hWs = user32.OpenWindowStationW("winsta0", False, 0x37F)
+                if hWs:
+                    user32.SetProcessWindowStation(hWs)
+                hDesk = user32.OpenDesktopW("default", 0, False, 0x1FF)
+
+                DESKENUM = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+                class RECT(ctypes.Structure):
+                    _fields_ = [
+                        ('left', wintypes.LONG), ('top', wintypes.LONG),
+                        ('right', wintypes.LONG), ('bottom', wintypes.LONG)
+                    ]
+
+                def cb(hwnd, lp):
+                    try:
+                        if user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
+                            w_pid = wintypes.DWORD()
+                            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
+                            if not target_pids or w_pid.value in target_pids:
+                                length = user32.GetWindowTextLengthW(hwnd)
+                                title = ""
+                                if length > 0:
+                                    buf = ctypes.create_unicode_buffer(length + 1)
+                                    user32.GetWindowTextW(hwnd, buf, length + 1)
+                                    title = buf.value.strip()
+
+                                cls_buf = ctypes.create_unicode_buffer(256)
+                                user32.GetClassNameW(hwnd, cls_buf, 256)
+                                cls_name = cls_buf.value
+
+                                ignored_classes = [
+                                    "MSCTFIME UI", "IME", "Default IME",
+                                    "Internet Explorer_Hidden", "WorkerW"
+                                ]
+                                if cls_name in ignored_classes and not title:
+                                    return True
+
+                                r = RECT()
+                                user32.GetWindowRect(hwnd, ctypes.byref(r))
+                                w = max(0, r.right - r.left)
+                                h = max(0, r.bottom - r.top)
+                                is_min = bool(user32.IsIconic(hwnd))
+
+                                if (w > 20 and h > 20) or is_min or title:
+                                    windows.append({
+                                        "hwnd": int(hwnd),
+                                        "pid": int(w_pid.value),
+                                        "title": title or f"Window (PID {w_pid.value})",
+                                        "class_name": cls_name,
+                                        "width": w,
+                                        "height": h,
+                                        "is_minimized": is_min,
+                                        "is_visible": True
+                                    })
+                    except Exception:
+                        pass
+                    return True
+
+                if hDesk:
+                    user32.EnumDesktopWindows(hDesk, DESKENUM(cb), 0)
+                else:
+                    user32.EnumWindows(DESKENUM(cb), 0)
+
+                if hDesk:
+                    try: user32.CloseDesktop(hDesk)
+                    except Exception: pass
+                if hWs:
+                    try: user32.CloseWindowStation(hWs)
+                    except Exception: pass
+            except Exception as e:
+                print(f"[!] Error enumerating Windows windows: {e}")
+
+        else:
+            # Linux X11 / Wayland window discovery
+            disp = os.environ.get("DISPLAY", ":0")
+            is_wayland = bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("XDG_SESSION_TYPE") == "wayland")
+            try:
+                out = subprocess.check_output(["wmctrl", "-l", "-p"], stderr=subprocess.DEVNULL, timeout=2).decode("utf-8", errors="ignore")
+                for line in out.splitlines():
+                    parts = line.split(None, 4)
+                    if len(parts) >= 5:
+                        wid_hex, desk_num, p_str, host, w_title = parts[0], parts[1], parts[2], parts[3], parts[4]
+                        try:
+                            w_pid_val = int(p_str)
+                            if not target_pids or w_pid_val in target_pids:
+                                wid_int = int(wid_hex, 16)
+                                windows.append({
+                                    "hwnd": wid_int,
+                                    "wid": wid_hex,
+                                    "pid": w_pid_val,
+                                    "title": w_title.strip() or f"Linux Window (PID {w_pid_val})",
+                                    "class_name": "X11Window",
+                                    "width": 1280,
+                                    "height": 720,
+                                    "is_minimized": False,
+                                    "is_visible": True
+                                })
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            if not windows and not is_wayland:
+                try:
+                    for p in (target_pids or []):
+                        wids = subprocess.check_output(["xdotool", "search", "--pid", str(p)], stderr=subprocess.DEVNULL, timeout=2).decode().split()
+                        for wid in wids:
+                            try:
+                                name = subprocess.check_output(["xdotool", "getwindowname", wid], stderr=subprocess.DEVNULL, timeout=1).decode().strip()
+                                windows.append({
+                                    "hwnd": int(wid),
+                                    "wid": wid,
+                                    "pid": p,
+                                    "title": name or f"Window (PID {p})",
+                                    "class_name": "X11Window",
+                                    "width": 1280,
+                                    "height": 720,
+                                    "is_minimized": False,
+                                    "is_visible": True
+                                })
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+        return windows
+
+    def _capture_window_image(self, hwnd=None, pid=None, quality=80, max_w=1920, max_h=1080):
+        sys_os = platform.system()
+        quality = min(max(int(quality or 80), 30), 95)
+        window_title = ""
+
+        # Resolve target window if hwnd not given or invalid
+        if not hwnd or int(hwnd) <= 0:
+            windows = self._get_process_windows(pid)
+            if not windows:
+                return {
+                    "success": False,
+                    "has_gui": False,
+                    "pid": pid,
+                    "error": "No capturable graphical window found for this process. It may be running as a background service or daemon without GUI.",
+                    "status": "no_window"
+                }
+            active_wins = [w for w in windows if not w.get("is_minimized")]
+            chosen = active_wins[0] if active_wins else windows[0]
+            hwnd = chosen["hwnd"]
+            window_title = chosen.get("title", f"Window {hwnd}")
+            is_min = chosen.get("is_minimized", False)
+        else:
+            hwnd = int(hwnd)
+            window_title = f"Window {hwnd}"
+            is_min = False
+
+        if sys_os == "Windows":
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+
+            if not user32.IsWindow(hwnd):
+                return {
+                    "success": False,
+                    "has_gui": False,
+                    "pid": pid,
+                    "hwnd": hwnd,
+                    "error": f"Window handle {hwnd} is no longer valid or application has exited.",
+                    "status": "window_closed"
+                }
+
+            is_min = bool(user32.IsIconic(hwnd))
+            if is_min:
+                return {
+                    "success": False,
+                    "has_gui": True,
+                    "is_minimized": True,
+                    "pid": pid,
+                    "hwnd": hwnd,
+                    "title": window_title,
+                    "error": "Window is currently minimized to taskbar on host desktop.",
+                    "status": "minimized"
+                }
+
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ('left', wintypes.LONG), ('top', wintypes.LONG),
+                    ('right', wintypes.LONG), ('bottom', wintypes.LONG)
+                ]
+            r = RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(r))
+            w = max(1, r.right - r.left)
+            h = max(1, r.bottom - r.top)
+
+            len_t = user32.GetWindowTextLengthW(hwnd)
+            if len_t > 0:
+                t_buf = ctypes.create_unicode_buffer(len_t + 1)
+                user32.GetWindowTextW(hwnd, t_buf, len_t + 1)
+                if t_buf.value:
+                    window_title = t_buf.value
+
+            hwndDC = user32.GetWindowDC(hwnd)
+            if not hwndDC:
+                return {"success": False, "error": "Unable to acquire window DC handle."}
+
+            memDC = gdi32.CreateCompatibleDC(hwndDC)
+            hBmp = gdi32.CreateCompatibleBitmap(hwndDC, w, h)
+            oldBmp = gdi32.SelectObject(memDC, hBmp)
+
+            pw_ok = user32.PrintWindow(hwnd, memDC, 2)
+            if not pw_ok:
+                pw_ok = user32.PrintWindow(hwnd, memDC, 0)
+
+            if not pw_ok:
+                screenDC = user32.GetDC(0)
+                if screenDC:
+                    gdi32.BitBlt(memDC, 0, 0, w, h, screenDC, r.left, r.top, 0x00CC0020)
+                    user32.ReleaseDC(0, screenDC)
+
+            class BITMAPINFOHEADER(ctypes.Structure):
+                _fields_ = [
+                    ('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
+                    ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
+                    ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
+                    ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)
+                ]
+            bmi = BITMAPINFOHEADER()
+            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.biWidth = w
+            bmi.biHeight = -h
+            bmi.biPlanes = 1
+            bmi.biBitCount = 32
+            bmi.biCompression = 0
+
+            buf_size = w * h * 4
+            buf = ctypes.create_string_buffer(buf_size)
+            gdi32.GetDIBits(memDC, hBmp, 0, h, buf, ctypes.byref(bmi), 0)
+
+            gdi32.SelectObject(memDC, oldBmp)
+            gdi32.DeleteObject(hBmp)
+            gdi32.DeleteDC(memDC)
+            user32.ReleaseDC(hwnd, hwndDC)
+
+            try:
+                from PIL import Image
+                import io
+                img = Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1)
+                if w > max_w or h > max_h:
+                    img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.ANTIALIAS)
+                    w, h = img.size
+
+                out_io = io.BytesIO()
+                img.convert('RGB').save(out_io, format='JPEG', quality=quality)
+                b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
+                fmt = "jpeg"
+            except Exception:
+                import struct
+                file_size = 54 + (w * h * 3)
+                bmp_hdr = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
+                dib_hdr = struct.pack('<IIIHHIIIIII', 40, w, h, 1, 24, 0, w * h * 3, 2835, 2835, 0, 0)
+                raw_bytes = bytearray(w * h * 3)
+                src = memoryview(buf)
+                for i in range(w * h):
+                    raw_bytes[i*3 : i*3+3] = src[i*4 : i*4+3]
+                b64_data = base64.b64encode(bmp_hdr + dib_hdr + raw_bytes).decode('ascii')
+                fmt = "bmp"
+
+            return {
+                "success": True,
+                "has_gui": True,
+                "pid": pid,
+                "hwnd": hwnd,
+                "title": window_title,
+                "width": w,
+                "height": h,
+                "is_minimized": False,
+                "format": fmt,
+                "data": b64_data,
+                "timestamp": int(time.time() * 1000)
+            }
+
+        else:
+            # Linux capture
+            try:
+                wid_target = str(hwnd)
+                cmd = ["import", "-window", wid_target, "jpg:-"]
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, _ = p.communicate(timeout=3)
+                if p.returncode == 0 and len(stdout) > 500:
+                    b64_data = base64.b64encode(stdout).decode('ascii')
+                    return {
+                        "success": True,
+                        "has_gui": True,
+                        "pid": pid,
+                        "hwnd": hwnd,
+                        "title": window_title or f"Linux Window {hwnd}",
+                        "width": 1280,
+                        "height": 720,
+                        "is_minimized": False,
+                        "format": "jpeg",
+                        "data": b64_data,
+                        "timestamp": int(time.time() * 1000)
+                    }
+            except Exception:
+                pass
+
+            is_wayland = bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("XDG_SESSION_TYPE") == "wayland")
+            if is_wayland:
+                return {
+                    "success": False,
+                    "has_gui": True,
+                    "pid": pid,
+                    "error": "Wayland display server active: Remote window capture requires PipeWire / XDG Desktop Portal session permissions.",
+                    "status": "wayland_restricted"
+                }
+
+            return {
+                "success": False,
+                "has_gui": False,
+                "pid": pid,
+                "error": "No capturable graphical window found on current display server.",
+                "status": "no_display"
+            }
+
+    def _app_stream_worker_loop(self, stream_id):
+        stream_cfg = self.active_app_streams.get(stream_id)
+        if not stream_cfg:
+            return
+
+        pid = stream_cfg.get("pid")
+        hwnd = stream_cfg.get("hwnd")
+        target_fps = stream_cfg.get("fps", 25)
+        quality = stream_cfg.get("quality", 80)
+
+        frame_counter = 0
+        last_fps_calc = time.time()
+        measured_fps = float(target_fps)
+
+        print(f"[*] Starting live app stream {stream_id} for PID {pid} (target {target_fps} FPS, quality {quality})...")
+
+        while self.running and stream_id in self.active_app_streams:
+            stream_cfg = self.active_app_streams.get(stream_id)
+            if not stream_cfg or not stream_cfg.get("running"):
+                break
+
+            curr_hwnd = stream_cfg.get("hwnd")
+            curr_fps = stream_cfg.get("fps", target_fps)
+            curr_qual = stream_cfg.get("quality", quality)
+
+            t0 = time.time()
+            res = self._capture_window_image(hwnd=curr_hwnd, pid=pid, quality=curr_qual)
+
+            now = time.time()
+            frame_counter += 1
+            if (now - last_fps_calc) >= 1.0:
+                measured_fps = round(frame_counter / max(0.001, (now - last_fps_calc)), 1)
+                frame_counter = 0
+                last_fps_calc = now
+
+            if res.get("success"):
+                self.send_agent_event({
+                    "type": "AppStreamFrame",
+                    "payload": {
+                        "stream_id": stream_id,
+                        "pid": pid,
+                        "hwnd": res.get("hwnd"),
+                        "title": res.get("title", ""),
+                        "width": res.get("width"),
+                        "height": res.get("height"),
+                        "is_minimized": res.get("is_minimized", False),
+                        "has_gui": True,
+                        "format": res.get("format", "jpeg"),
+                        "data": res.get("data"),
+                        "fps": measured_fps,
+                        "timestamp": int(now * 1000)
+                    }
+                })
+            else:
+                self.send_agent_event({
+                    "type": "AppStreamStatus",
+                    "payload": {
+                        "stream_id": stream_id,
+                        "pid": pid,
+                        "status": res.get("status", "error"),
+                        "has_gui": res.get("has_gui", False),
+                        "is_minimized": res.get("is_minimized", False),
+                        "error": res.get("error", "Failed to capture window frame"),
+                        "timestamp": int(now * 1000)
+                    }
+                })
+                if res.get("status") in ["window_closed", "no_window"]:
+                    time.sleep(1.0)
+                    if pid and not self.is_pid_alive(pid):
+                        break
+
+            elapsed = time.time() - t0
+            frame_budget = 1.0 / max(1, curr_fps)
+            sleep_needed = frame_budget - elapsed
+            if sleep_needed > 0.002:
+                time.sleep(sleep_needed)
+
+        print(f"[*] Live app stream {stream_id} stopped cleanly. Released all capture resources.")
+        with self.lock:
+            self.active_app_streams.pop(stream_id, None)
+
+    def handle_app_window_list(self, payload):
+        req_id = payload.get("request_id")
+        pid = payload.get("pid")
+        try:
+            windows = self._get_process_windows(pid)
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "result": {
+                        "pid": pid,
+                        "has_gui": len(windows) > 0,
+                        "count": len(windows),
+                        "windows": windows
+                    }
+                }
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_app_window_frame(self, payload):
+        req_id = payload.get("request_id")
+        pid = payload.get("pid")
+        hwnd = payload.get("hwnd")
+        quality = payload.get("quality", 85)
+        try:
+            res = self._capture_window_image(hwnd=hwnd, pid=pid, quality=quality)
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": res.get("success", False),
+                    "result": res,
+                    "error": res.get("error") if not res.get("success") else None
+                }
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_app_stream_start(self, payload):
+        stream_id = payload.get("stream_id")
+        pid = payload.get("pid")
+        hwnd = payload.get("hwnd")
+        fps = min(max(int(payload.get("fps", 25)), 1), 60)
+        quality = min(max(int(payload.get("quality", 80)), 30), 95)
+
+        if not stream_id:
+            return
+
+        with self.lock:
+            self.active_app_streams[stream_id] = {
+                "running": True,
+                "pid": pid,
+                "hwnd": hwnd,
+                "fps": fps,
+                "quality": quality,
+                "start_time": time.time()
+            }
+
+        threading.Thread(target=self._app_stream_worker_loop, args=(stream_id,), daemon=True).start()
+
+    def handle_app_stream_stop(self, payload):
+        stream_id = payload.get("stream_id")
+        if stream_id and stream_id in self.active_app_streams:
+            with self.lock:
+                self.active_app_streams[stream_id]["running"] = False
+                self.active_app_streams.pop(stream_id, None)
+
+    def handle_app_stream_select_window(self, payload):
+        stream_id = payload.get("stream_id")
+        hwnd = payload.get("hwnd")
+        if stream_id and stream_id in self.active_app_streams:
+            with self.lock:
+                self.active_app_streams[stream_id]["hwnd"] = hwnd
+
+    # =========================================================================
     def _start_windows_terminal_proc(self, shell_cmd_list, want_standard_token, is_elevated):
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -4744,6 +5254,16 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_app_list, args=(payload,), daemon=True).start()
         elif c_type == "AppAction":
             threading.Thread(target=self.handle_app_action, args=(payload,), daemon=True).start()
+        elif c_type == "AppWindowList":
+            threading.Thread(target=self.handle_app_window_list, args=(payload,), daemon=True).start()
+        elif c_type == "AppWindowFrame":
+            threading.Thread(target=self.handle_app_window_frame, args=(payload,), daemon=True).start()
+        elif c_type == "AppStreamStart":
+            self.handle_app_stream_start(payload)
+        elif c_type == "AppStreamStop":
+            self.handle_app_stream_stop(payload)
+        elif c_type == "AppStreamSelectWindow":
+            self.handle_app_stream_select_window(payload)
         elif c_type in ["OtaUpdate", "OtaCheck", "FleetUpdate"]:
             threading.Thread(target=self.handle_ota_update, args=(payload,), daemon=True).start()
         elif c_type == "RebootHost":

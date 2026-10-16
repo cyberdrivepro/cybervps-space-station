@@ -225,7 +225,53 @@ async function runTests() {
           exit_code: 0
         }
       }));
-    } else if (['FileList', 'FileRead', 'FileWrite', 'FileDelete', 'ProcessList', 'ProcessKill', 'ProcessStart', 'ProcessDetails', 'ServiceList', 'ServiceAction', 'DesktopStatus', 'DesktopAction', 'AppList', 'AppAction'].includes(msg.type)) {
+    } else if (msg.type === 'AppStreamStart') {
+      const streamId = msg.payload.stream_id;
+      agentWs.send(JSON.stringify({
+        type: 'AppStreamFrame',
+        payload: {
+          stream_id: streamId,
+          pid: msg.payload.pid || 1011,
+          hwnd: msg.payload.hwnd || 1001,
+          title: 'Text Editor',
+          width: 1920,
+          height: 1080,
+          is_minimized: false,
+          has_gui: true,
+          format: 'jpeg',
+          data: Buffer.from('FAKE_HD_JPEG_PAYLOAD').toString('base64'),
+          fps: 25.0,
+          timestamp: Date.now()
+        }
+      }));
+    } else if (msg.type === 'AppStreamStop') {
+      agentWs.send(JSON.stringify({
+        type: 'AppStreamStatus',
+        payload: {
+          stream_id: msg.payload.stream_id,
+          status: 'stopped',
+          has_gui: true,
+          timestamp: Date.now()
+        }
+      }));
+    } else if (msg.type === 'AppStreamSelectWindow') {
+      agentWs.send(JSON.stringify({
+        type: 'AppStreamFrame',
+        payload: {
+          stream_id: msg.payload.stream_id,
+          hwnd: msg.payload.hwnd,
+          title: 'Selected Window',
+          width: 800,
+          height: 600,
+          is_minimized: false,
+          has_gui: true,
+          format: 'jpeg',
+          data: Buffer.from('SELECTED_WINDOW_FRAME').toString('base64'),
+          fps: 25.0,
+          timestamp: Date.now()
+        }
+      }));
+    } else if (['FileList', 'FileRead', 'FileWrite', 'FileDelete', 'ProcessList', 'ProcessKill', 'ProcessStart', 'ProcessDetails', 'ServiceList', 'ServiceAction', 'DesktopStatus', 'DesktopAction', 'AppList', 'AppAction', 'AppWindowList', 'AppWindowFrame'].includes(msg.type)) {
       const payload = msg.payload || {};
       const request_id = payload.request_id;
       let result = {};
@@ -319,6 +365,26 @@ async function runTests() {
           action: payload.action,
           success: true,
           message: `Application ${payload.action} executed successfully`
+        };
+      } else if (msg.type === 'AppWindowList') {
+        result = {
+          pid: payload.pid,
+          has_gui: true,
+          count: 2,
+          windows: [
+            { hwnd: 1001, title: 'CyberVPS Space Station Dashboard', width: 1920, height: 1080, is_minimized: false },
+            { hwnd: 1002, title: 'Helper Tool', width: 800, height: 600, is_minimized: false }
+          ]
+        };
+      } else if (msg.type === 'AppWindowFrame') {
+        result = {
+          success: true,
+          pid: payload.pid,
+          hwnd: payload.hwnd || 1001,
+          width: 1920,
+          height: 1080,
+          format: 'jpeg',
+          data: Buffer.from('TEST_FRAME_DATA').toString('base64')
         };
       }
 
@@ -1242,6 +1308,161 @@ async function runTests() {
   assert.strictEqual(killCritRes.statusCode, 403, 'Killing critical process systemd must be forbidden with 403');
   console.log('  ✅ Tiered application discovery & pairing auto-authentication verified.');
 
+  // TEST 37: Live Application Viewer (Zero-Popup Background HD Streaming & Security Guard)
+  console.log('\n[TEST 37] Testing Live Application Viewer (Zero-Popup Background HD Streaming & Security Guard)...');
+
+  // 1. Enumerate Windows for application
+  const winEnumRes = await request(`${SERVER_URL}/api/v1/apps/windows?machine_id=${remoteNodeId}&pid=1011`, {
+    headers: { 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(winEnumRes.statusCode, 200, 'Window enumeration must succeed with 200');
+  const winEnumData = JSON.parse(winEnumRes.body);
+  assert.strictEqual(winEnumData.has_gui, true, 'Mock app must have GUI');
+  assert.strictEqual(winEnumData.windows.length, 2, 'Must return 2 windows');
+
+  // 2. Capture Single Snapshot Frame
+  const frameRes = await request(`${SERVER_URL}/api/v1/apps/frame?machine_id=${remoteNodeId}&pid=1011&hwnd=1001`, {
+    headers: { 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(frameRes.statusCode, 200, 'Frame snapshot must return 200');
+  const frameData = JSON.parse(frameRes.body);
+  assert(frameData.data, 'Frame snapshot must contain base64 image data');
+
+  // 3. Raw JPEG Frame Snapshot
+  const rawFrameRes = await request(`${SERVER_URL}/api/v1/apps/frame?machine_id=${remoteNodeId}&pid=1011&hwnd=1001&raw=true`, {
+    headers: { 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(rawFrameRes.statusCode, 200, 'Raw frame snapshot must return 200');
+  assert.strictEqual(rawFrameRes.headers['content-type'], 'image/jpeg', 'Raw frame must have image/jpeg Content-Type');
+
+  // 4. Token Minting: missing machine_id rejected
+  const tokenBadRes = await request(`${SERVER_URL}/api/v1/apps/stream/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': 'test_pair_key_123' },
+    body: JSON.stringify({})
+  });
+  assert.strictEqual(tokenBadRes.statusCode, 400, 'Missing machine_id must return 400');
+
+  // 5. Token Minting: valid pairing key issues 60s single-use token
+  const tokenGoodRes = await request(`${SERVER_URL}/api/v1/apps/stream/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': 'test_pair_key_123' },
+    body: JSON.stringify({ machine_id: remoteNodeId, pid: 1011, app_id: 'notepad' })
+  });
+  assert.strictEqual(tokenGoodRes.statusCode, 200, 'Token minting must succeed with 200');
+  const streamTokenData = JSON.parse(tokenGoodRes.body);
+  assert(streamTokenData.token, 'Must return a stream token');
+  assert.strictEqual(streamTokenData.expires_in, 60, 'Token expires in 60 seconds');
+  const streamToken = streamTokenData.token;
+
+  // 6. Security Guard: Direct pairing key on stream WebSocket is strictly rejected
+  const directKeyWsPromise = new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${SERVER_URL.replace('http', 'ws')}/api/v1/apps/stream?machine_id=${remoteNodeId}&token=test_pair_key_123`);
+    ws.on('open', () => {
+      ws.close();
+      reject(new Error('Direct pairing key must not be accepted on stream WebSocket'));
+    });
+    ws.on('unexpected-response', (req, res) => {
+      assert.strictEqual(res.statusCode, 401, 'Direct pairing key on stream WebSocket must return 401');
+      resolve();
+    });
+    ws.on('error', () => {
+      resolve();
+    });
+  });
+  await directKeyWsPromise;
+
+  // 7. Security Guard: Untrusted cross-origin request rejected with 403
+  const badOriginWsPromise = new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${SERVER_URL.replace('http', 'ws')}/api/v1/apps/stream?machine_id=${remoteNodeId}&token=${streamToken}`, {
+      headers: { Origin: 'https://evil-hacker-site.org' }
+    });
+    ws.on('open', () => {
+      ws.close();
+      reject(new Error('Untrusted cross-origin stream must be rejected'));
+    });
+    ws.on('unexpected-response', (req, res) => {
+      assert.strictEqual(res.statusCode, 403, 'Untrusted origin must return 403');
+      resolve();
+    });
+    ws.on('error', () => {
+      resolve();
+    });
+  });
+  await badOriginWsPromise;
+
+  // 8. Single-Use Token: Connect with valid token and receive frames
+  let receivedFrame = null;
+  let receivedPong = null;
+  const streamWs = new WebSocket(`${SERVER_URL.replace('http', 'ws')}/api/v1/apps/stream?machine_id=${remoteNodeId}&token=${streamToken}&pid=1011&fps=25`);
+  
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Stream WebSocket connection timeout')), 6000);
+    streamWs.on('open', () => {
+      // Send ping
+      streamWs.send(JSON.stringify({ type: 'ping', client_time: Date.now() }));
+    });
+    streamWs.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'frame') {
+        receivedFrame = msg;
+      } else if (msg.type === 'pong') {
+        receivedPong = msg;
+      }
+      if (receivedFrame && receivedPong) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+    streamWs.on('error', reject);
+  });
+
+  assert(receivedFrame, 'Stream client must receive live frames');
+  assert.strictEqual(receivedFrame.width, 1920, 'Frame width must match captured window');
+  assert.strictEqual(receivedFrame.height, 1080, 'Frame height must match captured window');
+  assert(receivedPong, 'Stream client must receive pong on ping');
+
+  // 9. Window Switching: send select_window
+  let switchedFrame = null;
+  const switchPromise = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Switch window timeout')), 6000);
+    streamWs.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'frame' && msg.hwnd === 1002) {
+        switchedFrame = msg;
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+    streamWs.send(JSON.stringify({ type: 'select_window', hwnd: 1002 }));
+  });
+  await switchPromise;
+  assert.strictEqual(switchedFrame.hwnd, 1002, 'Window selection must update streamed window');
+
+  // 10. Clean release on stop
+  streamWs.send(JSON.stringify({ type: 'stop' }));
+  streamWs.close();
+  await wait(200);
+
+  // 11. Single-use token consumption: Replaying same token must fail with 401
+  const replayWsPromise = new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${SERVER_URL.replace('http', 'ws')}/api/v1/apps/stream?machine_id=${remoteNodeId}&token=${streamToken}`);
+    ws.on('open', () => {
+      ws.close();
+      reject(new Error('Replayed stream token must be rejected'));
+    });
+    ws.on('unexpected-response', (req, res) => {
+      assert.strictEqual(res.statusCode, 401, 'Replayed single-use token must return 401');
+      resolve();
+    });
+    ws.on('error', () => {
+      resolve();
+    });
+  });
+  await replayWsPromise;
+
+  console.log('  ✅ Live Application Viewer verified: zero-popup streaming, token auth, window switching & resource teardown operational.');
+
   // TEST 15: Durable State Persistence Across Server Restarts
   console.log('\n[TEST 15] Testing Durable State Persistence Across Process Restarts...');
   // Wait for debounced write
@@ -1298,7 +1519,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 36 ADVANCED SECURITY, CONTROL PLANE, HA, APPS, HOSTING & INFRASTRUCTURE TESTS PASSED!');
+  console.log('🎉 ALL 37 ADVANCED SECURITY, CONTROL PLANE, HA, APPS, HOSTING & INFRASTRUCTURE TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

@@ -2777,6 +2777,134 @@
     </div>
   </div>
 
+  <!-- MODAL: LIVE APPLICATION VIEWER (HD ZERO-POPUP BACKGROUND STREAM) -->
+  <div id="modal-app-live-viewer" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeAppLiveViewer();">
+    <div class="modal" id="modal-app-live-viewer-content" style="max-width:1100px; width:95vw; max-height:92vh; display:flex; flex-direction:column; padding:0; overflow:hidden; background:var(--bg-surface); border:1px solid var(--border-subtle); box-shadow:0 24px 60px rgba(0,0,0,0.8);">
+      
+      <!-- Modal Header -->
+      <div class="modal-header" style="padding:0.85rem 1.25rem; border-bottom:1px solid var(--border-subtle); background:var(--bg-card); display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+        <div style="display:flex; align-items:center; gap:0.75rem; min-width:0;">
+          <div style="display:flex; align-items:center; gap:0.4rem; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.3); padding:0.2rem 0.55rem; border-radius:12px;">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; animation:pulse 1.5s infinite;"></span>
+            <span style="font-size:0.7rem; font-weight:700; color:#ef4444; letter-spacing:0.04em;">LIVE HD</span>
+          </div>
+          <div style="min-width:0;">
+            <strong id="app-stream-title" style="color:var(--text-primary); font-size:1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">Application Live Stream</strong>
+            <span id="app-stream-subtitle" style="color:var(--text-muted); font-size:0.72rem;">Background GDI Pipeline &bull; Zero Popups &bull; Undisturbed Desktop</span>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0.5rem; flex-shrink:0;">
+          <!-- Window selector dropdown -->
+          <div style="display:flex; align-items:center; gap:0.35rem; font-size:0.75rem; color:var(--text-secondary);">
+            <label for="app-stream-window-select" style="font-size:0.72rem; color:var(--text-muted);">Window:</label>
+            <select id="app-stream-window-select" onchange="onAppStreamWindowChange()" class="form-control" style="font-size:0.75rem; padding:0.25rem 0.5rem; max-width:220px; height:auto; background:var(--bg-base);">
+              <option value="">Auto-Detect Main Window</option>
+            </select>
+          </div>
+
+          <!-- Controls -->
+          <button class="btn btn-secondary" onclick="toggleAppStreamFit()" id="app-stream-btn-fit" title="Toggle Fit / 1:1 Sharpness" style="padding:0.25rem 0.6rem; font-size:0.75rem;">
+            Fit
+          </button>
+          <button class="btn btn-secondary" onclick="toggleAppStreamFullscreen()" title="Fullscreen Stream" style="padding:0.25rem 0.55rem; font-size:0.75rem;">
+            ⛶
+          </button>
+          <button class="btn btn-secondary" onclick="closeAppLiveViewer()" style="padding:0.25rem 0.6rem; font-size:0.75rem; color:var(--text-muted); font-weight:600;">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- Telemetry HUD Bar -->
+      <div style="background:rgba(15,23,42,0.95); border-bottom:1px solid var(--border-subtle); padding:0.4rem 1.25rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; font-family:var(--font-mono); font-size:0.73rem; flex-shrink:0;">
+        <div style="display:flex; align-items:center; gap:1.2rem; flex-wrap:wrap;">
+          <div>
+            <span style="color:var(--text-muted);">Resolution:</span>
+            <span id="app-stream-res" style="color:var(--accent-cyan); font-weight:600; margin-left:0.25rem;">-- &times; --</span>
+          </div>
+          <div>
+            <span style="color:var(--text-muted);">FPS:</span>
+            <span id="app-stream-fps" style="color:#22c55e; font-weight:600; margin-left:0.25rem;">-- FPS</span>
+          </div>
+          <div>
+            <span style="color:var(--text-muted);">Bitrate:</span>
+            <span id="app-stream-bitrate" style="color:#38bdf8; font-weight:600; margin-left:0.25rem;">-- kbps</span>
+          </div>
+          <div>
+            <span style="color:var(--text-muted);">Latency (Ping):</span>
+            <span id="app-stream-ping" style="color:#a78bfa; font-weight:600; margin-left:0.25rem;">-- ms</span>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+          <span class="badge badge-cyan" style="font-size:0.65rem; padding:0.15rem 0.45rem;">ZERO-POPUP CAPTURE</span>
+          <span id="app-stream-host-tag" class="badge badge-subtle" style="font-size:0.65rem; padding:0.15rem 0.45rem;">Host</span>
+        </div>
+      </div>
+
+      <!-- Video Surface Container -->
+      <div id="app-stream-surface-container" style="flex:1; background:#05070c; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; min-height:380px;">
+        
+        <!-- Loading State -->
+        <div id="app-stream-loading" style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:3rem; gap:1rem; text-align:center;">
+          <div class="spinner" style="width:36px; height:36px; border:3px solid rgba(6,182,212,0.2); border-top-color:var(--accent-cyan); border-radius:50%; animation:spin 1s linear infinite;"></div>
+          <div>
+            <strong style="color:var(--text-primary); font-size:0.95rem; display:block;">Connecting to Remote App Stream...</strong>
+            <span style="color:var(--text-muted); font-size:0.78rem;">Establishing encrypted background capture pipeline without stealing desktop focus</span>
+          </div>
+        </div>
+
+        <!-- Honest Non-GUI / Error State -->
+        <div id="app-stream-error" style="display:none; text-align:center; padding:2.5rem 1.5rem; max-width:540px; margin:auto;">
+          <div style="width:52px; height:52px; border-radius:50%; background:rgba(234,179,8,0.12); border:1px solid rgba(234,179,8,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 1rem; color:#eab308; font-size:1.6rem;">
+            ⚠️
+          </div>
+          <h3 id="app-stream-error-title" style="color:var(--text-primary); font-size:1.1rem; margin-bottom:0.5rem;">No Capturable Window</h3>
+          <p id="app-stream-error-desc" style="color:var(--text-secondary); font-size:0.85rem; line-height:1.5; margin-bottom:1.5rem;">
+            This process is running without an interactive graphical window (e.g. background service, daemon, or console worker).
+          </p>
+          <div style="display:flex; align-items:center; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
+            <button class="btn btn-secondary" onclick="openTerminalFromStream()">💻 Open Terminal</button>
+            <button class="btn btn-secondary" onclick="openDetailsFromStream()">🔍 Inspect Process</button>
+            <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
+          </div>
+        </div>
+
+        <!-- Minimized Window Overlay Banner -->
+        <div id="app-stream-minimized-notice" style="display:none; position:absolute; top:12px; left:50%; transform:translateX(-50%); background:rgba(20,20,25,0.92); border:1px solid rgba(234,179,8,0.4); border-radius:8px; padding:0.6rem 1.2rem; color:#fef08a; font-size:0.8rem; z-index:10; box-shadow:0 8px 24px rgba(0,0,0,0.6); align-items:center; gap:0.6rem;">
+          <span>ℹ️</span>
+          <span><strong>Window Minimized:</strong> Host OS offscreen painter rests while minimized. Stream will automatically resume when window is restored.</span>
+        </div>
+
+        <!-- Canvas -->
+        <canvas id="app-stream-canvas" style="display:none; max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; box-shadow:0 12px 40px rgba(0,0,0,0.7);"></canvas>
+      </div>
+
+      <!-- Footer Controls Bar -->
+      <div class="modal-footer" style="padding:0.75rem 1.25rem; border-top:1px solid var(--border-subtle); background:var(--bg-card); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; flex-shrink:0;">
+        <div style="display:flex; align-items:center; gap:0.75rem; font-size:0.78rem; color:var(--text-muted);">
+          <span>Stream Target: <strong id="app-stream-footer-app" style="color:var(--text-primary);">-</strong></span>
+          <span>&bull;</span>
+          <span>Zero Host Impact: <span style="color:#22c55e;">Active</span> (No Popups, No Window Focus Stolen)</span>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <select id="app-stream-fps-select" onchange="onAppStreamFpsChange()" class="form-control" style="font-size:0.75rem; padding:0.25rem 0.5rem; height:auto; background:var(--bg-base);">
+            <option value="15">15 FPS (Eco)</option>
+            <option value="25" selected>25 FPS (Smooth HD)</option>
+            <option value="30">30 FPS (Fluid)</option>
+            <option value="60">60 FPS (Ultra HD)</option>
+          </select>
+          <button class="btn btn-danger" onclick="closeAppLiveViewer()" style="font-size:0.75rem; padding:0.35rem 0.85rem;">
+            Disconnect Stream
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- MODAL: ADD BACKEND -->
   <div id="modal-add-backend" class="modal-backdrop">
     <div class="modal" style="max-width:460px;">
@@ -7261,6 +7389,9 @@
               </button>
               <div style="display:flex; align-items:center; gap:0.35rem;">
                 ${isRunning ? `
+                  <button class="btn btn-primary" onclick="openAppLiveViewer('${escapeHtml(app.id)}', '${escapeHtml(app.name)}', ${JSON.stringify(pids)})" style="font-size:0.72rem; padding:0.25rem 0.6rem; background:rgba(6,182,212,0.15); border-color:var(--accent-cyan); color:var(--accent-cyan);" title="Stream Live HD Window in Background (Zero Popups)">
+                    📺 View Live
+                  </button>
                   <button class="btn btn-secondary" onclick="closeApp('${escapeHtml(app.id)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem; color:var(--status-warning);" title="Graceful Window Close (WM_CLOSE)">
                     ⏹️ Close
                   </button>
@@ -7388,6 +7519,7 @@
           <td>${inst.cpu_pct !== undefined ? inst.cpu_pct.toFixed(1) + '%' : '-'}</td>
           <td>${inst.session_id !== undefined ? 'Session ' + inst.session_id : '-'}</td>
           <td>
+            <button class="btn btn-primary" onclick="closeAppDetailsModal(); openAppLiveViewer('${escapeHtml(app.id)}', '${escapeHtml(app.name)}', [${inst.pid}])" style="font-size:0.68rem; padding:0.2rem 0.45rem; background:rgba(6,182,212,0.15); border-color:var(--accent-cyan); color:var(--accent-cyan);" title="Stream Live HD Window">📺 View</button>
             <button class="btn btn-secondary" onclick="closeApp('${escapeHtml(app.id)}', ${inst.pid})" style="font-size:0.68rem; padding:0.2rem 0.45rem;">Close</button>
             <button class="btn btn-danger" onclick="confirmForceKill('${escapeHtml(app.id)}', '${escapeHtml(app.name)}', ${inst.pid})" style="font-size:0.68rem; padding:0.2rem 0.45rem;">Stop</button>
           </td>
@@ -7444,6 +7576,359 @@
 
     function closeAppDetailsModal() {
       document.getElementById('modal-app-details').style.display = 'none';
+    }
+
+    // =========================================================================
+    // 15B. LIVE APPLICATION VIEWER CONTROLLER (ZERO-POPUP HD BACKGROUND STREAM)
+    // =========================================================================
+    const appStreamState = {
+      ws: null,
+      appId: null,
+      appName: null,
+      machineId: null,
+      pid: null,
+      pids: [],
+      hwnd: null,
+      targetFps: 25,
+      quality: 80,
+      isFit: true,
+      pingTimer: null,
+      lastPingSent: 0,
+      fpsCounter: 0,
+      lastFpsCheck: 0,
+      byteCounter: 0,
+      lastByteCheck: 0,
+      activeImg: null
+    };
+
+    async function openAppLiveViewer(appId, appName, pids = []) {
+      const machineId = appState.apps.machineId || appState.selectedMachineId || (appState.machines[0]?.id);
+      if (!machineId) {
+        showToast('Please select a target host machine first', 'error');
+        return;
+      }
+
+      const normalizedPids = Array.isArray(pids) ? pids : (pids ? [pids] : []);
+      const primaryPid = normalizedPids.length > 0 ? normalizedPids[0] : null;
+
+      appStreamState.appId = appId;
+      appStreamState.appName = appName;
+      appStreamState.machineId = machineId;
+      appStreamState.pids = normalizedPids;
+      appStreamState.pid = primaryPid;
+      appStreamState.hwnd = null;
+      appStreamState.fpsCounter = 0;
+      appStreamState.lastFpsCheck = performance.now();
+      appStreamState.byteCounter = 0;
+      appStreamState.lastByteCheck = performance.now();
+
+      // UI Reset
+      const modal = document.getElementById('modal-app-live-viewer');
+      if (modal) modal.style.display = 'flex';
+
+      const titleEl = document.getElementById('app-stream-title');
+      if (titleEl) titleEl.innerText = `${appName || appId} ${primaryPid ? `(PID: ${primaryPid})` : ''} — Live HD Stream`;
+
+      const footerAppEl = document.getElementById('app-stream-footer-app');
+      if (footerAppEl) footerAppEl.innerText = `${appName || appId} [Host: ${machineId}]`;
+
+      const hostTagEl = document.getElementById('app-stream-host-tag');
+      if (hostTagEl) hostTagEl.innerText = machineId;
+
+      document.getElementById('app-stream-loading').style.display = 'flex';
+      document.getElementById('app-stream-error').style.display = 'none';
+      document.getElementById('app-stream-canvas').style.display = 'none';
+      document.getElementById('app-stream-minimized-notice').style.display = 'none';
+
+      document.getElementById('app-stream-res').innerText = '-- × --';
+      document.getElementById('app-stream-fps').innerText = '-- FPS';
+      document.getElementById('app-stream-bitrate').innerText = '-- kbps';
+      document.getElementById('app-stream-ping').innerText = '-- ms';
+
+      // 1. Fetch available windows for window selector
+      await populateAppStreamWindows(machineId, primaryPid);
+
+      // 2. Connect live stream
+      await startAppStreamConnection();
+    }
+
+    async function populateAppStreamWindows(machineId, pid) {
+      const select = document.getElementById('app-stream-window-select');
+      if (!select) return;
+      select.innerHTML = '<option value="">Auto-Detect Main Window</option>';
+
+      try {
+        const query = pid ? `?machine_id=${encodeURIComponent(machineId)}&pid=${encodeURIComponent(pid)}` : `?machine_id=${encodeURIComponent(machineId)}`;
+        const res = await apiRequest(`/api/v1/apps/windows${query}`);
+        if (res && res.windows && Array.isArray(res.windows) && res.windows.length > 0) {
+          res.windows.forEach(w => {
+            const opt = document.createElement('option');
+            opt.value = w.hwnd;
+            const title = (w.title || 'Untitled Window').slice(0, 32);
+            opt.textContent = `${title} (${w.width}×${w.height})${w.is_minimized ? ' [Minimized]' : ''}`;
+            select.appendChild(opt);
+          });
+        }
+      } catch (_) {
+        // Fallback to auto-detection if enumeration fails or is busy
+      }
+    }
+
+    async function startAppStreamConnection() {
+      if (appStreamState.ws) {
+        try { appStreamState.ws.close(); } catch (_) {}
+        appStreamState.ws = null;
+      }
+      if (appStreamState.pingTimer) {
+        clearInterval(appStreamState.pingTimer);
+        appStreamState.pingTimer = null;
+      }
+
+      try {
+        // Request single-use 60s stream token
+        const tokenRes = await apiRequest('/api/v1/apps/stream/token', {
+          method: 'POST',
+          body: JSON.stringify({
+            machine_id: appStreamState.machineId,
+            pid: appStreamState.pid,
+            hwnd: appStreamState.hwnd,
+            app_id: appStreamState.appId
+          })
+        });
+
+        if (!tokenRes || !tokenRes.token) {
+          throw new Error(tokenRes?.error || 'Failed to authorize live app stream session.');
+        }
+
+        const streamToken = tokenRes.token;
+
+        // Establish WebSocket stream connection
+        const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+        const wsUrl = new URL(base);
+        wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl.pathname = '/api/v1/apps/stream';
+        wsUrl.searchParams.set('machine_id', appStreamState.machineId);
+        wsUrl.searchParams.set('token', streamToken);
+        if (appStreamState.pid) wsUrl.searchParams.set('pid', appStreamState.pid);
+        if (appStreamState.hwnd) wsUrl.searchParams.set('hwnd', appStreamState.hwnd);
+        wsUrl.searchParams.set('fps', appStreamState.targetFps);
+        wsUrl.searchParams.set('quality', appStreamState.quality);
+
+        const ws = new WebSocket(wsUrl.toString());
+        appStreamState.ws = ws;
+
+        ws.onopen = () => {
+          // Start periodic RTT ping
+          appStreamState.lastPingSent = performance.now();
+          ws.send(JSON.stringify({ type: 'ping', client_time: Date.now() }));
+          appStreamState.pingTimer = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              appStreamState.lastPingSent = performance.now();
+              ws.send(JSON.stringify({ type: 'ping', client_time: Date.now() }));
+            }
+          }, 2000);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            handleAppStreamMessage(msg);
+          } catch (e) {
+            console.error('AppStream message parse error:', e);
+          }
+        };
+
+        ws.onerror = (e) => {
+          console.warn('AppStream WebSocket error:', e);
+        };
+
+        ws.onclose = (e) => {
+          if (appStreamState.pingTimer) {
+            clearInterval(appStreamState.pingTimer);
+            appStreamState.pingTimer = null;
+          }
+          if (document.getElementById('modal-app-live-viewer').style.display !== 'none') {
+            if (e.code === 4001) {
+              showAppStreamError('Session Unauthorized', 'Stream token rejected or expired. Please re-open the stream.');
+            }
+          }
+        };
+
+      } catch (err) {
+        showAppStreamError('Stream Initialization Failed', err.message);
+      }
+    }
+
+    function handleAppStreamMessage(msg) {
+      if (msg.type === 'pong') {
+        const rtt = Math.max(1, Math.round(performance.now() - appStreamState.lastPingSent));
+        const pingEl = document.getElementById('app-stream-ping');
+        if (pingEl) pingEl.innerText = `${rtt} ms`;
+        return;
+      }
+
+      if (msg.type === 'status') {
+        if (!msg.has_gui || msg.status === 'no_window' || msg.status === 'no_gui') {
+          showAppStreamError(
+            'No Capturable Window',
+            msg.error || 'This process is running without an interactive graphical window (e.g. background service or worker).'
+          );
+        } else if (msg.is_minimized) {
+          document.getElementById('app-stream-minimized-notice').style.display = 'flex';
+        } else if (msg.status === 'disconnected') {
+          showAppStreamError('Host Disconnected', msg.error || 'Target machine lost connection.');
+        }
+        return;
+      }
+
+      if (msg.type === 'frame') {
+        // Hide loading and errors, show canvas
+        document.getElementById('app-stream-loading').style.display = 'none';
+        document.getElementById('app-stream-error').style.display = 'none';
+
+        const minimizedNotice = document.getElementById('app-stream-minimized-notice');
+        if (msg.is_minimized) {
+          if (minimizedNotice) minimizedNotice.style.display = 'flex';
+        } else {
+          if (minimizedNotice) minimizedNotice.style.display = 'none';
+        }
+
+        const canvas = document.getElementById('app-stream-canvas');
+        if (!canvas) return;
+        canvas.style.display = 'block';
+
+        const img = new Image();
+        img.onload = () => {
+          if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const resEl = document.getElementById('app-stream-res');
+            if (resEl) resEl.innerText = `${img.naturalWidth} × ${img.naturalHeight}`;
+          }
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+
+          // Update FPS measurement
+          appStreamState.fpsCounter++;
+          const now = performance.now();
+          if (now - appStreamState.lastFpsCheck >= 1000) {
+            const measuredFps = Math.round((appStreamState.fpsCounter * 1000) / (now - appStreamState.lastFpsCheck));
+            const fpsEl = document.getElementById('app-stream-fps');
+            if (fpsEl) fpsEl.innerText = `${measuredFps} FPS`;
+            appStreamState.fpsCounter = 0;
+            appStreamState.lastFpsCheck = now;
+          }
+
+          // Update Bitrate measurement
+          const byteLen = (msg.data ? msg.data.length * 0.75 : 0);
+          appStreamState.byteCounter += byteLen;
+          if (now - appStreamState.lastByteCheck >= 1000) {
+            const kbps = Math.round((appStreamState.byteCounter * 8) / (1024 * ((now - appStreamState.lastByteCheck) / 1000)));
+            const brEl = document.getElementById('app-stream-bitrate');
+            if (brEl) brEl.innerText = `${kbps} kbps`;
+            appStreamState.byteCounter = 0;
+            appStreamState.lastByteCheck = now;
+          }
+        };
+
+        const mime = msg.format === 'bmp' ? 'image/bmp' : 'image/jpeg';
+        img.src = `data:${mime};base64,${msg.data}`;
+      }
+    }
+
+    function showAppStreamError(title, desc) {
+      document.getElementById('app-stream-loading').style.display = 'none';
+      document.getElementById('app-stream-canvas').style.display = 'none';
+      document.getElementById('app-stream-minimized-notice').style.display = 'none';
+
+      const errPanel = document.getElementById('app-stream-error');
+      if (errPanel) errPanel.style.display = 'block';
+      const titleEl = document.getElementById('app-stream-error-title');
+      if (titleEl) titleEl.innerText = title;
+      const descEl = document.getElementById('app-stream-error-desc');
+      if (descEl) descEl.innerText = desc;
+    }
+
+    function closeAppLiveViewer() {
+      if (appStreamState.pingTimer) {
+        clearInterval(appStreamState.pingTimer);
+        appStreamState.pingTimer = null;
+      }
+      if (appStreamState.ws) {
+        try {
+          if (appStreamState.ws.readyState === WebSocket.OPEN) {
+            appStreamState.ws.send(JSON.stringify({ type: 'stop' }));
+          }
+          appStreamState.ws.close();
+        } catch (_) {}
+        appStreamState.ws = null;
+      }
+      const modal = document.getElementById('modal-app-live-viewer');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function onAppStreamWindowChange() {
+      const select = document.getElementById('app-stream-window-select');
+      const val = select ? select.value : '';
+      const hwnd = val ? parseInt(val, 10) : null;
+      appStreamState.hwnd = hwnd;
+      if (appStreamState.ws && appStreamState.ws.readyState === WebSocket.OPEN) {
+        appStreamState.ws.send(JSON.stringify({ type: 'select_window', hwnd }));
+      }
+    }
+
+    function onAppStreamFpsChange() {
+      const select = document.getElementById('app-stream-fps-select');
+      if (select) {
+        appStreamState.targetFps = parseInt(select.value, 10) || 25;
+        // Reconnect with new target FPS
+        startAppStreamConnection();
+      }
+    }
+
+    function toggleAppStreamFit() {
+      const canvas = document.getElementById('app-stream-canvas');
+      const btn = document.getElementById('app-stream-btn-fit');
+      if (!canvas || !btn) return;
+      appStreamState.isFit = !appStreamState.isFit;
+      if (appStreamState.isFit) {
+        canvas.style.maxWidth = '100%';
+        canvas.style.maxHeight = '100%';
+        canvas.style.objectFit = 'contain';
+        btn.innerText = 'Fit';
+      } else {
+        canvas.style.maxWidth = 'none';
+        canvas.style.maxHeight = 'none';
+        canvas.style.objectFit = 'none';
+        btn.innerText = '1:1';
+      }
+    }
+
+    function toggleAppStreamFullscreen() {
+      const container = document.getElementById('app-stream-surface-container');
+      if (!container) return;
+      if (!document.fullscreenElement) {
+        if (container.requestFullscreen) container.requestFullscreen();
+      } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+      }
+    }
+
+    function retryAppStream() {
+      document.getElementById('app-stream-loading').style.display = 'flex';
+      document.getElementById('app-stream-error').style.display = 'none';
+      startAppStreamConnection();
+    }
+
+    function openTerminalFromStream() {
+      closeAppLiveViewer();
+      navigate('terminal');
+    }
+
+    function openDetailsFromStream() {
+      const appId = appStreamState.appId;
+      closeAppLiveViewer();
+      if (appId) viewAppDetails(appId);
     }
 
     // =========================================================================

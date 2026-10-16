@@ -82,6 +82,8 @@ const db = {
   bridgeStreamSockets: new Map(), // stream_id -> { clientWs, agentWs }
   terminalSessions: new Map(), // session_id -> { machine_id, wsBrowser }
   terminalAuthTokens: new Map(), // token -> { machine_id, profile, expires_at }
+  appStreamAuthTokens: new Map(), // token -> { machine_id, pid, hwnd, app_id, expires_at }
+  appStreams: new Map(), // stream_id -> { machine_id, pid, hwnd, wsBrowser, startTime, frameCount, byteCount }
   pendingRequests: new Map(), // request_id -> { resolve, reject, timer }
   telemetrySubscribers: new Set(), // active SSE client responses for 2-second real-time fan-out
   backends: new Map(), // backend_id -> { id, url, name, role, state, latency_ms, last_check, failures_count }
@@ -512,6 +514,7 @@ function isPublicApiRoute(pathname) {
   if (pathname.startsWith('/api/v1/relay/')) return true;
   if (pathname.startsWith('/api/v1/access/')) return true;
   if (pathname === '/api/v1/terminal/token') return true;
+  if (pathname === '/api/v1/apps/stream/token') return true;
   if (pathname === '/api/v1/auth/login') return true;
   if (pathname === '/api/v1/auth/logout') return true;
   if (pathname === '/api/v1/auth/status') return true;
@@ -850,6 +853,146 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: e.message }));
       }
     });
+    return;
+  }
+
+  // 2A-2. MINT SHORT-LIVED SINGLE-USE STREAM TOKEN FOR LIVE APP VIEWING
+  if (pathname === '/api/v1/apps/stream/token' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id, pid, hwnd, app_id } = payload;
+        const pairing_key = payload.pairing_key || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
+        const session_token = payload.session_token || req.headers['x-session-token'];
+        let bearerToken = null;
+        const authHdr = req.headers['authorization'];
+        if (authHdr && authHdr.toLowerCase().startsWith('bearer ')) {
+          bearerToken = authHdr.slice(7).trim();
+        }
+
+        // Authenticate client identity
+        const configuredMaster = process.env.PAIRING_KEY || process.env.CYBERVPS_TOKEN || process.env.ENROLLMENT_TOKEN || (tunnelManager && tunnelManager.pairingKey) || 'cvps_enroll_master_token';
+        const isKeyValid = (pairing_key && (pairing_key === tunnelManager.pairingKey || pairing_key === configuredMaster || (db.enrollmentTokens && db.enrollmentTokens.has(pairing_key)))) ||
+                           (bearerToken && (bearerToken === tunnelManager.pairingKey || bearerToken === configuredMaster || (db.enrollmentTokens && db.enrollmentTokens.has(bearerToken))));
+        const isSessionValid = (session_token && tunnelManager.isValidSession(session_token)) ||
+                               (bearerToken && tunnelManager.isValidSession(bearerToken)) ||
+                               (bearerToken && db.sessions && db.sessions.has(bearerToken));
+
+        if (!isKeyValid && !isSessionValid) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: Valid pairing key or session token required' }));
+          return;
+        }
+
+        if (!machine_id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
+          return;
+        }
+
+        if (!db.machines.has(machine_id)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
+          return;
+        }
+
+        const streamToken = 'app_stream_tok_' + crypto.randomBytes(16).toString('hex');
+        db.appStreamAuthTokens.set(streamToken, {
+          machine_id,
+          pid: pid ? parseInt(pid, 10) : null,
+          hwnd: hwnd ? parseInt(hwnd, 10) : null,
+          app_id: app_id || null,
+          user: isSessionValid ? 'admin' : 'paired_client',
+          created_at: Date.now(),
+          expires_at: Date.now() + 60000 // 60s
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          token: streamToken,
+          machine_id,
+          pid,
+          hwnd,
+          expires_in: 60
+        }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // 2A-3. ENUMERATE APPLICATION GUI WINDOWS
+  if (pathname === '/api/v1/apps/windows' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const pid = parsedUrl.searchParams.get('pid');
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id parameter required' }));
+      return;
+    }
+    const machine = db.machines.get(machineId);
+    if (!machine) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Machine '${machineId}' not found`, not_found: true }));
+      return;
+    }
+    const mStatus = getMachineStatus(machine);
+    if (mStatus === 'offline') {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Host machine '${machineId}' is offline.`, offline: true }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'AppWindowList', { pid: pid ? parseInt(pid, 10) : null }, 8000);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message, success: false }));
+    }
+    return;
+  }
+
+  // 2A-4. CAPTURE SINGLE APPLICATION WINDOW FRAME SNAPSHOT
+  if (pathname === '/api/v1/apps/frame' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const pid = parsedUrl.searchParams.get('pid');
+    const hwnd = parsedUrl.searchParams.get('hwnd');
+    const raw = parsedUrl.searchParams.get('raw') === 'true' || parsedUrl.searchParams.get('raw') === '1';
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'machine_id parameter required' }));
+      return;
+    }
+    const machine = db.machines.get(machineId);
+    if (!machine) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Machine '${machineId}' not found`, not_found: true }));
+      return;
+    }
+    try {
+      const data = await sendAgentRequest(machineId, 'AppWindowFrame', {
+        pid: pid ? parseInt(pid, 10) : null,
+        hwnd: hwnd ? parseInt(hwnd, 10) : null,
+        quality: 85
+      }, 10000);
+      if (raw && data && data.data) {
+        const imgBuf = Buffer.from(data.data, 'base64');
+        res.writeHead(200, { 'Content-Type': data.format === 'bmp' ? 'image/bmp' : 'image/jpeg', 'Content-Length': imgBuf.length });
+        res.end(imgBuf);
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message, success: false }));
+    }
     return;
   }
 
@@ -3412,6 +3555,66 @@ while True:
 // =============================================================================
 const wssRelay = new WebSocketServer({ noServer: true });
 const wssTerminal = new WebSocketServer({ noServer: true });
+const wssAppStream = new WebSocketServer({ noServer: true });
+
+function verifyAppStreamAuthorization(request, parsedUrl) {
+  const machineId = parsedUrl.searchParams.get('machine_id');
+  if (!machineId || !db.machines.has(machineId)) {
+    return { authorized: false, error: 'Machine not found in fleet', status: 404 };
+  }
+
+  // 1. Browser Origin verification: block untrusted cross-origin stream hijack attempts
+  const origin = request.headers['origin'];
+  if (origin) {
+    try {
+      const originUrl = new URL(origin);
+      const hostHeader = (request.headers.host || '').toLowerCase();
+      const originHost = originUrl.host.toLowerCase();
+      const originHostname = originUrl.hostname.toLowerCase();
+
+      const explicitTrustedOrigins = new Set([
+        'cyberdrivepro.github.io',
+        'cybervps-space-station.up.railway.app',
+        'cybervps-render-control.onrender.com',
+        'cybervps-space-station.netlify.app',
+        'localhost',
+        '127.0.0.1'
+      ]);
+
+      const isHostMatch = (originHost === hostHeader) || (originHostname === hostHeader.split(':')[0]);
+      const isTrustedStatic = explicitTrustedOrigins.has(originHostname);
+      const isLoopback = (originHostname === '127.0.0.1' || originHostname === 'localhost');
+      const isCustomDomain = db.domains && db.domains.has(originHostname);
+
+      if (!isHostMatch && !isTrustedStatic && !isLoopback && !isCustomDomain) {
+        return { authorized: false, error: `Forbidden: Untrusted cross-origin request from '${origin}'`, status: 403 };
+      }
+    } catch (_) {
+      return { authorized: false, error: 'Forbidden: Malformed Origin header', status: 403 };
+    }
+  }
+
+  // 2. Direct pairing key on stream websocket is strictly rejected
+  const cred = parsedUrl.searchParams.get('token');
+  if (tunnelManager.pairingKey && (cred === tunnelManager.pairingKey || parsedUrl.searchParams.get('pairing_key') || parsedUrl.searchParams.get('pair'))) {
+    return { authorized: false, error: 'Unauthorized: Direct pairing key is not accepted on app stream WebSocket. Mint a one-time token via POST /api/v1/apps/stream/token', status: 401 };
+  }
+
+  // 3. Single-use token verification
+  if (cred && db.appStreamAuthTokens.has(cred)) {
+    const record = db.appStreamAuthTokens.get(cred);
+    db.appStreamAuthTokens.delete(cred); // Single-use consumption
+    if (Date.now() > record.expires_at) {
+      return { authorized: false, error: 'Unauthorized: Stream token expired', status: 401 };
+    }
+    if (record.machine_id !== machineId) {
+      return { authorized: false, error: 'Forbidden: Stream token not authorized for this machine', status: 403 };
+    }
+    return { authorized: true, user: record.user || 'paired_client', machineId, pid: record.pid, hwnd: record.hwnd };
+  }
+
+  return { authorized: false, error: 'Unauthorized: Invalid or expired app stream token', status: 401 };
+}
 
 function verifyTerminalAuthorization(request, parsedUrl) {
   const machineId = parsedUrl.searchParams.get('machine_id');
@@ -3529,6 +3732,20 @@ server.on('upgrade', (request, socket, head) => {
       ws._terminalAuth = auth;
       wssTerminal.emit('connection', ws, request);
     });
+  } else if (pathname === '/api/v1/apps/stream') {
+    const auth = verifyAppStreamAuthorization(request, parsedUrl);
+    if (!auth.authorized) {
+      const statusCode = auth.status || 401;
+      const statusText = statusCode === 404 ? 'Not Found' : (statusCode === 403 ? 'Forbidden' : 'Unauthorized');
+      socket.write(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n{"error":"${auth.error}"}\r\n`);
+      socket.destroy();
+      return;
+    }
+
+    wssAppStream.handleUpgrade(request, socket, head, (ws) => {
+      ws._appStreamAuth = auth;
+      wssAppStream.emit('connection', ws, request);
+    });
   } else if (pathname.startsWith('/tunnel/')) {
     handleTunnelWebSocketUpgrade(request, socket, head, pathname);
   } else {
@@ -3578,6 +3795,19 @@ wssRelay.on('connection', (ws, request) => {
           clearTimeout(pending.timer);
           db.pendingRequests.delete(reqId);
           pending.reject(new Error(`Host '${machineId}' disconnected during operation`));
+        }
+      }
+      for (const [sId, aStream] of db.appStreams.entries()) {
+        if (aStream.machineId === machineId) {
+          if (aStream.wsBrowser && aStream.wsBrowser.readyState === WebSocket.OPEN) {
+            aStream.wsBrowser.send(JSON.stringify({
+              type: 'status',
+              status: 'disconnected',
+              error: `Host machine '${machineId}' disconnected from Space Station control plane.`
+            }));
+            try { aStream.wsBrowser.close(1001, 'Host disconnected'); } catch (_) {}
+          }
+          db.appStreams.delete(sId);
         }
       }
     }
@@ -3663,6 +3893,89 @@ wssTerminal.on('connection', (ws, request) => {
       payload: { session_id: sessionId }
     });
     db.terminalSessions.delete(sessionId);
+  });
+});
+
+wssAppStream.on('connection', (ws, request) => {
+  const parsed = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
+  const auth = ws._appStreamAuth || verifyAppStreamAuthorization(request, parsed);
+
+  if (!auth || !auth.authorized) {
+    ws.send(JSON.stringify({ type: 'status', status: 'unauthorized', error: auth ? auth.error : 'Unauthorized' }));
+    ws.close(4001, 'Unauthorized');
+    return;
+  }
+
+  const machineId = auth.machineId;
+  const pid = parsed.searchParams.get('pid') ? parseInt(parsed.searchParams.get('pid'), 10) : auth.pid;
+  const hwnd = parsed.searchParams.get('hwnd') ? parseInt(parsed.searchParams.get('hwnd'), 10) : auth.hwnd;
+  const fps = Math.min(Math.max(parseInt(parsed.searchParams.get('fps') || '25', 10), 1), 60);
+  const quality = Math.min(Math.max(parseInt(parsed.searchParams.get('quality') || '80', 10), 20), 95);
+
+  if (!machineId || !db.machines.has(machineId)) {
+    ws.send(JSON.stringify({ type: 'status', status: 'error', error: 'Machine not found' }));
+    ws.close();
+    return;
+  }
+
+  const streamId = 'app_stream_' + crypto.randomUUID().slice(0, 8);
+  db.appStreams.set(streamId, {
+    streamId,
+    machineId,
+    pid,
+    hwnd,
+    wsBrowser: ws,
+    startedAt: Date.now()
+  });
+
+  logAudit('app_stream_started', auth.user || 'user', machineId, `Live app stream ${streamId} started for PID ${pid || 'active'} (HWND: ${hwnd || 'auto'})`);
+
+  sendServerCommand(machineId, {
+    type: 'AppStreamStart',
+    payload: {
+      stream_id: streamId,
+      pid: pid || null,
+      hwnd: hwnd || null,
+      fps,
+      quality
+    }
+  });
+
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'ping') {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'pong', client_time: msg.client_time || msg.t, server_time: Date.now() }));
+        }
+      } else if (msg.type === 'select_window') {
+        const selectedHwnd = msg.hwnd ? parseInt(msg.hwnd, 10) : null;
+        const stream = db.appStreams.get(streamId);
+        if (stream) {
+          stream.hwnd = selectedHwnd;
+        }
+        sendServerCommand(machineId, {
+          type: 'AppStreamSelectWindow',
+          payload: { stream_id: streamId, hwnd: selectedHwnd }
+        });
+      } else if (msg.type === 'stop') {
+        sendServerCommand(machineId, {
+          type: 'AppStreamStop',
+          payload: { stream_id: streamId }
+        });
+        db.appStreams.delete(streamId);
+        try { ws.close(); } catch (_) {}
+      }
+    } catch (_) {}
+  });
+
+  ws.on('close', () => {
+    sendServerCommand(machineId, {
+      type: 'AppStreamStop',
+      payload: { stream_id: streamId }
+    });
+    db.appStreams.delete(streamId);
+    logAudit('app_stream_stopped', auth.user || 'user', machineId, `Live app stream ${streamId} terminated`);
   });
 });
 
@@ -3913,6 +4226,24 @@ function handleAgentMessage(ws, msg) {
     const sess = db.terminalSessions.get(payload.session_id);
     if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
       sess.wsBrowser.send(JSON.stringify({ type: 'exit', ...payload }));
+    }
+    return { success: true };
+  }
+
+  else if (type === 'AppStreamFrame') {
+    const { stream_id } = payload;
+    const stream = db.appStreams.get(stream_id);
+    if (stream && stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
+      stream.wsBrowser.send(JSON.stringify({ type: 'frame', ...payload }));
+    }
+    return { success: true };
+  }
+
+  else if (type === 'AppStreamStatus') {
+    const { stream_id } = payload;
+    const stream = db.appStreams.get(stream_id);
+    if (stream && stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
+      stream.wsBrowser.send(JSON.stringify({ type: 'status', ...payload }));
     }
     return { success: true };
   }
