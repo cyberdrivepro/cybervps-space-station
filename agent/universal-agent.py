@@ -6262,7 +6262,7 @@ def handle_cli_subcommands(args):
                 with open(os.path.join(dest, "config.json"), "w", encoding="utf-8") as cf:
                     json.dump({
                         "server_url": server_url,
-                        "server_urls": list(dict.fromkeys([server_url, "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
+                        "server_urls": list(dict.fromkeys([server_url, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
                         "token": token,
                         "machine_id": mid,
                         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -6402,7 +6402,7 @@ def handle_cli_subcommands(args):
 
         # Reconcile 3-Backend policy
         b_list = cfg.get("server_urls") or []
-        for def_b in ["https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"]:
+        for def_b in ["https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"]:
             if def_b not in b_list:
                 b_list.append(def_b)
         cfg["server_urls"] = b_list
@@ -6694,7 +6694,7 @@ if __name__ == "__main__":
             with open(os.path.join(cvps_dir, "config.json"), "w") as f:
                 json.dump({
                     "server_url": target,
-                    "server_urls": list(dict.fromkeys([target, "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
+                    "server_urls": list(dict.fromkeys([target, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
                     "token": agent.token,
                     "machine_id": agent.machine_id,
                     "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
