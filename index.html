@@ -3493,14 +3493,26 @@
 
         if (!res.ok) {
           let errDetail = res.statusText;
+          let errCode = 'HTTP_' + res.status;
           try {
             const errJson = await res.json();
             if (errJson && errJson.error) errDetail = errJson.error;
+            if (errJson && errJson.code) errCode = errJson.code;
           } catch (_) {}
-          throw new Error(`HTTP ${res.status}: ${errDetail}`);
+
+          // If a stale admin token caused a 401, evict it and retry once with pairing key if available
+          if (res.status === 401 && savedAdminToken && effectivePairKey && !options._retriedWithPairKey) {
+            try { localStorage.removeItem('cvps_admin_token'); } catch (_) {}
+            if (typeof appState !== 'undefined' && appState.adminAuth) appState.adminAuth = null;
+            const retryHeaders = { ...headers };
+            delete retryHeaders['Authorization'];
+            return apiRequest(endpoint, { ...options, headers: retryHeaders, _retriedWithPairKey: true });
+          }
+
+          return { ok: false, status: res.status, code: errCode, error: `HTTP ${res.status}: ${errDetail}` };
         }
         const data = await res.json();
-        return { ok: true, data, duration };
+        return { ok: true, status: res.status, data, duration };
       } catch (err) {
         clearTimeout(timeoutId);
         let errorMsg = err.message || 'Network request failed';
@@ -3511,82 +3523,100 @@
             errorMsg = `Host request timed out after ${Math.round(timeoutMs/1000)}s (remote host may still be processing)`;
           }
         }
-        return { ok: false, error: errorMsg, isTimeout: controller.signal.aborted };
+        return { ok: false, status: 0, code: 'NETWORK_ERROR', error: errorMsg, isTimeout: controller.signal.aborted };
       }
     }
 
     // 4. CORE DATA SYNCHRONIZATION
     async function syncData(manual = false) {
-      const healthCheck = await apiRequest('/health', { timeout: 8000 });
+      if (appState._syncInProgress && !manual) return;
+      appState._syncInProgress = true;
+      try {
+        const healthCheck = await apiRequest('/health', { timeout: 8000 });
 
-      const statusDot = document.getElementById('status-dot');
-      const statusLabel = document.getElementById('status-label');
-      const statusEndpoint = document.getElementById('status-endpoint');
-      const banner = document.getElementById('connection-banner');
+        const statusDot = document.getElementById('status-dot');
+        const statusLabel = document.getElementById('status-label');
+        const statusEndpoint = document.getElementById('status-endpoint');
+        const banner = document.getElementById('connection-banner');
 
-      statusEndpoint.innerText = appConfig.serverUrl;
+        statusEndpoint.innerText = appConfig.serverUrl;
 
-      if (!healthCheck.ok) {
-        appState.isOnline = false;
-        appState.latencyMs = null;
-        statusDot.className = 'pulse-dot offline';
-        statusLabel.innerText = 'OFFLINE';
-        banner.style.display = 'flex';
-        document.getElementById('board-backend-status').innerHTML = '<span style="color:var(--status-danger);">Unreachable</span>';
-        if (manual) {
-          let errDetail = healthCheck.error || '';
-          if (window.location.protocol === 'https:' && appConfig.serverUrl.startsWith('http://') && !appConfig.serverUrl.includes('localhost')) {
-            errDetail = 'Browser blocked insecure HTTP connection on HTTPS GitHub Pages. Use HTTPS.';
+        if (!healthCheck.ok) {
+          appState.isOnline = false;
+          appState.latencyMs = null;
+          statusDot.className = 'pulse-dot offline';
+          statusLabel.innerText = 'OFFLINE';
+          banner.style.display = 'flex';
+          document.getElementById('board-backend-status').innerHTML = '<span style="color:var(--status-danger);">Unreachable</span>';
+          if (manual) {
+            let errDetail = healthCheck.error || '';
+            if (window.location.protocol === 'https:' && appConfig.serverUrl.startsWith('http://') && !appConfig.serverUrl.includes('localhost')) {
+              errDetail = 'Browser blocked insecure HTTP connection on HTTPS GitHub Pages. Use HTTPS.';
+            }
+            showToast(`Could not reach backend at ${appConfig.serverUrl} (${errDetail})`, 'error');
           }
-          showToast(`Could not reach backend at ${appConfig.serverUrl} (${errDetail})`, 'error');
+          renderAllViews();
+          return;
         }
-        renderAllViews();
-        return;
-      }
 
-      // Backend Healthy
-      appState.isOnline = true;
-      appState.latencyMs = healthCheck.duration;
-      appState.lastSync = new Date();
-      statusDot.className = 'pulse-dot online';
-      statusLabel.innerText = `ONLINE (${healthCheck.duration}ms)`;
-      banner.style.display = 'none';
-      document.getElementById('board-backend-status').innerHTML = `<span style="color:var(--status-success);">Healthy (${healthCheck.duration}ms)</span>`;
-      document.getElementById('health-timestamp').innerText = 'Synced ' + appState.lastSync.toLocaleTimeString();
+        // Backend Healthy / Awake
+        appState.isOnline = true;
+        appState.latencyMs = healthCheck.duration;
+        appState.lastSync = new Date();
+        statusDot.className = 'pulse-dot online';
+        statusLabel.innerText = `ONLINE (${healthCheck.duration}ms)`;
+        banner.style.display = 'none';
+        document.getElementById('board-backend-status').innerHTML = `<span style="color:var(--status-success);">Healthy (${healthCheck.duration}ms)</span>`;
+        document.getElementById('health-timestamp').innerText = 'Synced ' + appState.lastSync.toLocaleTimeString();
 
-      if (healthCheck.data) {
-        if (healthCheck.data.commit_sha) {
-          const shaEl = document.getElementById('footer-build-sha');
-          if (shaEl) shaEl.innerText = healthCheck.data.commit_sha;
+        if (healthCheck.data) {
+          if (healthCheck.data.commit_sha) {
+            const shaEl = document.getElementById('footer-build-sha');
+            if (shaEl) shaEl.innerText = healthCheck.data.commit_sha;
+          }
+          if (healthCheck.data.version) {
+            const verEl = document.getElementById('footer-build-ver');
+            if (verEl) verEl.innerText = `v${healthCheck.data.version} Stable`;
+          }
         }
-        if (healthCheck.data.version) {
-          const verEl = document.getElementById('footer-build-ver');
-          if (verEl) verEl.innerText = `v${healthCheck.data.version} Stable`;
-        }
-      }
 
-      // Parallel Fetch of Data Contracts
-      const [mRes, bRes, vRes, tRes, aRes, accRes] = await Promise.all([
-        apiRequest('/api/v1/machines'),
-        apiRequest('/api/v1/bridge/mappings'),
-        apiRequest('/api/v1/vpn/network'),
-        apiRequest('/api/v1/tunnels'),
-        apiRequest('/api/v1/audit'),
-        apiRequest('/api/v1/access/status')
-      ]);
+        // Parallel Fetch of Data Contracts
+        const [mRes, bRes, vRes, tRes, aRes, accRes] = await Promise.all([
+          apiRequest('/api/v1/machines'),
+          apiRequest('/api/v1/bridge/mappings'),
+          apiRequest('/api/v1/vpn/network'),
+          apiRequest('/api/v1/tunnels'),
+          apiRequest('/api/v1/audit'),
+          apiRequest('/api/v1/access/status')
+        ]);
 
-      if (mRes.ok) appState.machines = mRes.data || [];
-      if (bRes.ok) appState.bridges = bRes.data || [];
-      if (vRes.ok) {
-        if (Array.isArray(vRes.data)) {
-          appState.vpn.peers = vRes.data;
-        } else if (vRes.data && Array.isArray(vRes.data.peers)) {
-          appState.vpn.peers = vRes.data.peers;
-          if (vRes.data.cidr) appState.vpn.cidr = vRes.data.cidr;
-        } else {
-          appState.vpn.peers = [];
+        if (mRes.status === 401 || bRes.status === 401 || vRes.status === 401) {
+          appState.authRequired = true;
+          if (manual) showToast('Authentication required on control plane. Please set pairing key or log in.', 'warning');
+        } else if (mRes.ok) {
+          appState.authRequired = false;
         }
-      }
+
+        if (mRes.ok) appState.machines = mRes.data || [];
+        if (bRes.ok) appState.bridges = bRes.data || [];
+        if (vRes.ok) {
+          if (Array.isArray(vRes.data)) {
+            appState.vpn.peers = vRes.data;
+          } else if (vRes.data && Array.isArray(vRes.data.peers)) {
+            appState.vpn.peers = vRes.data.peers;
+            if (vRes.data.cidr) appState.vpn.cidr = vRes.data.cidr;
+          } else {
+            appState.vpn.peers = [];
+          }
+        }
+        if (tRes.ok) appState.tunnels = tRes.data || [];
+        if (aRes.ok) appState.audit = aRes.data || [];
+        if (accRes.ok) {
+          appState.access = accRes.data;
+          if (accRes.data.provider && accRes.data.provider !== 'localhost') {
+            document.getElementById('board-tunnel-status').innerHTML = `<span style="color:var(--accent-cyan);">${accRes.data.provider.toUpperCase()} (${accRes.data.public_url})</span>`;
+          }
+        }
       if (tRes.ok) appState.tunnels = tRes.data || [];
       if (aRes.ok) appState.audit = aRes.data || [];
       if (accRes.ok) {
@@ -3613,6 +3643,8 @@
 
       if (manual) showToast('Data refreshed successfully', 'success');
       renderAllViews();
+    } finally {
+      appState._syncInProgress = false;
     }
 
     // 5. RENDER PRESENTATION LAYER
@@ -9438,7 +9470,10 @@
     function setupSyncInterval() {
       if (syncTimer) clearInterval(syncTimer);
       if (appConfig.refreshInterval > 0) {
-        syncTimer = setInterval(() => syncData(false), appConfig.refreshInterval);
+        syncTimer = setInterval(() => {
+          if (appState.authRequired) return;
+          syncData(false);
+        }, appConfig.refreshInterval);
       }
     }
 

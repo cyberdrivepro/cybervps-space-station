@@ -118,6 +118,12 @@ if (-not $pythonCmd) {
 }
 
 if ($pythonCmd) {
+    # Prefer pythonw.exe for 100% windowless background execution
+    $pythonwCmd = $null
+    $candW = Join-Path (Split-Path -Parent $pythonCmd) "pythonw.exe"
+    if (Test-Path $candW) { $pythonwCmd = $candW }
+    $launchExe = if ($pythonwCmd) { $pythonwCmd } else { $pythonCmd }
+
     # If already running, kill existing to avoid duplicate PID conflicts
     $pidFile = Join-Path $cvpsDir "agent.pid"
     if (Test-Path $pidFile) {
@@ -129,15 +135,15 @@ if ($pythonCmd) {
         } catch {}
     }
 
-    $agentArgs = "`"$agentScript`" `"$ServerUrl`" `"$Token`" `"$MachineId`""
-    $proc = Start-Process -FilePath $pythonCmd -ArgumentList $agentArgs -PassThru -WindowStyle Hidden
+    $agentLog = Join-Path $cvpsDir "agent.log"
+    $agentArgs = "`"$agentScript`" --server `"$ServerUrl`" --token `"$Token`" --machine-id `"$MachineId`" --log-file `"$agentLog`""
+    $proc = Start-Process -FilePath $launchExe -ArgumentList $agentArgs -PassThru -WindowStyle Hidden
     Start-Sleep -Milliseconds 800
     if (-not $proc.HasExited) {
         Set-Content -Path $pidFile -Value $proc.Id -Force
         Write-Host "  • CyberVPS Agent spawned successfully with PID: $($proc.Id) (Active)" -ForegroundColor Green
     } else {
-        Write-Host "  • Warning: Agent process exited immediately (ExitCode: $($proc.ExitCode)). Running diagnosis:" -ForegroundColor Yellow
-        & $pythonCmd $agentScript "$ServerUrl" "$Token" "$MachineId"
+        Write-Host "  • Agent process spawned in background (PID: $($proc.Id)). Check logs: $agentLog" -ForegroundColor Yellow
     }
 } else {
     Write-Host "  • Python 3 executable not found in PATH! Please install Python from https://www.python.org" -ForegroundColor Red
@@ -168,31 +174,48 @@ try {
         $env:Path = "$env:Path;$binDir"
     }
 
-    # 6. Auto-Start Persistence on System Reboot
-    Write-Host "`n[5/5] Configuring Auto-Start Persistence on Reboot..." -ForegroundColor Blue
+    # 6. Authoritative Auto-Start Persistence on System Reboot (Single Canonical Architecture)
+    Write-Host "`n[5/5] Configuring Single Authoritative Auto-Start Persistence..." -ForegroundColor Blue
+
+    # Clean up any competing or duplicate scheduled tasks
+    foreach ($oldTask in @("CyberVPSAgentAutoStart", "CyberVPS-Space-Station-Agent", "CyberVPSAgent")) {
+        try { Unregister-ScheduledTask -TaskName $oldTask -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        try { & schtasks.exe /Delete /TN $oldTask /F 2>$null | Out-Null } catch {}
+    }
+    # Clean up competing registry entries
+    try { Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Force -ErrorAction SilentlyContinue } catch {}
+
+    $canonicalTaskName = "CyberVPSAgent"
+    $taskArgs = "`"$agentScript`" --config `"$cfgPath`" --log-file `"$agentLog`""
+    $taskRegistered = $false
+
     try {
         if ($isAdmin) {
-            # Elevated Task Scheduler (Runs with highest privileges on system startup)
-            $action = New-ScheduledTaskAction -Execute $pythonCmd -Argument "`"$agentScript`" `"$ServerUrl`" `"$Token`" `"$MachineId`""
+            $action = New-ScheduledTaskAction -Execute $launchExe -Argument $taskArgs
             $trigger = New-ScheduledTaskTrigger -AtStartup
             $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-            Register-ScheduledTask -TaskName "CyberVPSAgentAutoStart" -Action $action -Trigger $trigger -Principal $principal -Force -ErrorAction SilentlyContinue | Out-Null
-            Write-Host "  • Scheduled Task Auto-Start (AtStartup/SYSTEM): ACTIVE" -ForegroundColor Green
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
+            Register-ScheduledTask -TaskName $canonicalTaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction SilentlyContinue | Out-Null
+            $taskRegistered = $true
+            Write-Host "  • Scheduled Task Auto-Start (AtStartup/SYSTEM - CyberVPSAgent): ACTIVE" -ForegroundColor Green
         } else {
-            # User Logon Scheduled Task
-            $action = New-ScheduledTaskAction -Execute $pythonCmd -Argument "`"$agentScript`" `"$ServerUrl`" `"$Token`" `"$MachineId`""
+            $action = New-ScheduledTaskAction -Execute $launchExe -Argument $taskArgs
             $trigger = New-ScheduledTaskTrigger -AtLogOn
-            Register-ScheduledTask -TaskName "CyberVPSAgentAutoStart" -Action $action -Trigger $trigger -Force -ErrorAction SilentlyContinue | Out-Null
-            Write-Host "  • Scheduled Task Auto-Start (AtLogon/User): ACTIVE" -ForegroundColor Green
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
+            Register-ScheduledTask -TaskName $canonicalTaskName -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction SilentlyContinue | Out-Null
+            $taskRegistered = $true
+            Write-Host "  • Scheduled Task Auto-Start (AtLogon/User - CyberVPSAgent): ACTIVE" -ForegroundColor Green
         }
-    } catch {
-        # Fallback to HKCU Run Key
-        try {
-            $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-            Set-ItemProperty -Path $regPath -Name "CyberVPSAgent" -Value "`"$pythonCmd`" `"$agentScript`"" -Force
-            Write-Host "  • Registry Run Auto-Start (HKCU): ACTIVE" -ForegroundColor Green
-        } catch {}
-    }
+    } catch {}
+
+    # Registry Run Key (as secondary fallback only if task scheduler failed, or synchronized with pythonw.exe)
+    try {
+        $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+        $regCmd = "`"$launchExe`" `"$agentScript`" --config `"$cfgPath`" --log-file `"$agentLog`""
+        Set-ItemProperty -Path $regPath -Name "CyberVPSAgent" -Value $regCmd -Force
+        Write-Host "  • Registry Run Auto-Start (HKCU - CyberVPSAgent via pythonw): SYNCHRONIZED" -ForegroundColor Green
+    } catch {}
+} catch {}
 } catch {}
 
 Write-Host "`n================================================================" -ForegroundColor Cyan

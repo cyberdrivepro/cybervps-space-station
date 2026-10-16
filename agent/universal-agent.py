@@ -95,6 +95,22 @@ if sys.version_info >= (3, 7):
     except Exception:
         pass
 
+# Enforce ZERO console window popup on Windows for all subprocesses
+if sys.platform == "win32":
+    _orig_popen_init = subprocess.Popen.__init__
+    def _silent_popen_init(self, *args, **kwargs):
+        si = kwargs.get("startupinfo")
+        if si is None or not hasattr(si, "lpAttributeList"):
+            cflags = kwargs.get("creationflags", 0)
+            kwargs["creationflags"] = cflags | 0x08000000  # CREATE_NO_WINDOW
+            if si is None:
+                si = subprocess.STARTUPINFO()
+                kwargs["startupinfo"] = si
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 0  # SW_HIDE
+        _orig_popen_init(self, *args, **kwargs)
+    subprocess.Popen.__init__ = _silent_popen_init
+
 PROTOCOL_VERSION = "2.1.1"
 AGENT_CAPABILITIES = [
     "apps", "desktop_launch", "wireguard", "docker", "sandboxes", "rdp", "vnc", "terminal", "file_manager", "interactive_gui", "ota_update"
@@ -849,17 +865,49 @@ class CyberVPSAgent:
         return new_id
 
     def get_hardware_identity(self):
+        if hasattr(self, "_cached_hardware_identity") and self._cached_hardware_identity:
+            return self._cached_hardware_identity
+
         sys_os = platform.system()
         hw_uuid = None
         hw_serial = None
         if sys_os == "Windows":
-            try:
-                cmd = ["powershell.exe", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID"]
-                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode().strip()
-                if out and len(out) > 10 and "error" not in out.lower():
-                    hw_uuid = out
-            except Exception:
-                pass
+            # 1. Zero-process fast lookup via Windows Registry
+            if winreg:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as k:
+                        val = winreg.QueryValueEx(k, "MachineGuid")[0]
+                        if val and len(val) > 8:
+                            hw_uuid = str(val).strip()
+                except Exception:
+                    pass
+                try:
+                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\BIOS") as b:
+                        try:
+                            s = str(winreg.QueryValueEx(b, "SystemSerialNumber")[0]).strip()
+                            if s and "to be filled" not in s.lower() and s != "0" and len(s) > 2:
+                                hw_serial = s
+                        except Exception:
+                            pass
+                        if not hw_serial:
+                            try:
+                                s = str(winreg.QueryValueEx(b, "BaseBoardProduct")[0]).strip()
+                                if s and len(s) > 2:
+                                    hw_serial = s
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            # 2. Subprocess fallback (guaranteed silent without console window)
+            if not hw_uuid:
+                try:
+                    cmd = ["powershell.exe", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID"]
+                    out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode().strip()
+                    if out and len(out) > 10 and "error" not in out.lower():
+                        hw_uuid = out
+                except Exception:
+                    pass
             if not hw_uuid:
                 try:
                     cmd = ["wmic", "csproduct", "get", "uuid"]
@@ -871,13 +919,14 @@ class CyberVPSAgent:
                             break
                 except Exception:
                     pass
-            try:
-                cmd = ["powershell.exe", "-NoProfile", "-Command", "(Get-CimInstance Win32_BIOS).SerialNumber"]
-                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode().strip()
-                if out and "error" not in out.lower():
-                    hw_serial = out
-            except Exception:
-                pass
+            if not hw_serial:
+                try:
+                    cmd = ["powershell.exe", "-NoProfile", "-Command", "(Get-CimInstance Win32_BIOS).SerialNumber"]
+                    out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode().strip()
+                    if out and "error" not in out.lower():
+                        hw_serial = out
+                except Exception:
+                    pass
         elif sys_os == "Linux":
             dmi_uuid = "/sys/class/dmi/id/product_uuid"
             if os.path.exists(dmi_uuid):
@@ -5870,6 +5919,20 @@ class CyberVPSAgent:
                 return False
 
     def run(self):
+        if sys.platform == "win32" and ctypes:
+            try:
+                safe_mid = re.sub(r'[^a-zA-Z0-9_]', '_', str(self.machine_id))
+                mutex_name = f"Local\\CyberVPS_Agent_Mutex_{safe_mid}"
+                h_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
+                if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+                    print(f"[!] Another CyberVPS agent instance is already active for [{self.machine_id}]. Exiting silently.", flush=True)
+                    sys.exit(0)
+                self._singleton_mutex = h_mutex
+            except SystemExit:
+                raise
+            except Exception:
+                pass
+
         pid_file = self.pid_file
         try:
             if os.path.exists(pid_file):
@@ -6588,6 +6651,23 @@ if __name__ == "__main__":
                 pass
             i += 2
         elif not a.startswith("-"):
+            if a.lower() in ("start", "run", "daemon"):
+                i += 1
+                continue
+            if a.lower() in ("stop", "kill"):
+                try:
+                    home = os.path.expanduser("~")
+                    pfile = os.path.join(home, ".cybervps", "agent.pid")
+                    if os.path.exists(pfile):
+                        with open(pfile, "r") as pf:
+                            opid = int(pf.read().strip())
+                        if sys.platform == "win32":
+                            subprocess.run(["taskkill", "/F", "/PID", str(opid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        else:
+                            os.kill(opid, signal.SIGTERM)
+                except Exception:
+                    pass
+                sys.exit(0)
             if pos_idx == 0:
                 target = a
             elif pos_idx == 1:

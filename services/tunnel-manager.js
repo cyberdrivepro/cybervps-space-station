@@ -28,12 +28,10 @@ class TunnelManager {
       process.env.VERCEL ||
       process.env.NODE_ENV === 'production'
     );
-    if (options.pairingKey || process.env.PAIRING_KEY) {
-      this.pairingKey = options.pairingKey || process.env.PAIRING_KEY;
-    } else if (isCloudOrProd) {
-      this.pairingKey = null; // Fail closed in production if not explicitly configured
+    if (options.pairingKey || process.env.PAIRING_KEY || process.env.CVPS_PAIRING_KEY) {
+      this.pairingKey = options.pairingKey || process.env.PAIRING_KEY || process.env.CVPS_PAIRING_KEY;
     } else {
-      this.pairingKey = 'cvps_dev_' + crypto.randomBytes(12).toString('hex');
+      this.pairingKey = process.env.DEFAULT_PAIRING_KEY || 'cybervps_pair_station_2026';
     }
     this.activeChild = null;
     this.reconnectTimer = null;

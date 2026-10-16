@@ -247,8 +247,13 @@ class SelfHealingSupervisor:
         token = cfg.get("token") or "cvps_enroll_master_token"
         mid = cfg.get("machine_id") or ""
 
+        py_exe = sys.executable
+        if platform.system() == "Windows":
+            pyw = os.path.join(os.path.dirname(py_exe), "pythonw.exe")
+            if os.path.exists(pyw):
+                py_exe = pyw
         cmd = [
-            sys.executable,
+            py_exe,
             self.primary_script,
             "--server", server_url,
             "--token", token,

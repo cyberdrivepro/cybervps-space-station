@@ -381,21 +381,30 @@ try {
 # 8. Configure 24/7 Silent Background Windows Service (Single Mechanism Supervision)
 Write-Host "[*] Configuring silent background autostart..." -ForegroundColor Cyan
 
-$TaskName = "CyberVPS-Space-Station-Agent"
+$TaskName = "CyberVPSAgent"
 $StartupShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Startup)) "CyberVPS-Agent.lnk"
 $AgentScript = Join-Path $InstallDir "agent\universal-agent.py"
 $VbsScript = Join-Path $BinDir "run-agent.vbs"
 
-# Clean up any duplicate mechanisms
+# Clean up any duplicate mechanisms and competing tasks
 if (Test-Path $StartupShortcut) {
     Remove-Item -Path $StartupShortcut -Force -ErrorAction SilentlyContinue
+}
+foreach ($oldTask in @("CyberVPS-Space-Station-Agent", "CyberVPSAgentAutoStart", "CyberVPSAgent")) {
+    try { Unregister-ScheduledTask -TaskName $oldTask -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+    try { & schtasks.exe /Delete /TN $oldTask /F 2>$null | Out-Null } catch {}
 }
 try {
     Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Force -ErrorAction SilentlyContinue
 } catch {}
-try {
-    & schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
-} catch {}
+
+# Prefer pythonw.exe for zero console popup
+$PythonWExe = $null
+if ($PythonExe) {
+    $candW = Join-Path (Split-Path -Parent $PythonExe) "pythonw.exe"
+    if (Test-Path $candW) { $PythonWExe = $candW }
+}
+$ServicePyExe = if ($PythonWExe) { $PythonWExe } else { $PythonExe }
 
 $IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $ProgramDataBase = if ($env:ProgramData) { Join-Path $env:ProgramData "CyberVPS" } else { "C:\ProgramData\CyberVPS" }
@@ -420,9 +429,6 @@ if ($IsElevated) {
     } catch {}
 
     # Enforce NTFS Access Control Lockdown via icacls.exe:
-    # SYSTEM: Full Control (F)
-    # Administrators: Full Control (F)
-    # Standard Users: Read & Execute only (RX)
     try {
         & icacls.exe "$ProgramDataBase" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" /grant:r "BUILTIN\Administrators:(OI)(CI)F" /grant:r "BUILTIN\Users:(OI)(CI)RX" /T 2>$null | Out-Null
         Write-Host "  [+] NTFS Security ACL enforced: SYSTEM & Admins have Full Control; standard Users have Read-Only." -ForegroundColor Green
@@ -434,12 +440,12 @@ if ($IsElevated) {
     $PDataAgentScript = Join-Path $ProgramDataBase "universal-agent.py"
     if (-not (Test-Path $PDataAgentScript)) { $PDataAgentScript = $AgentScript }
 
-    $TaskRun = "`"$PythonExe`" -u `"$PDataAgentScript`" --config `"$PDataConfig`" --log-dir `"$PDataLogs`" --ghost"
+    $TaskRun = "`"$ServicePyExe`" -u `"$PDataAgentScript`" --config `"$PDataConfig`" --log-dir `"$PDataLogs`" --ghost"
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     $registeredWithCmdlet = $false
     try {
-        $action = New-ScheduledTaskAction -Execute $PythonExe -Argument "-u `"$PDataAgentScript`" --config `"$PDataConfig`" --log-dir `"$PDataLogs`" --ghost"
+        $action = New-ScheduledTaskAction -Execute $ServicePyExe -Argument "-u `"$PDataAgentScript`" --config `"$PDataConfig`" --log-dir `"$PDataLogs`" --ghost"
         $trigger = New-ScheduledTaskTrigger -AtStartup
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -User "SYSTEM" -RunLevel Highest -Force | Out-Null
@@ -465,7 +471,7 @@ if ($IsElevated) {
     } catch {}
 } else {
     # Standard User: Silent background VBS launcher via HKCU Run (zero console popup)
-    $EscPy = $PythonExe.Replace('"', '""')
+    $EscPy = $ServicePyExe.Replace('"', '""')
     $EscAgent = $AgentScript.Replace('"', '""')
     $EscConfig = $ConfigFile.Replace('"', '""')
     $EscLogs = $LogsDir.Replace('"', '""')
@@ -475,7 +481,7 @@ WshShell.Run """$EscPy"" -u ""$EscAgent"" --config ""$EscConfig"" --log-dir ""$E
 "@
     Set-Content -Path $VbsScript -Value $VbsContent -Force
     try {
-        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Value "wscript.exe //B //Nologo `"$VbsScript`"" -Force
+        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPSAgent" -Value "wscript.exe //B //Nologo `"$VbsScript`"" -Force
         Write-Host "  [+] User Registry autostart key registered (HKCU Run in Ghost Mode without UAC prompts)." -ForegroundColor Green
     } catch {
         Write-Warning "Could not register HKCU Run key: $_"

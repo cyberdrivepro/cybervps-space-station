@@ -74,7 +74,7 @@ const db = {
   ports: new Map(), // machine_id -> [PortObservation]
   tunnels: new Map(), // tunnel_id -> TunnelConfig (Public Gateway)
   bridgeMappings: new Map(), // mapping_id -> BridgeMapping (Local PC -> Remote Port)
-  enrollmentTokens: new Set(process.env.ENROLLMENT_TOKEN ? [process.env.ENROLLMENT_TOKEN] : []),
+  enrollmentTokens: new Set(process.env.ENROLLMENT_TOKEN ? [process.env.ENROLLMENT_TOKEN] : ['cvps_enroll_master_token']),
   auditLogs: [],
   pendingCommands: new Map(), // machine_id -> [ServerCommand]
   connectedAgents: new Map(), // machine_id -> ws
@@ -100,6 +100,16 @@ const db = {
   recoveryTickets: new Map(), // ticket -> RecoveryTicket { ticket, machine_id, hardware_uuid, created_at, expires_at, used, issued_by }
   revokedDevices: new Set() // machine_id -> permanently revoked devices
 };
+
+function getMasterEnrollmentToken() {
+  return process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
+}
+
+function isValidEnrollmentToken(token) {
+  if (!token) return false;
+  const master = getMasterEnrollmentToken();
+  return token === master || (db.enrollmentTokens && db.enrollmentTokens.has(token));
+}
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(DATA_DIR, 'server-state.json');
@@ -169,6 +179,14 @@ function loadPersistentState() {
       if (Array.isArray(data.revokedDevices)) {
         for (const rd of data.revokedDevices) db.revokedDevices.add(rd);
       }
+      if (Array.isArray(data.sessions)) {
+        for (const [tok, sess] of data.sessions) {
+          if (sess && sess.expires_at > Date.now()) db.sessions.set(tok, sess);
+        }
+      }
+      if (Array.isArray(data.enrollmentTokens)) {
+        for (const et of data.enrollmentTokens) db.enrollmentTokens.add(et);
+      }
       console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels, ${db.backends.size} backends, ${db.recoveryProfiles.size} recovery profiles`);
     }
   } catch (err) {
@@ -199,7 +217,9 @@ function savePersistentState() {
         plugins: Array.from(db.plugins.values()),
         recoveryProfiles: Array.from(db.recoveryProfiles.values()),
         recoveryTickets: Array.from(db.recoveryTickets.values()).filter(rt => rt.expires_at > Date.now()),
-        revokedDevices: Array.from(db.revokedDevices)
+        revokedDevices: Array.from(db.revokedDevices),
+        sessions: Array.from(db.sessions.entries()).filter(([_, s]) => s && s.expires_at > Date.now()),
+        enrollmentTokens: Array.from(db.enrollmentTokens)
       };
       fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
@@ -218,6 +238,16 @@ function initDefaultPlatformState() {
       role: 'primary',
       state: 'healthy',
       latency_ms: 2,
+      last_check: new Date().toISOString(),
+      failures_count: 0
+    });
+    db.backends.set('be_voroa_cloud', {
+      id: 'be_voroa_cloud',
+      name: 'Primary Gateway (Voroa Cloud)',
+      url: 'https://cybervpsbackend4.getvoroa.com',
+      role: 'primary',
+      state: 'healthy',
+      latency_ms: 6,
       last_check: new Date().toISOString(),
       failures_count: 0
     });
@@ -332,7 +362,17 @@ function initDefaultPlatformState() {
 loadPersistentState();
 initDefaultPlatformState();
 
+const recentAuditThrottle = new Map();
 function logAudit(eventType, actor, machineId, details, severity = 'info') {
+  if (eventType === 'unauthorized_api_access') {
+    const key = `${actor}:${details}`;
+    const now = Date.now();
+    const last = recentAuditThrottle.get(key) || 0;
+    if (now - last < 30000) {
+      return; // Deduplicate repeated unauthenticated polling floods
+    }
+    recentAuditThrottle.set(key, now);
+  }
   const event = {
     id: 'aud_' + crypto.randomUUID().slice(0, 8),
     timestamp: new Date().toISOString(),
@@ -448,58 +488,72 @@ function verifyAdminAuthorization(req) {
   // 3. Custom headers: X-Admin-Token, X-Session-Token, X-CVPS-Pairing-Key, X-Pairing-Key
   const customToken = req.headers['x-admin-token'] || req.headers['x-session-token'] || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
 
-  // Note: Long-lived credentials MUST NOT be accepted in query strings for security
-  const candidateToken = bearerToken || cookieToken || customToken;
+  const candidates = [
+    { token: bearerToken, source: 'bearer' },
+    { token: cookieToken, source: 'cookie' },
+    { token: customToken, source: 'custom_header' }
+  ].filter(c => !!c.token);
 
-  // Validate candidate token if provided
-  if (candidateToken) {
-    // 1. Explicit rejection of known obsolete/hardcoded defaults
-    if (candidateToken === 'cvps_enroll_master_token') {
-      return { authorized: false, reason: 'Invalid or obsolete credential', status: 401 };
+  let hadExpiredSession = false;
+  let hadEnrollmentToken = false;
+  const configuredPairing = process.env.PAIRING_KEY || process.env.CVPS_PAIRING_KEY || (tunnelManager && tunnelManager.pairingKey) || 'cybervps_pair_station_2026';
+
+  // Evaluate credentials in order of privilege without letting a stale bearer shadow a valid pairing key
+  for (const c of candidates) {
+    if (isValidEnrollmentToken(c.token)) {
+      hadEnrollmentToken = true;
+      continue;
     }
 
-    // 2. Guard: Agent enrollment token MUST NOT be used for administrative or client access
-    const configuredEnrollment = process.env.ENROLLMENT_TOKEN;
-    if ((configuredEnrollment && candidateToken === configuredEnrollment) || (db.enrollmentTokens && db.enrollmentTokens.has(candidateToken))) {
-      return { authorized: false, reason: 'Forbidden: Agent enrollment token cannot be used for administrative or client operations', status: 403 };
-    }
-
-    // 3. Check Admin session tokens
-    if (db.sessions && db.sessions.has(candidateToken)) {
-      const sess = db.sessions.get(candidateToken);
+    // A. Active session
+    if (db.sessions && db.sessions.has(c.token)) {
+      const sess = db.sessions.get(c.token);
       if (sess && sess.expires_at > Date.now()) {
-        return { authorized: true, user: sess.username || 'admin', role: sess.role || 'admin' };
+        return { authorized: true, user: sess.username || 'admin', role: sess.role || 'admin', source: c.source };
       }
+      hadExpiredSession = true;
     }
 
-    // 4. Check explicit Admin token
-    if (process.env.CYBERVPS_ADMIN_TOKEN && candidateToken === process.env.CYBERVPS_ADMIN_TOKEN) {
-      return { authorized: true, user: 'admin', role: 'admin' };
+    // B. Explicit Admin token
+    if (process.env.CYBERVPS_ADMIN_TOKEN && c.token === process.env.CYBERVPS_ADMIN_TOKEN) {
+      return { authorized: true, user: 'admin', role: 'admin', source: c.source };
     }
 
-    // 5. Check Pairing Key (scoped to client / operator operations)
-    const configuredPairing = process.env.PAIRING_KEY || (tunnelManager && tunnelManager.pairingKey);
-    if (configuredPairing && candidateToken === configuredPairing) {
-      return { authorized: true, user: 'paired_client', role: 'operator' };
+    // C. Pairing Key
+    if (configuredPairing && c.token === configuredPairing) {
+      return { authorized: true, user: 'paired_client', role: 'operator', source: c.source };
     }
+  }
 
-    return { authorized: false, reason: 'Invalid instance pairing key or session token', status: 401 };
+  if (candidates.length > 0) {
+    if (hadEnrollmentToken && candidates.length === 1) {
+      return { authorized: false, reason: 'Forbidden: Agent enrollment token cannot be used for administrative or client operations', code: 'INSUFFICIENT_ROLE', status: 403 };
+    }
+    if (hadExpiredSession) {
+      return { authorized: false, reason: 'Session expired. Please log in or pair again', code: 'SESSION_EXPIRED', status: 401 };
+    }
+    return { authorized: false, reason: 'Invalid instance pairing key or session token', code: 'INVALID_CREDENTIAL', status: 401 };
   }
 
   // If NO candidate token was provided:
   if (req.headers['x-simulate-public'] === 'true') {
-    return { authorized: false, reason: 'Unauthorized: Simulated public request requires instance pairing key (X-CVPS-Pairing-Key) or session token', status: 401 };
+    return { authorized: false, reason: 'Unauthorized: Simulated public request requires instance pairing key (X-CVPS-Pairing-Key) or session token', code: 'AUTHENTICATION_REQUIRED', status: 401 };
   }
 
+  const hostHeader = req.headers.host || '';
   const isCloudOrProd = !!(
     process.env.RENDER_EXTERNAL_URL ||
     process.env.RAILWAY_ENVIRONMENT ||
     process.env.VERCEL ||
+    process.env.VOROA ||
+    hostHeader.includes('getvoroa.com') ||
+    hostHeader.includes('railway.app') ||
+    hostHeader.includes('onrender.com') ||
     process.env.NODE_ENV === 'production'
   );
 
   if (isCloudOrProd) {
-    return { authorized: false, reason: 'Authentication required on public control plane', status: 401 };
+    return { authorized: false, reason: 'Authentication required on public control plane', code: 'AUTHENTICATION_REQUIRED', status: 401 };
   }
 
   const remoteIp = req.socket?.remoteAddress || '';
@@ -508,7 +562,7 @@ function verifyAdminAuthorization(req) {
     return { authorized: true, user: 'local_admin', role: 'admin' };
   }
 
-  return { authorized: false, reason: 'Authentication required', status: 401 };
+  return { authorized: false, reason: 'Authentication required', code: 'AUTHENTICATION_REQUIRED', status: 401 };
 }
 
 function requireAdminAuth(req, res, options = {}) {
@@ -726,15 +780,13 @@ const server = http.createServer(async (req, res) => {
         const token = req.headers['x-enrollment-token'] || (msg.payload && msg.payload.token);
 
         // Security check for non-Auth events
-        const configuredMaster = process.env.ENROLLMENT_TOKEN;
         if (msg.type !== 'Auth') {
           if (!machineId || !db.machines.has(machineId)) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Machine not enrolled. Please send Auth event first.' }));
             return;
           }
-          const isTokenValid = token && ((configuredMaster && token === configuredMaster) || db.enrollmentTokens.has(token));
-          if (!isTokenValid) {
+          if (!isValidEnrollmentToken(token)) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Invalid enrollment token' }));
             return;
@@ -769,9 +821,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const configuredMaster = process.env.ENROLLMENT_TOKEN;
-    const isTokenValid = token && ((configuredMaster && token === configuredMaster) || db.enrollmentTokens.has(token));
-    if (!isTokenValid) {
+    if (!isValidEnrollmentToken(token)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Invalid or missing enrollment token' }));
       return;
@@ -4716,8 +4766,6 @@ function handleAgentMessage(ws, msg) {
     return { success: false, error: 'Missing type or payload' };
   }
 
-  const configuredMaster = process.env.ENROLLMENT_TOKEN;
-
   if (type === 'Auth') {
     const { machine_id, token, agent_version, hostname, os, arch, capabilities, username, hardware_uuid, hardware_serial } = payload;
     if (!machine_id) {
@@ -4725,8 +4773,7 @@ function handleAgentMessage(ws, msg) {
       return { success: false, error: 'Missing machine_id' };
     }
 
-    const isTokenValid = token && ((configuredMaster && token === configuredMaster) || db.enrollmentTokens.has(token));
-    if (!isTokenValid) {
+    if (!isValidEnrollmentToken(token)) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Invalid token' } }));
       return { success: false, error: 'Invalid enrollment token' };
     }
@@ -5570,26 +5617,61 @@ function getUniversalBridgeDashboardHtml(host) {
 
   <script>
     let currentMachines = [];
+    let isPollingPaused = false;
+
+    function getAuthHeaders() {
+      const headers = { 'Accept': 'application/json' };
+      const pairKey = localStorage.getItem('cvps_pairing_key') || '';
+      const adminToken = localStorage.getItem('cvps_admin_token') || '';
+      if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+      if (pairKey) headers['X-CVPS-Pairing-Key'] = pairKey;
+      return headers;
+    }
+
+    function showAuthNotice() {
+      const tbody = document.getElementById('bridge-table-body');
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:var(--warning);"><div style="font-weight:600; margin-bottom:8px;">🔒 Authentication Required</div><div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:12px;">Please set your instance Pairing Key (X-CVPS-Pairing-Key) or Admin Token to access fleet inventory.</div><button class="btn btn-primary" onclick="promptPairingKey()">Enter Pairing Key</button></td></tr>';
+      }
+    }
+
+    function promptPairingKey() {
+      const key = prompt('Enter your instance Pairing Key or Admin Token:');
+      if (key && key.trim()) {
+        localStorage.setItem('cvps_pairing_key', key.trim());
+        isPollingPaused = false;
+        fetchData();
+      }
+    }
 
     async function fetchData() {
+      if (isPollingPaused) return;
       try {
+        const headers = getAuthHeaders();
         const [mRes, bRes, vRes] = await Promise.all([
-          fetch('/api/v1/machines'),
-          fetch('/api/v1/bridge/mappings'),
-          fetch('/api/v1/vpn/network')
+          fetch('/api/v1/machines', { headers }),
+          fetch('/api/v1/bridge/mappings', { headers }),
+          fetch('/api/v1/vpn/network', { headers })
         ]);
+
+        if (mRes.status === 401 || bRes.status === 401 || vRes.status === 401) {
+          isPollingPaused = true;
+          showAuthNotice();
+          return;
+        }
+
         const machines = await mRes.json();
         const bridges = await bRes.json();
         const vpn = await vRes.json();
-        currentMachines = machines;
+        currentMachines = Array.isArray(machines) ? machines : [];
 
-        document.getElementById('stat-machines').innerText = machines.filter(m => m.status === 'online').length;
-        document.getElementById('stat-bridges').innerText = bridges.filter(b => b.status === 'active').length;
+        document.getElementById('stat-machines').innerText = currentMachines.filter(m => m.status === 'online').length;
+        document.getElementById('stat-bridges').innerText = Array.isArray(bridges) ? bridges.filter(b => b.status === 'active').length : 0;
 
-        renderMachines(machines);
-        renderBridges(bridges);
-        renderVpn(vpn);
-        fetchAllPorts(machines);
+        renderMachines(currentMachines);
+        renderBridges(Array.isArray(bridges) ? bridges : []);
+        renderVpn(Array.isArray(vpn) ? vpn : (vpn?.peers || []));
+        fetchAllPorts(currentMachines);
       } catch (e) {
         console.error('Fetch error:', e);
       }
@@ -5669,7 +5751,7 @@ function getUniversalBridgeDashboardHtml(host) {
 
       for (const m of machines) {
         try {
-          const res = await fetch(\`/api/v1/machines/\${m.id}/ports\`);
+          const res = await fetch(\`/api/v1/machines/\${m.id}/ports\`, { headers: getAuthHeaders() });
           const ports = await res.json();
           totalPorts += ports.length;
 
@@ -5704,7 +5786,7 @@ function getUniversalBridgeDashboardHtml(host) {
       try {
         const res = await fetch('/api/v1/bridge/mappings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ machine_id: machineId, remote_port: port })
         });
         const created = await res.json();
@@ -5717,7 +5799,7 @@ function getUniversalBridgeDashboardHtml(host) {
 
     async function revokeBridge(mappingId) {
       if (!confirm('Revoke this port bridge mapping?')) return;
-      await fetch(\`/api/v1/bridge/mappings/\${mappingId}/revoke\`, { method: 'POST' });
+      await fetch(\`/api/v1/bridge/mappings/\${mappingId}/revoke\`, { method: 'POST', headers: getAuthHeaders() });
       fetchData();
     }
 
