@@ -1,4 +1,4 @@
-use cybervps-shared-types::{MachineCapabilities, PortObservation, ProcessObservation};
+use cybervps_shared_types::{MachineCapabilities, PortObservation, ProcessObservation};
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: &str = "1.0.0";

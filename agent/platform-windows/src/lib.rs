@@ -1,4 +1,4 @@
-use cybervps-shared-types::MachineCapabilities;
+use cybervps_shared_types::MachineCapabilities;
 use std::env;
 use std::fs;
 use std::process::Command;

@@ -1,12 +1,12 @@
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use clap::Parser;
-use cybervps-agent-discovery::{discover_listening_ports, discover_processes};
-use cybervps-agent-terminal::TerminalManager;
-use cybervps-agent-tunnel::TunnelManager;
-use cybervps-observability::init_tracing;
-use cybervps-protocol::{AgentMessage, ServerMessage, PROTOCOL_VERSION};
-use cybervps-shared-types::MachineCapabilities;
+use cybervps_agent_discovery::{discover_listening_ports, discover_processes};
+use cybervps_agent_terminal::TerminalManager;
+use cybervps_agent_tunnel::TunnelManager;
+use cybervps_observability::init_tracing;
+use cybervps_protocol::{AgentMessage, ServerMessage, PROTOCOL_VERSION};
+use cybervps_shared_types::MachineCapabilities;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use std::time::Duration;
@@ -241,11 +241,11 @@ async fn run_agent(server_url: &str, machine_id: &str, token: &str) -> anyhow::R
 fn get_platform_capabilities() -> MachineCapabilities {
     #[cfg(target_os = "windows")]
     {
-        cybervps-agent-platform-windows::detect_windows_capabilities()
+        cybervps_agent_platform_windows::detect_windows_capabilities()
     }
     #[cfg(target_os = "linux")]
     {
-        cybervps-agent-platform-linux::detect_linux_capabilities()
+        cybervps_agent_platform_linux::detect_linux_capabilities()
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {

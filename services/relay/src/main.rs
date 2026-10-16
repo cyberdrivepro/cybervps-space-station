@@ -7,9 +7,9 @@ use axum::{
     routing::get,
     Router,
 };
-use cybervps-configuration::ControlPlaneConfig;
-use cybervps-observability::init_tracing;
-use cybervps-protocol::{AgentMessage, ServerMessage};
+use cybervps_configuration::ControlPlaneConfig;
+use cybervps_observability::init_tracing;
+use cybervps_protocol::{AgentMessage, ServerMessage};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;

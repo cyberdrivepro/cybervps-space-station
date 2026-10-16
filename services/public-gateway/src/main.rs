@@ -6,8 +6,8 @@ use axum::{
     routing::any,
     Router,
 };
-use cybervps-configuration::ControlPlaneConfig;
-use cybervps-observability::init_tracing;
+use cybervps_configuration::ControlPlaneConfig;
+use cybervps_observability::init_tracing;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{error, info};

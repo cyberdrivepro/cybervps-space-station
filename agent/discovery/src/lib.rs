@@ -1,5 +1,5 @@
 use chrono::Utc;
-use cybervps-shared-types::{PortObservation, ProcessObservation, Protocol};
+use cybervps_shared_types::{PortObservation, ProcessObservation, Protocol};
 use std::process::Command;
 use std::time::Duration;
 use sysinfo::{Pid, ProcessesToUpdate, System};

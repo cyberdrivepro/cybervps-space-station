@@ -1,6 +1,6 @@
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use cybervps-protocol::AgentMessage;
+use cybervps_protocol::AgentMessage;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
