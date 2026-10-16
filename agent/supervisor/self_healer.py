@@ -153,7 +153,7 @@ class SelfHealingSupervisor:
         return {
             "server_url": DEFAULT_BACKEND_CLUSTER[0],
             "server_urls": list(DEFAULT_BACKEND_CLUSTER),
-            "token": "cvps_enroll_master_token",
+            "token": os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or "",
             "machine_id": mid,
             "desired_backends": 3,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -244,7 +244,10 @@ class SelfHealingSupervisor:
         """Spawns universal-agent.py as a detached background daemon with auto-logging."""
         agent_log = os.path.join(self.primary_dir, "agent.log")
         server_url = cfg.get("server_url") or DEFAULT_BACKEND_CLUSTER[0]
-        token = cfg.get("token") or "cvps_enroll_master_token"
+        token = cfg.get("token") or os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
+        if not token:
+            self.log("ERROR: No enrollment token configured. Skipping daemon spawn to prevent auth loop.")
+            return False
         mid = cfg.get("machine_id") or ""
 
         py_exe = sys.executable

@@ -600,9 +600,9 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/system/info') return true;
   if (pathname === '/api/v1/config') return true;
   if (pathname === '/api/v1/telemetry/stream') return true;
-  if (pathname === '/api/v1/audit') return true;
   if (pathname.startsWith('/api/v1/relay/')) return true;
-  if (pathname.startsWith('/api/v1/access/')) return true;
+  if (pathname === '/api/v1/access/pairing') return true;
+  if (pathname === '/api/v1/access/status') return true;
   if (pathname === '/api/v1/terminal/token') return true;
   if (pathname === '/api/v1/apps/stream/token') return true;
   if (pathname === '/api/v1/auth/login') return true;
@@ -4249,16 +4249,26 @@ echo "[*] CyberVPS Agent active."
     return;
   }
 
-  // 7. EMBEDDED DASHBOARD UI
-  if (pathname === '/' || pathname === '/dashboard') {
-    const indexPath = path.join(__dirname, '../index.html');
-    if (fs.existsSync(indexPath)) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(fs.readFileSync(indexPath, 'utf8'));
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(getUniversalBridgeDashboardHtml(req.headers.host || `localhost:${PORT}`));
+  // 7. API-ONLY CONTROL PLANE SERVICE ROOT (Zero-Trust Frontend Separation)
+  if (pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      service: 'CyberVPS Space Station Control Plane',
+      status: 'operational',
+      version: '2.1.0',
+      api_base: '/api/v1',
+      protocol: '2.1.0',
+      frontend: 'https://cyberdrivepro.github.io/cybervps-space-station/'
+    }));
+    return;
+  }
+
+  if (pathname === '/dashboard') {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'Dashboard UI is decoupled from control plane. Access management frontend via https://cyberdrivepro.github.io/cybervps-space-station/',
+      code: 'FRONTEND_DECOUPLED'
+    }));
     return;
   }
 

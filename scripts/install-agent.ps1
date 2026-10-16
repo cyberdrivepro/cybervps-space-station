@@ -6,7 +6,7 @@ Works on Windows 10/11 and Windows Server, with or without Administrator privile
 
 param(
     [string]$ServerUrl = "http://localhost:8080",
-    [string]$Token = "cvps_enroll_master_token",
+    [string]$Token = $(if ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" }),
     [string]$MachineId = ""
 )
 
@@ -215,7 +215,6 @@ try {
         Set-ItemProperty -Path $regPath -Name "CyberVPSAgent" -Value $regCmd -Force
         Write-Host "  • Registry Run Auto-Start (HKCU - CyberVPSAgent via pythonw): SYNCHRONIZED" -ForegroundColor Green
     } catch {}
-} catch {}
 } catch {}
 
 Write-Host "`n================================================================" -ForegroundColor Cyan
