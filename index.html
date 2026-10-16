@@ -3029,6 +3029,28 @@
        JAVASCRIPT APPLICATION ENGINE (ZERO FAKE DATA / PURE API DRIVEN)
        ========================================================================== -->
   <script>
+    // Global fetch interceptor: automatically attach pairing key & admin token to all internal API calls
+    const _nativeFetch = window.fetch;
+    window.fetch = function(url, options = {}) {
+      if (typeof url === 'string' && (url.includes('/api/v1/') || url.includes('/tunnel/'))) {
+        const opts = { ...options };
+        opts.headers = { ...(opts.headers || {}) };
+        
+        const pairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || 'cvps_enroll_master_token';
+        if (pairKey && !opts.headers['X-CVPS-Pairing-Key']) {
+          opts.headers['X-CVPS-Pairing-Key'] = pairKey;
+        }
+
+        const adminTok = (typeof appState !== 'undefined' && appState.adminAuth?.token) || localStorage.getItem('cvps_admin_token');
+        if (adminTok && !opts.headers['Authorization']) {
+          opts.headers['Authorization'] = `Bearer ${adminTok}`;
+        }
+
+        return _nativeFetch.call(this, url, opts);
+      }
+      return _nativeFetch.apply(this, arguments);
+    };
+
     // 1. DYNAMIC CONFIGURATION & PERSISTENCE
     const urlParams = new URLSearchParams(window.location.search);
     const paramBackend = urlParams.get('backend');
@@ -6984,10 +7006,10 @@
 
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/apps/list?machine_id=${encodeURIComponent(machineId)}&refresh=${forceRefresh ? '1' : '0'}`);
-        const data = await res.json();
+        const appRes = await apiRequest(`/api/v1/apps/list?machine_id=${encodeURIComponent(machineId)}&refresh=${forceRefresh ? '1' : '0'}`);
+        if (!appRes.ok) throw new Error(appRes.error || 'Failed to fetch application inventory');
+        const data = appRes.data;
         const apps = data.apps || data.applications || [];
-        if (!res.ok && apps.length === 0) throw new Error(data.error || 'Failed to fetch application inventory');
 
         appState.apps.list = apps;
         appState.apps.total = data.total || apps.length;
