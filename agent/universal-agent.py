@@ -5068,6 +5068,13 @@ def handle_cli_subcommands(args):
     cfg_file = os.path.join(cvps_dir, "config.json")
     script_path = os.path.abspath(__file__)
 
+    programdata_dir = os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "CyberVPS") if platform.system() == "Windows" else "/var/lib/cybervps"
+    # Prefer machine-wide ProgramData if active agent pid exists there
+    if os.path.exists(os.path.join(programdata_dir, "run", "agent.pid")):
+        pid_file = os.path.join(programdata_dir, "run", "agent.pid")
+    elif os.path.exists(os.path.join(programdata_dir, "agent.pid")):
+        pid_file = os.path.join(programdata_dir, "agent.pid")
+
     if platform.system() == "Windows":
         base_shadow = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or home
         shadow_dir = os.path.join(base_shadow, "CyberVPS")
@@ -5076,7 +5083,7 @@ def handle_cli_subcommands(args):
         shadow_dir = os.path.join(base_shadow, "cybervps")
 
     cfg = {}
-    for c_candidate in [cfg_file, os.path.join(shadow_dir, "config.json")]:
+    for c_candidate in [pid_file.replace("agent.pid", "config.json"), cfg_file, os.path.join(programdata_dir, "config.json"), os.path.join(shadow_dir, "config.json")]:
         if os.path.exists(c_candidate):
             try:
                 with open(c_candidate, "r", encoding="utf-8") as f:
@@ -5095,26 +5102,76 @@ def handle_cli_subcommands(args):
                 mid = mf.read().strip()
         except Exception:
             pass
+    if not mid and os.path.exists(os.path.join(programdata_dir, "machine_id")):
+        try:
+            with open(os.path.join(programdata_dir, "machine_id"), "r") as mf:
+                mid = mf.read().strip()
+        except Exception:
+            pass
+
+    def is_admin():
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                return False
+        else:
+            try:
+                return os.geteuid() == 0
+            except Exception:
+                return False
+
+    def check_admin_authorization(action_name):
+        if is_admin():
+            return True
+        env_token = os.environ.get("CYBERVPS_ADMIN_TOKEN", "")
+        if env_token and env_token == token:
+            return True
+        if "--force-auth" in args:
+            try:
+                idx = args.index("--force-auth")
+                if idx + 1 < len(args) and args[idx + 1] == token:
+                    return True
+            except Exception:
+                pass
+        print("================================================================")
+        print("  [!] [ACCESS DENIED] Privileged Operation Prohibited           ")
+        print("================================================================")
+        print(f"  The '{action_name}' command requires elevated Administrator privileges.")
+        print("")
+        print("  Standard or shared users cannot stop, restart, or reconfigure")
+        print("  the 24/7 background CyberVPS Host Agent service.")
+        print("  To perform authorized maintenance:")
+        if platform.system() == "Windows":
+            print("    * Reopen terminal using 'Run as Administrator'")
+        else:
+            print("    * Run with 'sudo' (elevated root privileges)")
+        print("    * Or provide authorized admin token: --force-auth [TOKEN]")
+        print("================================================================")
+        sys.exit(5)
 
     def get_running_pid():
-        if not os.path.exists(pid_file):
-            return None
-        try:
-            with open(pid_file, "r") as f:
-                p = int(f.read().strip())
-            if platform.system() == "Windows":
-                import ctypes
-                PROCESS_QUERY_INFORMATION = 0x0400
-                h = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, p)
-                if h:
-                    ctypes.windll.kernel32.CloseHandle(h)
+        candidate_pids = [pid_file, os.path.join(programdata_dir, "run", "agent.pid"), os.path.join(programdata_dir, "agent.pid"), os.path.join(cvps_dir, "agent.pid")]
+        for pf in candidate_pids:
+            if not os.path.exists(pf):
+                continue
+            try:
+                with open(pf, "r") as f:
+                    p = int(f.read().strip())
+                if platform.system() == "Windows":
+                    import ctypes
+                    PROCESS_QUERY_INFORMATION = 0x0400
+                    h = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, p)
+                    if h:
+                        ctypes.windll.kernel32.CloseHandle(h)
+                        return p
+                else:
+                    os.kill(p, 0)
                     return p
-                return None
-            else:
-                os.kill(p, 0)
-                return p
-        except Exception:
-            return None
+            except Exception:
+                pass
+        return None
 
     if subcmd in ["help", "--help", "-h"]:
         print("CyberVPS Space Station CLI")
@@ -5173,24 +5230,6 @@ def handle_cli_subcommands(args):
             except Exception as e:
                 print(f"    - {b_url}: UNREACHABLE ({e})")
         print("================================================================")
-        sys.exit(0)
-
-    elif subcmd == "stop":
-        active_pid = get_running_pid()
-        if active_pid:
-            try:
-                if platform.system() == "Windows":
-                    subprocess.run(["taskkill", "/F", "/PID", str(active_pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    os.kill(active_pid, signal.SIGTERM)
-                print(f"[+] Stopped CyberVPS agent process (PID: {active_pid}).")
-            except Exception as e:
-                print(f"[!] Error stopping PID {active_pid}: {e}")
-        else:
-            print("[*] No active agent process found.")
-        if os.path.exists(pid_file):
-            try: os.remove(pid_file)
-            except Exception: pass
         sys.exit(0)
 
     def spawn_daemon(cmd_list):
@@ -5255,7 +5294,38 @@ def handle_cli_subcommands(args):
         print("================================================================")
         sys.exit(0)
 
+    elif subcmd == "stop":
+        check_admin_authorization("stop")
+        active_pid = get_running_pid()
+        if not active_pid:
+            print("[*] CyberVPS Agent is not running (PID not found or process inactive).")
+            sys.exit(0)
+        print(f"[*] Stopping CyberVPS Agent (PID: {active_pid})...")
+        try:
+            if platform.system() == "Windows":
+                subprocess.run(["taskkill", "/F", "/PID", str(active_pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                os.kill(active_pid, signal.SIGTERM)
+                time.sleep(0.5)
+                try:
+                    os.kill(active_pid, signal.SIGKILL)
+                except Exception:
+                    pass
+            print("[+] CyberVPS Agent stopped by authorized administrator.")
+        except Exception as e:
+            print(f"[!] Error stopping agent: {e}")
+        finally:
+            if os.path.exists(pid_file):
+                try: os.remove(pid_file)
+                except Exception: pass
+            pdata_pid = os.path.join(programdata_dir, "run", "agent.pid")
+            if os.path.exists(pdata_pid):
+                try: os.remove(pdata_pid)
+                except Exception: pass
+        sys.exit(0)
+
     elif subcmd == "restart":
+        check_admin_authorization("restart")
         active_pid = get_running_pid()
         if active_pid:
             try:
@@ -5371,6 +5441,7 @@ def handle_cli_subcommands(args):
         sys.exit(0)
 
     elif subcmd == "uninstall":
+        check_admin_authorization("uninstall")
         print("================================================================")
         print("   [*] Uninstalling CyberVPS Universal Agent                    ")
         print("================================================================")
@@ -5386,6 +5457,10 @@ def handle_cli_subcommands(args):
                 pass
         if os.path.exists(pid_file):
             try: os.remove(pid_file)
+            except Exception: pass
+        pdata_pid = os.path.join(programdata_dir, "run", "agent.pid")
+        if os.path.exists(pdata_pid):
+            try: os.remove(pdata_pid)
             except Exception: pass
 
         if platform.system() == "Windows":
@@ -5408,6 +5483,7 @@ def handle_cli_subcommands(args):
         sys.exit(0)
 
     elif subcmd == "rebuild":
+        check_admin_authorization("rebuild")
         print("[*] Contacting GitHub for latest CyberVPS Universal Agent...")
         try:
             github_url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
@@ -5441,6 +5517,7 @@ def handle_cli_subcommands(args):
         sys.exit(0)
 
     elif subcmd == "reboot":
+        check_admin_authorization("reboot")
         print("[*] Initiating graceful machine reboot...")
         time.sleep(1.0)
         if platform.system() == "Windows":

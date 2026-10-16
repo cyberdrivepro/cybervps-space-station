@@ -23,17 +23,79 @@ if (!fs.existsSync(path.join(APP_DIR, 'services', 'server.js'))) {
 }
 
 const BASE_DIR = path.join(os.homedir(), '.cybervps');
-const RUN_DIR = path.join(BASE_DIR, 'run');
-const LOG_DIR = path.join(BASE_DIR, 'logs');
-const CONFIG_FILE = path.join(BASE_DIR, 'config.json');
+const PROGRAMDATA_DIR = process.platform === 'win32'
+  ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'CyberVPS')
+  : '/var/lib/cybervps';
+
+const hasProgramDataPid = fs.existsSync(path.join(PROGRAMDATA_DIR, 'run', 'agent.pid'));
+const ACTIVE_DIR = (hasProgramDataPid || (!fs.existsSync(path.join(BASE_DIR, 'config.json')) && fs.existsSync(path.join(PROGRAMDATA_DIR, 'config.json'))))
+  ? PROGRAMDATA_DIR
+  : BASE_DIR;
+
+const RUN_DIR = path.join(ACTIVE_DIR, 'run');
+const LOG_DIR = path.join(ACTIVE_DIR, 'logs');
+const CONFIG_FILE = path.join(ACTIVE_DIR, 'config.json');
 const PID_FILE = path.join(RUN_DIR, 'space-station.pid');
 const LOG_FILE = path.join(LOG_DIR, 'space-station.log');
 const AGENT_PID_FILE = path.join(RUN_DIR, 'agent.pid');
 const AGENT_LOG_FILE = path.join(LOG_DIR, 'agent.log');
 
 // Ensure system directories exist
-if (!fs.existsSync(RUN_DIR)) fs.mkdirSync(RUN_DIR, { recursive: true });
-if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+if (!fs.existsSync(RUN_DIR)) {
+  try { fs.mkdirSync(RUN_DIR, { recursive: true }); } catch (_) {}
+}
+if (!fs.existsSync(LOG_DIR)) {
+  try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (_) {}
+}
+
+function isAdmin() {
+  if (process.platform === 'win32') {
+    try {
+      execSync('net session', { stdio: 'ignore' });
+      return true;
+    } catch (_) {
+      try {
+        execSync('fltmc', { stdio: 'ignore' });
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+  } else {
+    return typeof process.getuid === 'function' ? process.getuid() === 0 : false;
+  }
+}
+
+function assertIsAdmin(action) {
+  if (isAdmin()) return true;
+
+  const cfg = loadConfig();
+  const token = cfg.token || '';
+  const envToken = process.env.CYBERVPS_ADMIN_TOKEN || '';
+  if (envToken && envToken === token) return true;
+
+  const faIdx = args.indexOf('--force-auth');
+  if (faIdx !== -1 && args[faIdx + 1] && args[faIdx + 1] === token) {
+    return true;
+  }
+
+  console.log('================================================================');
+  console.log('  [!] [ACCESS DENIED] Privileged Operation Prohibited           ');
+  console.log('================================================================');
+  console.log(`  The '${action}' command requires elevated Administrator privileges.`);
+  console.log('');
+  console.log('  Standard or shared users cannot stop, restart, or reconfigure');
+  console.log('  the 24/7 background CyberVPS Host Agent service.');
+  console.log('  To perform authorized maintenance:');
+  if (process.platform === 'win32') {
+    console.log("    * Reopen terminal using 'Run as Administrator'");
+  } else {
+    console.log("    * Run with 'sudo' (elevated root privileges)");
+  }
+  console.log('    * Or provide authorized admin token: --force-auth [TOKEN]');
+  console.log('================================================================');
+  process.exit(5);
+}
 
 function loadConfig() {
   const defaultCfg = {
@@ -42,11 +104,14 @@ function loadConfig() {
     machine_id: '',
     hostname: os.hostname()
   };
-  if (fs.existsSync(CONFIG_FILE)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      return { ...defaultCfg, ...parsed };
-    } catch (_) {}
+  const candidates = [CONFIG_FILE, path.join(PROGRAMDATA_DIR, 'config.json'), path.join(BASE_DIR, 'config.json')];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(c, 'utf8'));
+        return { ...defaultCfg, ...parsed };
+      } catch (_) {}
+    }
   }
   return defaultCfg;
 }
@@ -398,6 +463,7 @@ async function handleStart(isGhost = false) {
 }
 
 async function handleStop() {
+  assertIsAdmin('stop');
   let anyStopped = false;
 
   if (fs.existsSync(AGENT_PID_FILE)) {
@@ -683,6 +749,7 @@ function handleUpdate() {
 }
 
 function handleUninstall() {
+  assertIsAdmin('uninstall');
   console.log('================================================================');
   console.log('🗑️  UNINSTALL CYBERVPS SPACE STATION');
   console.log('================================================================');

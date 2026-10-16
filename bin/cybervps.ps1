@@ -12,13 +12,23 @@ param (
 )
 
 $BaseDir = Join-Path $HOME ".cybervps"
-$InstallDir = Join-Path $BaseDir "space-station"
-$RunDir = Join-Path $BaseDir "run"
-$LogsDir = Join-Path $BaseDir "logs"
-$ConfigFile = Join-Path $BaseDir "config.json"
+$ProgramDataBase = if ($env:ProgramData) { Join-Path $env:ProgramData "CyberVPS" } else { "C:\ProgramData\CyberVPS" }
+if ((Test-Path (Join-Path $ProgramDataBase "run\agent.pid")) -or ((-not (Test-Path (Join-Path $BaseDir "config.json"))) -and (Test-Path (Join-Path $ProgramDataBase "config.json")))) {
+    $ActiveBase = $ProgramDataBase
+} else {
+    $ActiveBase = $BaseDir
+}
+
+$InstallDir = Join-Path $ActiveBase "space-station"
+$RunDir = Join-Path $ActiveBase "run"
+$LogsDir = Join-Path $ActiveBase "logs"
+$ConfigFile = Join-Path $ActiveBase "config.json"
 $AgentPidFile = Join-Path $RunDir "agent.pid"
 $AgentLogFile = Join-Path $LogsDir "agent.log"
 $AgentScript = Join-Path $InstallDir "agent\universal-agent.py"
+if (-not (Test-Path $AgentScript)) {
+    $AgentScript = Join-Path $ActiveBase "universal-agent.py"
+}
 if (-not (Test-Path $AgentScript)) {
     $AgentScript = Join-Path $BaseDir "universal-agent.py"
 }
@@ -43,7 +53,8 @@ function Find-Python {
         "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
         "C:\Python3*\python.exe",
         "C:\Program Files\Python3*\python.exe",
-        "$BaseDir\python\python.exe"
+        "$BaseDir\python\python.exe",
+        "$ProgramDataBase\python\python.exe"
     )
     foreach ($pat in $candidates) {
         $found = Get-Item $pat -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -63,16 +74,53 @@ function Is-PidRunning([int]$pidToCheck) {
 }
 
 function Load-Config {
-    if (Test-Path $ConfigFile) {
-        try {
-            return Get-Content $ConfigFile -Raw | ConvertFrom-Json
-        } catch {}
+    foreach ($cand in @($ConfigFile, (Join-Path $ProgramDataBase "config.json"), (Join-Path $BaseDir "config.json"))) {
+        if (Test-Path $cand) {
+            try {
+                return Get-Content $cand -Raw | ConvertFrom-Json
+            } catch {}
+        }
     }
     return @{
         server_url = "https://cybervps-space-station.up.railway.app"
         token = "cvps_enroll_master_token"
         machine_id = "cvps_$env:COMPUTERNAME"
         hostname = $env:COMPUTERNAME
+    }
+}
+
+function Assert-IsAdmin([string]$action) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    $cfg = Load-Config
+    $hasTokenAuth = $false
+    if ($env:CYBERVPS_ADMIN_TOKEN -and ($env:CYBERVPS_ADMIN_TOKEN -eq $cfg.token)) {
+        $hasTokenAuth = $true
+    }
+    if ($ArgsList -and ($ArgsList -contains "--force-auth")) {
+        $idx = [array]::IndexOf($ArgsList, "--force-auth")
+        if ($idx -ge 0 -and ($idx + 1) -lt $ArgsList.Length) {
+            if ($ArgsList[$idx + 1] -eq $cfg.token) {
+                $hasTokenAuth = $true
+            }
+        }
+    }
+
+    if (-not $isAdmin -and -not $hasTokenAuth) {
+        Write-Host "================================================================" -ForegroundColor Red
+        Write-Host "  [!] [ACCESS DENIED] Privileged Operation Prohibited           " -ForegroundColor Red
+        Write-Host "================================================================" -ForegroundColor Red
+        Write-Host "  The '$action' command requires elevated Administrator privileges." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  Standard or shared users cannot stop, restart, or reconfigure" -ForegroundColor White
+        Write-Host "  the 24/7 background CyberVPS Host Agent service." -ForegroundColor White
+        Write-Host '  To perform authorized maintenance:' -ForegroundColor Cyan
+        Write-Host "    * Reopen PowerShell using 'Run as Administrator'" -ForegroundColor Cyan
+        Write-Host '    * Or provide authorized admin token: --force-auth [TOKEN]' -ForegroundColor Gray
+        Write-Host "================================================================" -ForegroundColor Red
+        exit 5
     }
 }
 
@@ -123,6 +171,7 @@ switch ($Command.ToLower()) {
     }
 
     "stop" {
+        Assert-IsAdmin "stop"
         if (-not (Test-Path $AgentPidFile)) {
             Write-Host "[*] CyberVPS Host Agent is not running (PID file not found)." -ForegroundColor Yellow
             return
@@ -132,7 +181,7 @@ switch ($Command.ToLower()) {
             Write-Host "[*] Stopping CyberVPS Agent (PID: $pidToKill)..." -ForegroundColor Cyan
             Stop-Process -Id $pidToKill -Force -ErrorAction SilentlyContinue
             Start-Sleep -Milliseconds 500
-            Write-Host "[+] CyberVPS Agent stopped." -ForegroundColor Green
+            Write-Host "[+] CyberVPS Agent stopped by authorized administrator." -ForegroundColor Green
         } else {
             Write-Host "[*] Agent PID $pidToKill was not active." -ForegroundColor Yellow
         }
@@ -140,6 +189,7 @@ switch ($Command.ToLower()) {
     }
 
     "restart" {
+        Assert-IsAdmin "restart"
         & $PSCommandPath stop
         Start-Sleep -Seconds 1
         & $PSCommandPath start
@@ -240,6 +290,6 @@ switch ($Command.ToLower()) {
     }
 
     default {
-        Write-Host "Usage: cybervps <start|stop|restart|status|bridge|sftp|ssh|doctor|logs|version>"
+        Write-Host 'Usage: cybervps [start|stop|restart|status|bridge|sftp|ssh|doctor|logs|version]'
     }
 }

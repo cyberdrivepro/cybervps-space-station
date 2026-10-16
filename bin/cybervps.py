@@ -17,15 +17,74 @@ import urllib.error
 
 VERSION = "1.0.0"
 BASE_DIR = os.path.join(os.path.expanduser("~"), ".cybervps")
-INSTALL_DIR = os.path.join(BASE_DIR, "space-station")
-RUN_DIR = os.path.join(BASE_DIR, "run")
-LOG_DIR = os.path.join(BASE_DIR, "logs")
-CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+PROGRAMDATA_DIR = os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "CyberVPS") if platform.system() == "Windows" else "/var/lib/cybervps"
+
+# Prefer machine-wide ProgramData if active agent pid or config exists there
+if os.path.exists(os.path.join(PROGRAMDATA_DIR, "run", "agent.pid")) or (not os.path.exists(os.path.join(BASE_DIR, "config.json")) and os.path.exists(os.path.join(PROGRAMDATA_DIR, "config.json"))):
+    ACTIVE_DIR = PROGRAMDATA_DIR
+else:
+    ACTIVE_DIR = BASE_DIR
+
+INSTALL_DIR = os.path.join(ACTIVE_DIR, "space-station")
+RUN_DIR = os.path.join(ACTIVE_DIR, "run")
+LOG_DIR = os.path.join(ACTIVE_DIR, "logs")
+CONFIG_FILE = os.path.join(ACTIVE_DIR, "config.json")
 AGENT_PID_FILE = os.path.join(RUN_DIR, "agent.pid")
 AGENT_LOG_FILE = os.path.join(LOG_DIR, "agent.log")
 
 os.makedirs(RUN_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
+
+
+def is_admin():
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            return False
+    else:
+        try:
+            return os.geteuid() == 0
+        except Exception:
+            return False
+
+
+def assert_is_admin(action):
+    if is_admin():
+        return True
+
+    cfg = load_config()
+    token = cfg.get("token", "")
+    env_token = os.environ.get("CYBERVPS_ADMIN_TOKEN", "")
+    if env_token and env_token == token:
+        return True
+
+    # Check sys.argv for --force-auth <token>
+    args = sys.argv[1:]
+    if "--force-auth" in args:
+        try:
+            idx = args.index("--force-auth")
+            if idx + 1 < len(args) and args[idx + 1] == token:
+                return True
+        except Exception:
+            pass
+
+    print("================================================================")
+    print("  [!] [ACCESS DENIED] Privileged Operation Prohibited           ")
+    print("================================================================")
+    print(f"  The '{action}' command requires elevated Administrator privileges.")
+    print("")
+    print("  Standard or shared users cannot stop, restart, or reconfigure")
+    print("  the 24/7 background CyberVPS Host Agent service.")
+    print("  To perform authorized maintenance:")
+    if platform.system() == "Windows":
+        print("    * Reopen terminal using 'Run as Administrator'")
+    else:
+        print("    * Run with 'sudo' (elevated root privileges)")
+    print("    * Or provide authorized admin token: --force-auth [TOKEN]")
+    print("================================================================")
+    sys.exit(5)
 
 
 def load_config():
@@ -35,13 +94,15 @@ def load_config():
         "machine_id": f"cvps_{socket.gethostname()}",
         "hostname": socket.gethostname()
     }
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-                default_cfg.update(saved)
-        except Exception:
-            pass
+    for cfg_cand in [CONFIG_FILE, os.path.join(PROGRAMDATA_DIR, "config.json"), os.path.join(BASE_DIR, "config.json")]:
+        if os.path.exists(cfg_cand):
+            try:
+                with open(cfg_cand, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                    default_cfg.update(saved)
+                    break
+            except Exception:
+                pass
     return default_cfg
 
 
@@ -182,6 +243,7 @@ def cmd_start():
 
 
 def cmd_stop():
+    assert_is_admin("stop")
     if platform.system() != "Windows" and os.geteuid() == 0 and os.path.exists("/etc/systemd/system/cybervps-agent.service"):
         try:
             subprocess.run(["systemctl", "stop", "cybervps-agent.service"])
@@ -205,7 +267,7 @@ def cmd_stop():
                 time.sleep(0.5)
                 if is_pid_running(pid):
                     os.kill(pid, 9)
-            print("[+] CyberVPS Agent stopped.")
+            print("[+] CyberVPS Agent stopped by authorized administrator.")
         else:
             print(f"[*] Agent PID {pid} was not active.")
     except Exception as e:
@@ -216,6 +278,7 @@ def cmd_stop():
 
 
 def cmd_restart():
+    assert_is_admin("restart")
     cmd_stop()
     time.sleep(1)
     cmd_start()
