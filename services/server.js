@@ -99,8 +99,50 @@ const db = {
   recoveryProfiles: new Map(), // machine_id -> RecoveryProfile { machine_id, device_name, hardware_uuid, hardware_serial, recovery_mode, installation_generation, status, auto_approve, history }
   recoveryTickets: new Map(), // ticket -> RecoveryTicket { ticket, machine_id, hardware_uuid, created_at, expires_at, used, issued_by }
   bootstrapCapabilities: new Map(), // ticket -> { ticket, created_at, expires_at, used, consumed_by, consumed_at, issued_by }
+  consumedBootstrapTickets: new Set(), // ticket -> already consumed
   revokedDevices: new Set() // machine_id -> permanently revoked devices
 };
+
+const BOOTSTRAP_SECRET = process.env.BOOTSTRAP_SECRET || process.env.PAIRING_KEY || process.env.CVPS_PAIRING_KEY || 'cybervps_pair_station_2026';
+
+function verifyBootstrapTicket(ticket) {
+  if (!ticket || typeof ticket !== 'string') return { valid: false, reason: 'invalid_format' };
+  const clean = ticket.trim().replace(/^['"]+|['"]+$/g, '');
+
+  // 1. Check if already marked consumed
+  if (db.consumedBootstrapTickets && db.consumedBootstrapTickets.has(clean)) {
+    return { valid: false, reason: 'already_consumed' };
+  }
+
+  // 2. In-memory capability check
+  if (db.bootstrapCapabilities && db.bootstrapCapabilities.has(clean)) {
+    const cap = db.bootstrapCapabilities.get(clean);
+    if (cap.used) return { valid: false, reason: 'already_consumed' };
+    if (Date.now() > cap.expires_at) return { valid: false, reason: 'expired' };
+    return { valid: true, expires_at: cap.expires_at, capability: cap };
+  }
+
+  // 3. Cryptographic HMAC check (stateless survival across process restarts / multi-replicas)
+  if (clean.startsWith('cvps_boot_')) {
+    const rest = clean.slice(10);
+    const parts = rest.split('_');
+    if (parts.length === 3) {
+      const [expHex, nonce, sig] = parts;
+      const expiresAt = parseInt(expHex, 16);
+      if (isNaN(expiresAt) || Date.now() > expiresAt) {
+        return { valid: false, reason: 'expired' };
+      }
+      const expectedSig = crypto.createHmac('sha256', BOOTSTRAP_SECRET).update(`${expHex}:${nonce}`).digest('hex').slice(0, 24);
+      try {
+        if (crypto.timingSafeEqual(Buffer.from(sig, 'utf8'), Buffer.from(expectedSig, 'utf8'))) {
+          return { valid: true, expires_at: expiresAt };
+        }
+      } catch (_) {}
+    }
+  }
+
+  return { valid: false, reason: 'invalid_ticket' };
+}
 
 function getMasterEnrollmentToken() {
   return process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
@@ -108,12 +150,13 @@ function getMasterEnrollmentToken() {
 
 function isValidEnrollmentToken(token) {
   if (!token) return false;
+  const clean = String(token).trim().replace(/^['"]+|['"]+$/g, '');
   const master = getMasterEnrollmentToken();
-  if (token === master) return true;
-  if (db.enrollmentTokens && db.enrollmentTokens.has(token)) return true;
-  if (db.bootstrapCapabilities && db.bootstrapCapabilities.has(token)) {
-    const cap = db.bootstrapCapabilities.get(token);
-    if (cap && !cap.used && Date.now() <= cap.expires_at) return true;
+  if (clean === master) return true;
+  if (db.enrollmentTokens && db.enrollmentTokens.has(clean)) return true;
+  if (clean.startsWith('cvps_boot_')) {
+    const ver = verifyBootstrapTicket(clean);
+    return ver.valid;
   }
   return false;
 }
@@ -199,6 +242,9 @@ function loadPersistentState() {
           if (bc && bc.expires_at > Date.now()) db.bootstrapCapabilities.set(bc.ticket, bc);
         }
       }
+      if (Array.isArray(data.consumedBootstrapTickets)) {
+        for (const ct of data.consumedBootstrapTickets) db.consumedBootstrapTickets.add(ct);
+      }
       console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels, ${db.backends.size} backends, ${db.recoveryProfiles.size} recovery profiles`);
     }
   } catch (err) {
@@ -232,7 +278,8 @@ function savePersistentState() {
         revokedDevices: Array.from(db.revokedDevices),
         sessions: Array.from(db.sessions.entries()).filter(([_, s]) => s && s.expires_at > Date.now()),
         enrollmentTokens: Array.from(db.enrollmentTokens),
-        bootstrapCapabilities: Array.from(db.bootstrapCapabilities.values()).filter(bc => bc && bc.expires_at > Date.now())
+        bootstrapCapabilities: Array.from(db.bootstrapCapabilities.values()).filter(bc => bc && bc.expires_at > Date.now()),
+        consumedBootstrapTickets: Array.from(db.consumedBootstrapTickets)
       };
       fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
@@ -760,12 +807,18 @@ const server = http.createServer(async (req, res) => {
 
       const queryTicket = parsedUrl.searchParams.get('ticket');
       const queryToken = parsedUrl.searchParams.get('token');
-      const capability = queryTicket || queryToken;
+      const queryCap = parsedUrl.searchParams.get('capability');
+      const rawCap = queryTicket || queryToken || queryCap;
+      const capability = rawCap ? rawCap.trim().replace(/^['"]+|['"]+$/g, '') : null;
 
       if (capability && isValidEnrollmentToken(capability)) {
         customized = customized.replace(
           /(\[string\]\$Token\s*=\s*\$\(if \(\$env:CYBERVPS_TOKEN\) \{ \$env:CYBERVPS_TOKEN \} elseif \(\$env:ENROLLMENT_TOKEN\) \{ \$env:ENROLLMENT_TOKEN \} else \{ )"[^"]*"( \}\))/,
           `$1"${capability}"$2`
+        );
+        customized = customized.replace(
+          /(\[string\]\$Ticket\s*=\s*)"[^"]*"/,
+          `$1"${capability}"`
         );
       }
       res.end(customized);
@@ -3526,9 +3579,12 @@ while True:
       return;
     }
 
-    const ticket = 'cvps_boot_' + crypto.randomBytes(16).toString('hex');
     const ttlSeconds = 1800; // 30 minutes
     const expiresAt = Date.now() + (ttlSeconds * 1000);
+    const expHex = expiresAt.toString(16);
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const sig = crypto.createHmac('sha256', BOOTSTRAP_SECRET).update(`${expHex}:${nonce}`).digest('hex').slice(0, 24);
+    const ticket = `cvps_boot_${expHex}_${nonce}_${sig}`;
 
     db.bootstrapCapabilities.set(ticket, {
       ticket,
@@ -4914,23 +4970,39 @@ function handleAgentMessage(ws, msg) {
     }
 
     let nodeToken = null;
-    if (db.bootstrapCapabilities && db.bootstrapCapabilities.has(token)) {
-      const cap = db.bootstrapCapabilities.get(token);
-      if (cap.used) {
-        if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Bootstrap enrollment token capability already consumed' } }));
-        return { success: false, error: 'Bootstrap enrollment token capability already consumed' };
+    const cleanToken = token ? String(token).trim().replace(/^['"]+|['"]+$/g, '') : '';
+    if (cleanToken && cleanToken.startsWith('cvps_boot_')) {
+      const ver = verifyBootstrapTicket(cleanToken);
+      if (!ver.valid) {
+        const errMsg = ver.reason === 'already_consumed'
+          ? 'Bootstrap enrollment token capability already consumed'
+          : (ver.reason === 'expired' ? 'Bootstrap enrollment token capability has expired' : 'Invalid enrollment token');
+        if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: errMsg } }));
+        return { success: false, error: errMsg };
       }
-      if (Date.now() > cap.expires_at) {
-        if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Bootstrap enrollment token capability has expired' } }));
-        return { success: false, error: 'Bootstrap enrollment token capability has expired' };
+
+      // Atomically consume ticket
+      db.consumedBootstrapTickets.add(cleanToken);
+      if (db.bootstrapCapabilities && db.bootstrapCapabilities.has(cleanToken)) {
+        const cap = db.bootstrapCapabilities.get(cleanToken);
+        cap.used = true;
+        cap.consumed_by = machine_id;
+        cap.consumed_at = Date.now();
+      } else {
+        db.bootstrapCapabilities.set(cleanToken, {
+          ticket: cleanToken,
+          created_at: Date.now(),
+          expires_at: ver.expires_at || (Date.now() + 1800000),
+          used: true,
+          consumed_by: machine_id,
+          consumed_at: Date.now(),
+          issued_by: 'signed_capability'
+        });
       }
-      cap.used = true;
-      cap.consumed_by = machine_id;
-      cap.consumed_at = Date.now();
       nodeToken = 'cvps_node_' + crypto.randomBytes(16).toString('hex');
       db.enrollmentTokens.add(nodeToken);
       savePersistentState();
-    } else if (!isValidEnrollmentToken(token)) {
+    } else if (!isValidEnrollmentToken(cleanToken)) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Invalid token' } }));
       return { success: false, error: 'Invalid enrollment token' };
     }
