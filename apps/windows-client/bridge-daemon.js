@@ -35,7 +35,7 @@ class WindowsPortBridgeClient {
     this.serverUrl = options.serverUrl || 'http://localhost:8080';
     this.wsUrl = this.serverUrl.replace('http://', 'ws://').replace('https://', 'wss://');
     this.machineId = options.machineId || ('win_bridge_' + crypto.randomBytes(4).toString('hex'));
-    this.token = options.token || 'cvps_enroll_master_token';
+    this.token = options.token || process.env.CYBERVPS_AGENT_TOKEN || process.env.ENROLLMENT_TOKEN || '';
     this.activeMappings = new Map(); // id -> { machineId, remotePort, localPort, server, activeSockets }
     this.relayWs = null;
     this.activeStreams = new Map(); // streamId -> net.Socket

@@ -433,6 +433,7 @@ class RelayWebSocket:
             self.agent.ws_relay = self
 
         # Send Auth message
+        hw = self.agent.get_hardware_identity() if hasattr(self.agent, "get_hardware_identity") else {}
         auth_msg = {
             "type": "Auth",
             "payload": {
@@ -444,6 +445,8 @@ class RelayWebSocket:
                 "os": platform.system(),
                 "os_version": self.agent.device_profile.get("os_full", platform.release()),
                 "arch": platform.machine(),
+                "hardware_uuid": hw.get("hardware_uuid"),
+                "hardware_serial": hw.get("hardware_serial"),
                 "capabilities": self.agent.get_capabilities(),
                 "profile": self.agent.device_profile
             }
@@ -559,13 +562,13 @@ class RelayWebSocket:
 
 
 class CyberVPSAgent:
-    def __init__(self, server_url, token="cvps_enroll_master_token", machine_id=None, pid_file=None, ghost_mode=False):
+    def __init__(self, server_url, token=None, machine_id=None, pid_file=None, ghost_mode=False):
         raw = (server_url or "https://cybervps-space-station.up.railway.app").strip().rstrip("/")
         if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("ws://") or raw.startswith("wss://")):
             raw = "https://" + raw
         self.server_url = raw
         self.http_base = self.server_url.replace("ws://", "http://").replace("wss://", "https://")
-        self.token = token
+        self.token = token or os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
         self.machine_id = machine_id or self.generate_machine_id()
         self.ghost_mode = bool(ghost_mode or os.environ.get("CYBERVPS_GHOST_MODE") == "1")
         if self.ghost_mode and platform.system() == "Windows" and ctypes:
@@ -844,6 +847,102 @@ class CyberVPSAgent:
         except Exception:
             pass
         return new_id
+
+    def get_hardware_identity(self):
+        sys_os = platform.system()
+        hw_uuid = None
+        hw_serial = None
+        if sys_os == "Windows":
+            try:
+                cmd = ["powershell.exe", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID"]
+                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode().strip()
+                if out and len(out) > 10 and "error" not in out.lower():
+                    hw_uuid = out
+            except Exception:
+                pass
+            if not hw_uuid:
+                try:
+                    cmd = ["wmic", "csproduct", "get", "uuid"]
+                    out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode().splitlines()
+                    for line in out[1:]:
+                        line = line.strip()
+                        if line and len(line) > 10:
+                            hw_uuid = line
+                            break
+                except Exception:
+                    pass
+            try:
+                cmd = ["powershell.exe", "-NoProfile", "-Command", "(Get-CimInstance Win32_BIOS).SerialNumber"]
+                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=4).decode().strip()
+                if out and "error" not in out.lower():
+                    hw_serial = out
+            except Exception:
+                pass
+        elif sys_os == "Linux":
+            dmi_uuid = "/sys/class/dmi/id/product_uuid"
+            if os.path.exists(dmi_uuid):
+                try:
+                    with open(dmi_uuid, "r") as f:
+                        val = f.read().strip()
+                        if val and len(val) > 8:
+                            hw_uuid = val
+                except Exception:
+                    pass
+            if not hw_uuid and os.path.exists("/etc/machine-id"):
+                try:
+                    with open("/etc/machine-id", "r") as f:
+                        val = f.read().strip()
+                        if val: hw_uuid = val
+                except Exception:
+                    pass
+            dmi_serial = "/sys/class/dmi/id/product_serial"
+            if os.path.exists(dmi_serial):
+                try:
+                    with open(dmi_serial, "r") as f:
+                        val = f.read().strip()
+                        if val: hw_serial = val
+                except Exception:
+                    pass
+        return {
+            "hardware_uuid": hw_uuid,
+            "hardware_serial": hw_serial
+        }
+
+    def perform_bootstrap_claim(self, server_url, machine_id, recovery_ticket):
+        claim_url = f"{server_url.rstrip('/')}/api/v1/recovery/claim"
+        hw_info = self.get_hardware_identity()
+        payload = {
+            "machine_id": machine_id,
+            "recovery_ticket": recovery_ticket,
+            "hardware_uuid": hw_info.get("hardware_uuid"),
+            "hardware_serial": hw_info.get("hardware_serial"),
+            "os": platform.system()
+        }
+        try:
+            req = urllib.request.Request(
+                claim_url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("success"):
+                    print(f"[*] Bootstrap claim SUCCESS for '{machine_id}'. Generation {data.get('installation_generation')}")
+                    cfg = self.load_config()
+                    cfg["machine_id"] = machine_id
+                    cfg["token"] = data.get("enrollment_token")
+                    cfg["installation_token"] = data.get("installation_token")
+                    cfg["installation_generation"] = data.get("installation_generation")
+                    self.save_config(cfg)
+                    self.machine_id = machine_id
+                    self.token = data.get("enrollment_token")
+                    return True
+                else:
+                    print(f"[!] Bootstrap claim rejected: {data.get('error')}")
+                    return False
+        except Exception as e:
+            print(f"[!] Bootstrap claim request failed: {e}")
+            return False
 
     def get_config_path(self):
         cfg_path = os.environ.get("CYBERVPS_CONFIG")
@@ -3479,6 +3578,21 @@ class CyberVPSAgent:
                     seen_pids.add(inst["pid"])
                     unique_instances.append(inst)
 
+            if len(unique_instances) > 1 and psutil:
+                pid_set = {inst["pid"] for inst in unique_instances}
+                p_objs = {}
+                for pid_val in pid_set:
+                    try: p_objs[pid_val] = psutil.Process(pid_val)
+                    except Exception: pass
+                def rank_inst(inst):
+                    p = p_objs.get(inst["pid"])
+                    if not p: return 0
+                    try:
+                        if p.ppid() not in pid_set: return 100
+                    except Exception: pass
+                    return 10
+                unique_instances.sort(key=rank_inst, reverse=True)
+
             if unique_instances:
                 a_copy["status"] = "running"
                 a_copy["instance_count"] = len(unique_instances)
@@ -3526,6 +3640,21 @@ class CyberVPSAgent:
                 if inst["pid"] not in seen_pids:
                     seen_pids.add(inst["pid"])
                     unique_instances.append(inst)
+
+            if len(unique_instances) > 1 and psutil:
+                pid_set = {inst["pid"] for inst in unique_instances}
+                p_objs = {}
+                for pid_val in pid_set:
+                    try: p_objs[pid_val] = psutil.Process(pid_val)
+                    except Exception: pass
+                def rank_inst(inst):
+                    p = p_objs.get(inst["pid"])
+                    if not p: return 0
+                    try:
+                        if p.ppid() not in pid_set: return 100
+                    except Exception: pass
+                    return 10
+                unique_instances.sort(key=rank_inst, reverse=True)
 
             if not unique_instances:
                 continue
@@ -3913,7 +4042,7 @@ class CyberVPSAgent:
     # =========================================================================
     # LIVE APPLICATION VIEWER & BACKGROUND WINDOW CAPTURE ENGINE
     # =========================================================================
-    def _get_process_windows(self, target_pid=None):
+    def _get_process_windows(self, target_pid=None, app_id=None, app_name=None):
         windows = []
         target_pids = set()
         if target_pid is not None:
@@ -3927,16 +4056,56 @@ class CyberVPSAgent:
                     if int(target_pid) > 0: target_pids.add(int(target_pid))
                 except Exception: pass
 
-        # Expand target_pids with child processes (for multi-process apps like Chrome, Brave, Explorer, Electron)
         expanded_pids = set(target_pids)
-        if target_pids and psutil:
+        target_proc_names = set()
+        if app_id:
+            target_proc_names.add(str(app_id).lower())
+            target_proc_names.add(str(app_id).lower() + ".exe")
+        if app_name:
+            target_proc_names.add(str(app_name).lower())
+            target_proc_names.add(str(app_name).lower() + ".exe")
+
+        if psutil:
+            # 1. Expand PID hierarchy: find root ancestors, siblings, and children
             for p in list(target_pids):
                 try:
                     proc = psutil.Process(p)
+                    p_name = proc.name().lower()
+                    target_proc_names.add(p_name)
+                    # Add all recursive children
                     for child in proc.children(recursive=True):
                         expanded_pids.add(child.pid)
+                    # Walk up process ancestors matching the application tree
+                    curr = proc
+                    while True:
+                        try:
+                            parent = curr.parent()
+                            if not parent or parent.pid == 0:
+                                break
+                            if parent.name().lower() == p_name:
+                                expanded_pids.add(parent.pid)
+                                for sibling in parent.children(recursive=True):
+                                    expanded_pids.add(sibling.pid)
+                                curr = parent
+                            else:
+                                break
+                        except Exception:
+                            break
                 except Exception:
                     pass
+
+            # 2. If target_proc_names identified, find peer processes sharing executable name
+            if target_proc_names:
+                for pr in psutil.process_iter(['pid', 'name']):
+                    try:
+                        pr_name = pr.info['name']
+                        if pr_name:
+                            pr_lower = pr_name.lower()
+                            stem = pr_lower[:-4] if pr_lower.endswith(".exe") else pr_lower
+                            if pr_lower in target_proc_names or stem in target_proc_names:
+                                expanded_pids.add(pr.info['pid'])
+                    except Exception:
+                        pass
 
         sys_os = platform.system()
         if sys_os == "Windows":
@@ -3945,6 +4114,38 @@ class CyberVPSAgent:
                 from ctypes import wintypes
                 user32 = ctypes.windll.user32
 
+                # 64-bit ctypes prototypes
+                user32.OpenWindowStationW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL, wintypes.DWORD]
+                user32.OpenWindowStationW.restype = wintypes.HANDLE
+                user32.SetProcessWindowStation.argtypes = [wintypes.HANDLE]
+                user32.SetProcessWindowStation.restype = wintypes.BOOL
+                user32.CloseWindowStation.argtypes = [wintypes.HANDLE]
+                user32.CloseWindowStation.restype = wintypes.BOOL
+
+                user32.OpenDesktopW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                user32.OpenDesktopW.restype = wintypes.HANDLE
+                user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+                user32.CloseDesktop.restype = wintypes.BOOL
+
+                user32.IsWindow.argtypes = [wintypes.HWND]
+                user32.IsWindow.restype = wintypes.BOOL
+                user32.IsWindowVisible.argtypes = [wintypes.HWND]
+                user32.IsWindowVisible.restype = wintypes.BOOL
+                user32.IsIconic.argtypes = [wintypes.HWND]
+                user32.IsIconic.restype = wintypes.BOOL
+
+                user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+                user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+                user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+                user32.GetWindowTextLengthW.restype = ctypes.c_int
+                user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+                user32.GetWindowTextW.restype = ctypes.c_int
+                user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+                user32.GetClassNameW.restype = ctypes.c_int
+
+                user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+                user32.GetWindowRect.restype = wintypes.BOOL
+
                 hWs = user32.OpenWindowStationW("winsta0", False, 0x37F)
                 if hWs:
                     user32.SetProcessWindowStation(hWs)
@@ -3952,18 +4153,25 @@ class CyberVPSAgent:
 
                 DESKENUM = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
-                class RECT(ctypes.Structure):
-                    _fields_ = [
-                        ('left', wintypes.LONG), ('top', wintypes.LONG),
-                        ('right', wintypes.LONG), ('bottom', wintypes.LONG)
-                    ]
+                ignored_classes = {
+                    "MSCTFIME UI", "IME", "Default IME", "Internet Explorer_Hidden",
+                    "WorkerW", "Shell_TrayWnd", "Progman", "DummyWindow",
+                    "Intermediate D3D Window", "Chrome_StorageMonitorWindow",
+                    "Chrome_StatusTrayWindow", "Base_PowerMessageWindow",
+                    "crashpad_SessionEndWatcher"
+                }
 
                 def cb(hwnd, lp):
                     try:
                         if user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
                             w_pid = wintypes.DWORD()
                             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
-                            if not expanded_pids or w_pid.value in expanded_pids:
+                            pid_val = int(w_pid.value)
+                            if not expanded_pids or pid_val in expanded_pids:
+                                cls_buf = ctypes.create_unicode_buffer(256)
+                                user32.GetClassNameW(hwnd, cls_buf, 256)
+                                cls_name = cls_buf.value
+
                                 length = user32.GetWindowTextLengthW(hwnd)
                                 title = ""
                                 if length > 0:
@@ -3971,33 +4179,41 @@ class CyberVPSAgent:
                                     user32.GetWindowTextW(hwnd, buf, length + 1)
                                     title = buf.value.strip()
 
-                                cls_buf = ctypes.create_unicode_buffer(256)
-                                user32.GetClassNameW(hwnd, cls_buf, 256)
-                                cls_name = cls_buf.value
-
-                                ignored_classes = [
-                                    "MSCTFIME UI", "IME", "Default IME",
-                                    "Internet Explorer_Hidden", "WorkerW"
-                                ]
                                 if cls_name in ignored_classes and not title:
                                     return True
 
-                                r = RECT()
+                                r = wintypes.RECT()
                                 user32.GetWindowRect(hwnd, ctypes.byref(r))
                                 w = max(0, r.right - r.left)
                                 h = max(0, r.bottom - r.top)
-                                is_min = bool(user32.IsIconic(hwnd))
+                                is_min = bool(user32.IsIconic(hwnd)) or (w == 160 and h == 28)
+
+                                # Score candidate window
+                                score = 0
+                                if title:
+                                    score += 1000
+                                if cls_name in {"Chrome_WidgetWin_1", "MozillaWindowClass", "CabinetWClass", "Notepad", "ApplicationFrameWindow"}:
+                                    score += 600
+                                if w >= 300 and h >= 200:
+                                    score += 500
+                                elif w > 50 and h > 50:
+                                    score += 100
+                                else:
+                                    score -= 300
+                                if not is_min:
+                                    score += 200
 
                                 if (w > 20 and h > 20) or is_min or title:
                                     windows.append({
                                         "hwnd": int(hwnd),
-                                        "pid": int(w_pid.value),
-                                        "title": title or f"Window (PID {w_pid.value})",
+                                        "pid": pid_val,
+                                        "title": title or f"Window (PID {pid_val})",
                                         "class_name": cls_name,
                                         "width": w,
                                         "height": h,
                                         "is_minimized": is_min,
-                                        "is_visible": True
+                                        "is_visible": True,
+                                        "score": score
                                     })
                     except Exception:
                         pass
@@ -4008,72 +4224,8 @@ class CyberVPSAgent:
                 else:
                     user32.EnumWindows(DESKENUM(cb), 0)
 
-                # Fallback: if no windows found for target_pid, check other processes with same name (e.g. explorer.exe)
-                if not windows and target_pids and psutil:
-                    target_proc_names = set()
-                    for p in target_pids:
-                        try:
-                            target_proc_names.add(psutil.Process(p).name().lower())
-                        except Exception:
-                            pass
-                    if target_proc_names:
-                        same_name_pids = set()
-                        for pr in psutil.process_iter(['pid', 'name']):
-                            try:
-                                if pr.info['name'] and pr.info['name'].lower() in target_proc_names:
-                                    same_name_pids.add(pr.info['pid'])
-                            except Exception:
-                                pass
-                        extra_pids = same_name_pids - expanded_pids
-                        if extra_pids:
-                            def cb_extra(hwnd, lp):
-                                try:
-                                    if user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
-                                        w_pid = wintypes.DWORD()
-                                        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
-                                        if w_pid.value in extra_pids:
-                                            length = user32.GetWindowTextLengthW(hwnd)
-                                            title = ""
-                                            if length > 0:
-                                                buf = ctypes.create_unicode_buffer(length + 1)
-                                                user32.GetWindowTextW(hwnd, buf, length + 1)
-                                                title = buf.value.strip()
-
-                                            cls_buf = ctypes.create_unicode_buffer(256)
-                                            user32.GetClassNameW(hwnd, cls_buf, 256)
-                                            cls_name = cls_buf.value
-                                            ignored_classes = [
-                                                "MSCTFIME UI", "IME", "Default IME",
-                                                "Internet Explorer_Hidden", "WorkerW"
-                                            ]
-                                            if cls_name in ignored_classes and not title:
-                                                return True
-
-                                            r = RECT()
-                                            user32.GetWindowRect(hwnd, ctypes.byref(r))
-                                            w = max(0, r.right - r.left)
-                                            h = max(0, r.bottom - r.top)
-                                            is_min = bool(user32.IsIconic(hwnd))
-
-                                            if (w > 20 and h > 20) or is_min or title:
-                                                windows.append({
-                                                    "hwnd": int(hwnd),
-                                                    "pid": int(w_pid.value),
-                                                    "title": title or f"Window (PID {w_pid.value})",
-                                                    "class_name": cls_name,
-                                                    "width": w,
-                                                    "height": h,
-                                                    "is_minimized": is_min,
-                                                    "is_visible": True
-                                                })
-                                except Exception:
-                                    pass
-                                return True
-
-                            if hDesk:
-                                user32.EnumDesktopWindows(hDesk, DESKENUM(cb_extra), 0)
-                            else:
-                                user32.EnumWindows(DESKENUM(cb_extra), 0)
+                # Sort candidate windows so highest scored window is first
+                windows.sort(key=lambda x: x.get("score", 0), reverse=True)
 
                 if hDesk:
                     try: user32.CloseDesktop(hDesk)
@@ -4139,21 +4291,22 @@ class CyberVPSAgent:
 
         return windows
 
-    def _capture_window_image(self, hwnd=None, pid=None, quality=80, max_w=1920, max_h=1080):
+    def _capture_window_image(self, hwnd=None, pid=None, quality=80, max_w=1920, max_h=1080, app_id=None, app_name=None):
         sys_os = platform.system()
         quality = min(max(int(quality or 80), 30), 95)
         window_title = ""
 
         # Resolve target window if hwnd not given or invalid
         if not hwnd or int(hwnd) <= 0:
-            windows = self._get_process_windows(pid)
+            windows = self._get_process_windows(pid, app_id=app_id, app_name=app_name)
             if not windows:
+                alive = self.is_pid_alive(pid) if pid else False
                 return {
                     "success": False,
                     "has_gui": False,
                     "pid": pid,
-                    "error": "No capturable graphical window found for this process. It may be running as a background service or daemon without GUI.",
-                    "status": "no_window"
+                    "error": f"Process {pid} is no longer running." if (pid and not alive) else "No capturable graphical window found for this process. It may be running as a background service or daemon without GUI.",
+                    "status": "process_not_found" if (pid and not alive) else "no_window"
                 }
             active_wins = [w for w in windows if not w.get("is_minimized")]
             chosen = active_wins[0] if active_wins else windows[0]
@@ -4166,130 +4319,196 @@ class CyberVPSAgent:
             is_min = False
 
         if sys_os == "Windows":
-            import ctypes
-            from ctypes import wintypes
-            user32 = ctypes.windll.user32
-            gdi32 = ctypes.windll.gdi32
+            try:
+                import ctypes
+                from ctypes import wintypes
+                user32 = ctypes.windll.user32
+                gdi32 = ctypes.windll.gdi32
 
-            if not user32.IsWindow(hwnd):
-                return {
-                    "success": False,
-                    "has_gui": False,
-                    "pid": pid,
-                    "hwnd": hwnd,
-                    "error": f"Window handle {hwnd} is no longer valid or application has exited.",
-                    "status": "window_closed"
-                }
+                user32.OpenWindowStationW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL, wintypes.DWORD]
+                user32.OpenWindowStationW.restype = wintypes.HANDLE
+                user32.SetProcessWindowStation.argtypes = [wintypes.HANDLE]
+                user32.SetProcessWindowStation.restype = wintypes.BOOL
+                user32.OpenDesktopW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                user32.OpenDesktopW.restype = wintypes.HANDLE
+                user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
+                user32.SetThreadDesktop.restype = wintypes.BOOL
 
-            is_min = bool(user32.IsIconic(hwnd))
-            if is_min:
+                hWs = user32.OpenWindowStationW("winsta0", False, 0x37F)
+                if hWs:
+                    user32.SetProcessWindowStation(hWs)
+                hDesk = user32.OpenDesktopW("default", 0, False, 0x1FF)
+                if hDesk:
+                    user32.SetThreadDesktop(hDesk)
+
+                user32.IsWindow.argtypes = [wintypes.HWND]
+                user32.IsWindow.restype = wintypes.BOOL
+                user32.IsIconic.argtypes = [wintypes.HWND]
+                user32.IsIconic.restype = wintypes.BOOL
+                user32.GetWindowDC.argtypes = [wintypes.HWND]
+                user32.GetWindowDC.restype = wintypes.HDC
+                user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+                user32.ReleaseDC.restype = ctypes.c_int
+                user32.GetDC.argtypes = [wintypes.HWND]
+                user32.GetDC.restype = wintypes.HDC
+                user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+                user32.PrintWindow.restype = wintypes.BOOL
+                user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+                user32.GetWindowRect.restype = wintypes.BOOL
+
+                gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+                gdi32.CreateCompatibleDC.restype = wintypes.HDC
+                gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+                gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+                gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+                gdi32.SelectObject.restype = wintypes.HGDIOBJ
+                gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+                gdi32.DeleteObject.restype = wintypes.BOOL
+                gdi32.DeleteDC.argtypes = [wintypes.HDC]
+                gdi32.DeleteDC.restype = wintypes.BOOL
+                gdi32.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT, wintypes.LPVOID, ctypes.c_void_p, wintypes.UINT]
+                gdi32.GetDIBits.restype = ctypes.c_int
+                gdi32.BitBlt.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD]
+                gdi32.BitBlt.restype = wintypes.BOOL
+
+                h_wnd = wintypes.HWND(hwnd)
+                if not user32.IsWindow(h_wnd):
+                    return {
+                        "success": False,
+                        "has_gui": False,
+                        "pid": pid,
+                        "hwnd": hwnd,
+                        "error": f"Window handle {hwnd} is no longer valid or application has exited.",
+                        "status": "window_closed"
+                    }
+
+                r = wintypes.RECT()
+                user32.GetWindowRect(h_wnd, ctypes.byref(r))
+                w = max(1, r.right - r.left)
+                h = max(1, r.bottom - r.top)
+
+                is_min = bool(user32.IsIconic(h_wnd)) or (w == 160 and h == 28)
+                if is_min:
+                    return {
+                        "success": False,
+                        "has_gui": True,
+                        "is_minimized": True,
+                        "pid": pid,
+                        "hwnd": hwnd,
+                        "title": window_title,
+                        "error": "Window is currently minimized to taskbar on host desktop.",
+                        "status": "minimized"
+                    }
+
+                len_t = user32.GetWindowTextLengthW(h_wnd)
+                if len_t > 0:
+                    t_buf = ctypes.create_unicode_buffer(len_t + 1)
+                    user32.GetWindowTextW(h_wnd, t_buf, len_t + 1)
+                    if t_buf.value:
+                        window_title = t_buf.value
+
+                hwndDC = user32.GetWindowDC(h_wnd)
+                if not hwndDC:
+                    return {"success": False, "error": "Unable to acquire window DC handle.", "status": "permission_denied"}
+
+                memDC = gdi32.CreateCompatibleDC(hwndDC)
+                hBmp = gdi32.CreateCompatibleBitmap(hwndDC, w, h)
+                oldBmp = gdi32.SelectObject(memDC, hBmp)
+
+                pw_ok = user32.PrintWindow(h_wnd, memDC, 2)
+                if not pw_ok:
+                    pw_ok = user32.PrintWindow(h_wnd, memDC, 0)
+
+                if not pw_ok:
+                    screenDC = user32.GetDC(None)
+                    if screenDC:
+                        gdi32.BitBlt(memDC, 0, 0, w, h, screenDC, r.left, r.top, 0x00CC0020)
+                        user32.ReleaseDC(None, screenDC)
+
+                class BITMAPINFOHEADER(ctypes.Structure):
+                    _fields_ = [
+                        ('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
+                        ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
+                        ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
+                        ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)
+                    ]
+                bmi = BITMAPINFOHEADER()
+                bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                bmi.biWidth = w
+                bmi.biHeight = -h
+                bmi.biPlanes = 1
+                bmi.biBitCount = 32
+                bmi.biCompression = 0
+
+                buf_size = w * h * 4
+                buf = ctypes.create_string_buffer(buf_size)
+                gdi32.GetDIBits(memDC, hBmp, 0, h, buf, ctypes.byref(bmi), 0)
+
+                gdi32.SelectObject(memDC, oldBmp)
+                gdi32.DeleteObject(hBmp)
+                gdi32.DeleteDC(memDC)
+                user32.ReleaseDC(h_wnd, hwndDC)
+
+                # Verify pixel buffer is not all zeros
+                raw_bytes = buf.raw
+                has_pixels = any(b != 0 for b in raw_bytes[:min(len(raw_bytes), 4096)])
+                if not has_pixels and not any(b != 0 for b in raw_bytes[-4096:]):
+                    return {
+                        "success": False,
+                        "has_gui": True,
+                        "pid": pid,
+                        "hwnd": hwnd,
+                        "title": window_title,
+                        "error": "Window frame buffer is completely blank or hardware composited offscreen.",
+                        "status": "capture_frame_empty"
+                    }
+
+                try:
+                    from PIL import Image
+                    import io
+                    img = Image.frombuffer('RGBA', (w, h), raw_bytes, 'raw', 'BGRA', 0, 1)
+                    if w > max_w or h > max_h:
+                        img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.ANTIALIAS)
+                        w, h = img.size
+
+                    out_io = io.BytesIO()
+                    img.convert('RGB').save(out_io, format='JPEG', quality=quality)
+                    b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
+                    fmt = "jpeg"
+                except Exception:
+                    import struct
+                    file_size = 54 + (w * h * 3)
+                    bmp_hdr = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
+                    dib_hdr = struct.pack('<IIIHHIIIIII', 40, w, h, 1, 24, 0, w * h * 3, 2835, 2835, 0, 0)
+                    rgb_bytes = bytearray(w * h * 3)
+                    for i in range(w * h):
+                        rgb_bytes[i*3 : i*3+3] = raw_bytes[i*4 : i*4+3]
+                    b64_data = base64.b64encode(bmp_hdr + dib_hdr + rgb_bytes).decode('ascii')
+                    fmt = "bmp"
+
                 return {
-                    "success": False,
+                    "success": True,
                     "has_gui": True,
-                    "is_minimized": True,
                     "pid": pid,
                     "hwnd": hwnd,
                     "title": window_title,
-                    "error": "Window is currently minimized to taskbar on host desktop.",
-                    "status": "minimized"
+                    "width": w,
+                    "height": h,
+                    "is_minimized": False,
+                    "format": fmt,
+                    "data": b64_data,
+                    "timestamp": int(time.time() * 1000)
                 }
 
-            class RECT(ctypes.Structure):
-                _fields_ = [
-                    ('left', wintypes.LONG), ('top', wintypes.LONG),
-                    ('right', wintypes.LONG), ('bottom', wintypes.LONG)
-                ]
-            r = RECT()
-            user32.GetWindowRect(hwnd, ctypes.byref(r))
-            w = max(1, r.right - r.left)
-            h = max(1, r.bottom - r.top)
-
-            len_t = user32.GetWindowTextLengthW(hwnd)
-            if len_t > 0:
-                t_buf = ctypes.create_unicode_buffer(len_t + 1)
-                user32.GetWindowTextW(hwnd, t_buf, len_t + 1)
-                if t_buf.value:
-                    window_title = t_buf.value
-
-            hwndDC = user32.GetWindowDC(hwnd)
-            if not hwndDC:
-                return {"success": False, "error": "Unable to acquire window DC handle."}
-
-            memDC = gdi32.CreateCompatibleDC(hwndDC)
-            hBmp = gdi32.CreateCompatibleBitmap(hwndDC, w, h)
-            oldBmp = gdi32.SelectObject(memDC, hBmp)
-
-            pw_ok = user32.PrintWindow(hwnd, memDC, 2)
-            if not pw_ok:
-                pw_ok = user32.PrintWindow(hwnd, memDC, 0)
-
-            if not pw_ok:
-                screenDC = user32.GetDC(0)
-                if screenDC:
-                    gdi32.BitBlt(memDC, 0, 0, w, h, screenDC, r.left, r.top, 0x00CC0020)
-                    user32.ReleaseDC(0, screenDC)
-
-            class BITMAPINFOHEADER(ctypes.Structure):
-                _fields_ = [
-                    ('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
-                    ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
-                    ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
-                    ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)
-                ]
-            bmi = BITMAPINFOHEADER()
-            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-            bmi.biWidth = w
-            bmi.biHeight = -h
-            bmi.biPlanes = 1
-            bmi.biBitCount = 32
-            bmi.biCompression = 0
-
-            buf_size = w * h * 4
-            buf = ctypes.create_string_buffer(buf_size)
-            gdi32.GetDIBits(memDC, hBmp, 0, h, buf, ctypes.byref(bmi), 0)
-
-            gdi32.SelectObject(memDC, oldBmp)
-            gdi32.DeleteObject(hBmp)
-            gdi32.DeleteDC(memDC)
-            user32.ReleaseDC(hwnd, hwndDC)
-
-            try:
-                from PIL import Image
-                import io
-                img = Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1)
-                if w > max_w or h > max_h:
-                    img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.ANTIALIAS)
-                    w, h = img.size
-
-                out_io = io.BytesIO()
-                img.convert('RGB').save(out_io, format='JPEG', quality=quality)
-                b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
-                fmt = "jpeg"
-            except Exception:
-                import struct
-                file_size = 54 + (w * h * 3)
-                bmp_hdr = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
-                dib_hdr = struct.pack('<IIIHHIIIIII', 40, w, h, 1, 24, 0, w * h * 3, 2835, 2835, 0, 0)
-                raw_bytes = bytearray(w * h * 3)
-                src = memoryview(buf)
-                for i in range(w * h):
-                    raw_bytes[i*3 : i*3+3] = src[i*4 : i*4+3]
-                b64_data = base64.b64encode(bmp_hdr + dib_hdr + raw_bytes).decode('ascii')
-                fmt = "bmp"
-
-            return {
-                "success": True,
-                "has_gui": True,
-                "pid": pid,
-                "hwnd": hwnd,
-                "title": window_title,
-                "width": w,
-                "height": h,
-                "is_minimized": False,
-                "format": fmt,
-                "data": b64_data,
-                "timestamp": int(time.time() * 1000)
-            }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "has_gui": True,
+                    "pid": pid,
+                    "hwnd": hwnd,
+                    "error": f"Exception capturing window: {str(e)}",
+                    "status": "capture_error"
+                }
 
         else:
             # Linux capture
@@ -4341,6 +4560,9 @@ class CyberVPSAgent:
 
         pid = stream_cfg.get("pid")
         hwnd = stream_cfg.get("hwnd")
+        app_id = stream_cfg.get("app_id")
+        app_name = stream_cfg.get("app_name")
+        correlation_id = stream_cfg.get("correlation_id")
         target_fps = stream_cfg.get("fps", 25)
         quality = stream_cfg.get("quality", 80)
 
@@ -4348,7 +4570,22 @@ class CyberVPSAgent:
         last_fps_calc = time.time()
         measured_fps = float(target_fps)
 
-        print(f"[*] Starting live app stream {stream_id} for PID {pid} (target {target_fps} FPS, quality {quality})...")
+        print(f"[*] Starting live app stream {stream_id} for PID {pid} (target {target_fps} FPS, quality {quality}, corr: {correlation_id})...")
+
+        # Stage milestone: report worker_started immediately
+        self.send_agent_event({
+            "type": "AppStreamStatus",
+            "payload": {
+                "stream_id": stream_id,
+                "correlation_id": correlation_id,
+                "status": "worker_started",
+                "pid": pid,
+                "hwnd": hwnd,
+                "fps": target_fps,
+                "quality": quality,
+                "timestamp": int(time.time() * 1000)
+            }
+        })
 
         while self.running and stream_id in self.active_app_streams:
             stream_cfg = self.active_app_streams.get(stream_id)
@@ -4360,7 +4597,10 @@ class CyberVPSAgent:
             curr_qual = stream_cfg.get("quality", quality)
 
             t0 = time.time()
-            res = self._capture_window_image(hwnd=curr_hwnd, pid=pid, quality=curr_qual)
+            try:
+                res = self._capture_window_image(hwnd=curr_hwnd, pid=pid, quality=curr_qual, app_id=app_id, app_name=app_name)
+            except Exception as e:
+                res = {"success": False, "status": "capture_error", "error": f"Unexpected capture worker exception: {e}"}
 
             now = time.time()
             frame_counter += 1
@@ -4370,10 +4610,15 @@ class CyberVPSAgent:
                 last_fps_calc = now
 
             if res.get("success"):
+                # Dynamically update resolved HWND
+                if res.get("hwnd") and not curr_hwnd:
+                    stream_cfg["hwnd"] = res.get("hwnd")
+
                 self.send_agent_event({
                     "type": "AppStreamFrame",
                     "payload": {
                         "stream_id": stream_id,
+                        "correlation_id": correlation_id,
                         "pid": pid,
                         "hwnd": res.get("hwnd"),
                         "title": res.get("title", ""),
@@ -4392,6 +4637,7 @@ class CyberVPSAgent:
                     "type": "AppStreamStatus",
                     "payload": {
                         "stream_id": stream_id,
+                        "correlation_id": correlation_id,
                         "pid": pid,
                         "status": res.get("status", "error"),
                         "has_gui": res.get("has_gui", False),
@@ -4400,7 +4646,7 @@ class CyberVPSAgent:
                         "timestamp": int(now * 1000)
                     }
                 })
-                if res.get("status") in ["window_closed", "no_window"]:
+                if res.get("status") in ["window_closed", "process_not_found"]:
                     time.sleep(1.0)
                     if pid and not self.is_pid_alive(pid):
                         break
@@ -4418,8 +4664,10 @@ class CyberVPSAgent:
     def handle_app_window_list(self, payload):
         req_id = payload.get("request_id")
         pid = payload.get("pid")
+        app_id = payload.get("app_id")
+        app_name = payload.get("app_name") or payload.get("name")
         try:
-            windows = self._get_process_windows(pid)
+            windows = self._get_process_windows(pid, app_id=app_id, app_name=app_name)
             self.send_agent_event({
                 "type": "AgentRpcResponse",
                 "payload": {
@@ -4443,9 +4691,11 @@ class CyberVPSAgent:
         req_id = payload.get("request_id")
         pid = payload.get("pid")
         hwnd = payload.get("hwnd")
+        app_id = payload.get("app_id")
+        app_name = payload.get("app_name") or payload.get("name")
         quality = payload.get("quality", 85)
         try:
-            res = self._capture_window_image(hwnd=hwnd, pid=pid, quality=quality)
+            res = self._capture_window_image(hwnd=hwnd, pid=pid, quality=quality, app_id=app_id, app_name=app_name)
             self.send_agent_event({
                 "type": "AgentRpcResponse",
                 "payload": {
@@ -4465,6 +4715,9 @@ class CyberVPSAgent:
         stream_id = payload.get("stream_id")
         pid = payload.get("pid")
         hwnd = payload.get("hwnd")
+        correlation_id = payload.get("correlation_id")
+        app_id = payload.get("app_id")
+        app_name = payload.get("app_name") or payload.get("name")
         fps = min(max(int(payload.get("fps", 25)), 1), 60)
         quality = min(max(int(payload.get("quality", 80)), 30), 95)
 
@@ -4478,8 +4731,13 @@ class CyberVPSAgent:
                 "hwnd": hwnd,
                 "fps": fps,
                 "quality": quality,
+                "correlation_id": correlation_id,
+                "app_id": app_id,
+                "app_name": app_name,
                 "start_time": time.time()
             }
+
+        threading.Thread(target=self._app_stream_worker_loop, args=(stream_id,), daemon=True).start()
 
         threading.Thread(target=self._app_stream_worker_loop, args=(stream_id,), daemon=True).start()
 
@@ -5636,6 +5894,7 @@ class CyberVPSAgent:
 
         profile = self.discover_device_profile()
         caps = self.get_capabilities()
+        hw = self.get_hardware_identity()
 
         auth_payload = {
             "type": "Auth",
@@ -5648,6 +5907,8 @@ class CyberVPSAgent:
                 "os": platform.system(),
                 "os_version": profile.get("os_full", platform.release()),
                 "arch": platform.machine(),
+                "hardware_uuid": hw.get("hardware_uuid"),
+                "hardware_serial": hw.get("hardware_serial"),
                 "capabilities": caps,
                 "profile": profile
             }
@@ -5691,6 +5952,8 @@ class CyberVPSAgent:
                                 "username": self.username,
                                 "os": platform.system(),
                                 "agent_version": PROTOCOL_VERSION,
+                                "hardware_uuid": hw.get("hardware_uuid"),
+                                "hardware_serial": hw.get("hardware_serial"),
                                 "ghost_mode": getattr(self, "ghost_mode", False)
                             }
                         })
@@ -5773,7 +6036,7 @@ def handle_cli_subcommands(args):
                 pass
 
     server_url = cfg.get("server_url") or "https://cybervps-space-station.up.railway.app"
-    token = cfg.get("token") or "cvps_enroll_master_token"
+    token = cfg.get("token") or os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
     mid = cfg.get("machine_id") or ""
     if not mid and os.path.exists(os.path.join(cvps_dir, "machine_id")):
         try:
@@ -6225,7 +6488,7 @@ if __name__ == "__main__":
             pass
 
     target = os.environ.get("CYBERVPS_SERVER", "https://cybervps-space-station.up.railway.app")
-    token = os.environ.get("CYBERVPS_TOKEN", "cvps_enroll_master_token")
+    token = os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
     mid = os.environ.get("CYBERVPS_MACHINE_ID", None)
 
     cfg_path = os.environ.get("CYBERVPS_CONFIG")
@@ -6256,11 +6519,19 @@ if __name__ == "__main__":
     i = 0
     pos_idx = 0
     ghost_mode = False
+    bootstrap_mode = False
+    recovery_ticket = None
     while i < len(args):
         a = args[i]
         if a in ("--ghost",):
             ghost_mode = True
             i += 1
+        elif a in ("--bootstrap",):
+            bootstrap_mode = True
+            i += 1
+        elif a in ("--recovery-ticket",) and i + 1 < len(args):
+            recovery_ticket = args[i + 1]
+            i += 2
         elif a in ("--server", "-s") and i + 1 < len(args):
             target = args[i + 1]
             i += 2
@@ -6330,6 +6601,12 @@ if __name__ == "__main__":
 
     try:
         agent = CyberVPSAgent(target, token, mid, ghost_mode=ghost_mode)
+        if bootstrap_mode or recovery_ticket:
+            claimed = agent.perform_bootstrap_claim(target, agent.machine_id, recovery_ticket)
+            if claimed.get("success"):
+                print(f"[*] Re-enrollment bootstrap claim successful! Assigned token: {agent.token[:4]}***")
+            else:
+                print(f"[!] Warning: Bootstrap claim returned: {claimed.get('error')}")
         try:
             home = os.path.expanduser("~")
             cvps_dir = os.path.join(home, ".cybervps")
@@ -6338,7 +6615,7 @@ if __name__ == "__main__":
                 json.dump({
                     "server_url": target,
                     "server_urls": list(dict.fromkeys([target, "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
-                    "token": token,
+                    "token": agent.token,
                     "machine_id": agent.machine_id,
                     "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 }, f, indent=2)

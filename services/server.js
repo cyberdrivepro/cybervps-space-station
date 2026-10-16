@@ -74,7 +74,7 @@ const db = {
   ports: new Map(), // machine_id -> [PortObservation]
   tunnels: new Map(), // tunnel_id -> TunnelConfig (Public Gateway)
   bridgeMappings: new Map(), // mapping_id -> BridgeMapping (Local PC -> Remote Port)
-  enrollmentTokens: new Set(['cvps_enroll_master_token']),
+  enrollmentTokens: new Set(process.env.ENROLLMENT_TOKEN ? [process.env.ENROLLMENT_TOKEN] : []),
   auditLogs: [],
   pendingCommands: new Map(), // machine_id -> [ServerCommand]
   connectedAgents: new Map(), // machine_id -> ws
@@ -95,7 +95,10 @@ const db = {
   hostingDeployments: new Map(), // deploy_id -> { id, project_id, status, logs, created_at }
   domains: new Map(), // domain_name -> { domain, project_id, target_backend, status, ssl_ready, verification_code, created_at }
   plugins: new Map(), // plugin_id -> { id, name, version, enabled, description, capabilities }
-  appInventories: new Map() // machine_id -> { apps, timestamp, os_type, total, running, stopped }
+  appInventories: new Map(), // machine_id -> { apps, timestamp, os_type, total, running, stopped }
+  recoveryProfiles: new Map(), // machine_id -> RecoveryProfile { machine_id, device_name, hardware_uuid, hardware_serial, recovery_mode, installation_generation, status, auto_approve, history }
+  recoveryTickets: new Map(), // ticket -> RecoveryTicket { ticket, machine_id, hardware_uuid, created_at, expires_at, used, issued_by }
+  revokedDevices: new Set() // machine_id -> permanently revoked devices
 };
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
@@ -155,7 +158,18 @@ function loadPersistentState() {
       if (Array.isArray(data.plugins)) {
         for (const pl of data.plugins) db.plugins.set(pl.id, pl);
       }
-      console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels, ${db.backends.size} backends`);
+      if (Array.isArray(data.recoveryProfiles)) {
+        for (const rp of data.recoveryProfiles) db.recoveryProfiles.set(rp.machine_id, rp);
+      }
+      if (Array.isArray(data.recoveryTickets)) {
+        for (const rt of data.recoveryTickets) {
+          if (rt && rt.expires_at > Date.now()) db.recoveryTickets.set(rt.ticket, rt);
+        }
+      }
+      if (Array.isArray(data.revokedDevices)) {
+        for (const rd of data.revokedDevices) db.revokedDevices.add(rd);
+      }
+      console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels, ${db.backends.size} backends, ${db.recoveryProfiles.size} recovery profiles`);
     }
   } catch (err) {
     console.warn(`[WARN] Could not load persistent state: ${err.message}`);
@@ -182,7 +196,10 @@ function savePersistentState() {
         sandboxes: Array.from(db.sandboxes.values()),
         hostingProjects: Array.from(db.hostingProjects.values()),
         domains: Array.from(db.domains.values()),
-        plugins: Array.from(db.plugins.values())
+        plugins: Array.from(db.plugins.values()),
+        recoveryProfiles: Array.from(db.recoveryProfiles.values()),
+        recoveryTickets: Array.from(db.recoveryTickets.values()).filter(rt => rt.expires_at > Date.now()),
+        revokedDevices: Array.from(db.revokedDevices)
       };
       fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
@@ -431,42 +448,47 @@ function verifyAdminAuthorization(req) {
   // 3. Custom headers: X-Admin-Token, X-Session-Token, X-CVPS-Pairing-Key, X-Pairing-Key
   const customToken = req.headers['x-admin-token'] || req.headers['x-session-token'] || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
 
-  // 4. Query parameters: ?pairing_key=... or ?pair=... or ?token=...
-  let queryToken = '';
-  try {
-    const qUrl = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
-    queryToken = qUrl.searchParams.get('pairing_key') || qUrl.searchParams.get('pair') || qUrl.searchParams.get('token') || '';
-  } catch (_) {}
-
-  const candidateToken = bearerToken || cookieToken || customToken || queryToken;
+  // Note: Long-lived credentials MUST NOT be accepted in query strings for security
+  const candidateToken = bearerToken || cookieToken || customToken;
 
   // Validate candidate token if provided
   if (candidateToken) {
+    // 1. Explicit rejection of known obsolete/hardcoded defaults
+    if (candidateToken === 'cvps_enroll_master_token') {
+      return { authorized: false, reason: 'Invalid or obsolete credential', status: 401 };
+    }
+
+    // 2. Guard: Agent enrollment token MUST NOT be used for administrative or client access
+    const configuredEnrollment = process.env.ENROLLMENT_TOKEN;
+    if ((configuredEnrollment && candidateToken === configuredEnrollment) || (db.enrollmentTokens && db.enrollmentTokens.has(candidateToken))) {
+      return { authorized: false, reason: 'Forbidden: Agent enrollment token cannot be used for administrative or client operations', status: 403 };
+    }
+
+    // 3. Check Admin session tokens
     if (db.sessions && db.sessions.has(candidateToken)) {
       const sess = db.sessions.get(candidateToken);
       if (sess && sess.expires_at > Date.now()) {
-        return { authorized: true, user: sess.username, role: sess.role };
+        return { authorized: true, user: sess.username || 'admin', role: sess.role || 'admin' };
       }
     }
+
+    // 4. Check explicit Admin token
     if (process.env.CYBERVPS_ADMIN_TOKEN && candidateToken === process.env.CYBERVPS_ADMIN_TOKEN) {
       return { authorized: true, user: 'admin', role: 'admin' };
     }
-    const configuredMaster = process.env.PAIRING_KEY || process.env.CYBERVPS_TOKEN || process.env.ENROLLMENT_TOKEN || (tunnelManager && tunnelManager.pairingKey) || 'cvps_enroll_master_token';
-    const isPairingKeyMatch = (
-      candidateToken === configuredMaster ||
-      candidateToken === 'cvps_enroll_master_token' ||
-      (tunnelManager && candidateToken === tunnelManager.pairingKey) ||
-      (db.enrollmentTokens && db.enrollmentTokens.has(candidateToken))
-    );
-    if (isPairingKeyMatch) {
-      return { authorized: true, user: 'paired_client', role: 'admin' };
+
+    // 5. Check Pairing Key (scoped to client / operator operations)
+    const configuredPairing = process.env.PAIRING_KEY || (tunnelManager && tunnelManager.pairingKey);
+    if (configuredPairing && candidateToken === configuredPairing) {
+      return { authorized: true, user: 'paired_client', role: 'operator' };
     }
-    return { authorized: false, reason: 'Invalid instance pairing key or session token' };
+
+    return { authorized: false, reason: 'Invalid instance pairing key or session token', status: 401 };
   }
 
   // If NO candidate token was provided:
   if (req.headers['x-simulate-public'] === 'true') {
-    return { authorized: false, reason: 'Simulated public request requires authorization' };
+    return { authorized: false, reason: 'Unauthorized: Simulated public request requires instance pairing key (X-CVPS-Pairing-Key) or session token', status: 401 };
   }
 
   const isCloudOrProd = !!(
@@ -477,7 +499,7 @@ function verifyAdminAuthorization(req) {
   );
 
   if (isCloudOrProd) {
-    return { authorized: false, reason: 'Authentication required on public control plane' };
+    return { authorized: false, reason: 'Authentication required on public control plane', status: 401 };
   }
 
   const remoteIp = req.socket?.remoteAddress || '';
@@ -486,18 +508,29 @@ function verifyAdminAuthorization(req) {
     return { authorized: true, user: 'local_admin', role: 'admin' };
   }
 
-  return { authorized: false, reason: 'Authentication required' };
+  return { authorized: false, reason: 'Authentication required', status: 401 };
 }
 
-function requireAdminAuth(req, res) {
+function requireAdminAuth(req, res, options = {}) {
   const auth = verifyAdminAuthorization(req);
   if (!auth.authorized) {
+    const statusCode = auth.status || 401;
     logAudit('unauthorized_api_access', 'anonymous', null, `Access denied for ${req.method} ${req.url}: ${auth.reason || 'Missing credentials'}`, 'warning');
-    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      error: 'Unauthorized: Instance pairing key (X-CVPS-Pairing-Key) or session token required',
-      message: auth.reason || 'Pairing key required',
+      error: auth.reason || 'Unauthorized: Instance pairing key (X-CVPS-Pairing-Key) or session token required',
+      message: auth.reason || 'Authentication required',
       authenticated: false
+    }));
+    return false;
+  }
+  if (options.requireAdminRole && auth.role !== 'admin') {
+    logAudit('privilege_escalation_blocked', auth.user, null, `Operation requires administrator privileges for ${req.method} ${req.url}`, 'warning');
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'Forbidden: Administrator privileges required for this operation',
+      role: auth.role,
+      authenticated: true
     }));
     return false;
   }
@@ -520,6 +553,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/auth/status') return true;
   if (pathname === '/api/v1/ota/latest') return true;
   if (pathname === '/api/v1/ota/download/universal-agent.py') return true;
+  if (pathname === '/api/v1/recovery/claim') return true;
   return false;
 }
 
@@ -692,14 +726,15 @@ const server = http.createServer(async (req, res) => {
         const token = req.headers['x-enrollment-token'] || (msg.payload && msg.payload.token);
 
         // Security check for non-Auth events
-        const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
+        const configuredMaster = process.env.ENROLLMENT_TOKEN;
         if (msg.type !== 'Auth') {
           if (!machineId || !db.machines.has(machineId)) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Machine not enrolled. Please send Auth event first.' }));
             return;
           }
-          if (token && !db.enrollmentTokens.has(token) && token !== configuredMaster) {
+          const isTokenValid = token && ((configuredMaster && token === configuredMaster) || db.enrollmentTokens.has(token));
+          if (!isTokenValid) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Invalid enrollment token' }));
             return;
@@ -734,8 +769,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
-    if (!token || (!db.enrollmentTokens.has(token) && token !== configuredMaster)) {
+    const configuredMaster = process.env.ENROLLMENT_TOKEN;
+    const isTokenValid = token && ((configuredMaster && token === configuredMaster) || db.enrollmentTokens.has(token));
+    if (!isTokenValid) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Invalid or missing enrollment token' }));
       return;
@@ -794,24 +830,19 @@ const server = http.createServer(async (req, res) => {
       try {
         const payload = JSON.parse(body || '{}');
         const { machine_id, profile } = payload;
-        const pairing_key = payload.pairing_key || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
-        const session_token = payload.session_token || req.headers['x-session-token'];
-        let bearerToken = null;
-        const authHdr = req.headers['authorization'];
-        if (authHdr && authHdr.toLowerCase().startsWith('bearer ')) {
-          bearerToken = authHdr.slice(7).trim();
+        if (payload.pairing_key && !req.headers['x-cvps-pairing-key']) {
+          req.headers['x-cvps-pairing-key'] = payload.pairing_key;
         }
-        
-        // Authenticate client identity
-        const configuredMaster = process.env.PAIRING_KEY || process.env.CYBERVPS_TOKEN || process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
-        const isKeyValid = (pairing_key && (pairing_key === tunnelManager.pairingKey || pairing_key === configuredMaster)) ||
-                           (bearerToken && (bearerToken === tunnelManager.pairingKey || bearerToken === configuredMaster));
-        const isSessionValid = (session_token && tunnelManager.isValidSession(session_token)) ||
-                               (bearerToken && tunnelManager.isValidSession(bearerToken));
-        
-        if (!isKeyValid && !isSessionValid) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Unauthorized: Valid pairing key or session token required' }));
+        if (payload.session_token && !req.headers['x-session-token']) {
+          req.headers['x-session-token'] = payload.session_token;
+        }
+
+        // Authenticate client identity via centralized role-separated guard
+        const auth = verifyAdminAuthorization(req);
+        if (!auth.authorized) {
+          const statusCode = auth.status || 401;
+          res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: auth.reason || 'Unauthorized: Valid pairing key or session token required', code: 'AUTHENTICATION_REQUIRED' }));
           return;
         }
         
@@ -864,26 +895,19 @@ const server = http.createServer(async (req, res) => {
       try {
         const payload = JSON.parse(body || '{}');
         const { machine_id, pid, hwnd, app_id } = payload;
-        const pairing_key = payload.pairing_key || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
-        const session_token = payload.session_token || req.headers['x-session-token'];
-        let bearerToken = null;
-        const authHdr = req.headers['authorization'];
-        if (authHdr && authHdr.toLowerCase().startsWith('bearer ')) {
-          bearerToken = authHdr.slice(7).trim();
+        if (payload.pairing_key && !req.headers['x-cvps-pairing-key']) {
+          req.headers['x-cvps-pairing-key'] = payload.pairing_key;
+        }
+        if (payload.session_token && !req.headers['x-session-token']) {
+          req.headers['x-session-token'] = payload.session_token;
         }
 
-        // Authenticate client identity (via verifyAdminAuthorization, pairing keys, session tokens, or loopback context)
+        // Authenticate client identity via centralized role-separated guard
         const auth = verifyAdminAuthorization(req);
-        const configuredMaster = process.env.PAIRING_KEY || process.env.CYBERVPS_TOKEN || process.env.ENROLLMENT_TOKEN || (tunnelManager && tunnelManager.pairingKey) || 'cvps_enroll_master_token';
-        const isKeyValid = (pairing_key && (pairing_key === tunnelManager.pairingKey || pairing_key === configuredMaster || (db.enrollmentTokens && db.enrollmentTokens.has(pairing_key)))) ||
-                           (bearerToken && (bearerToken === tunnelManager.pairingKey || bearerToken === configuredMaster || (db.enrollmentTokens && db.enrollmentTokens.has(bearerToken))));
-        const isSessionValid = (session_token && tunnelManager.isValidSession(session_token)) ||
-                               (bearerToken && tunnelManager.isValidSession(bearerToken)) ||
-                               (bearerToken && db.sessions && db.sessions.has(bearerToken));
-
-        if (!auth.authorized && !isKeyValid && !isSessionValid) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Unauthorized: Valid pairing key or session token required', code: 'AUTHENTICATION_REQUIRED' }));
+        if (!auth.authorized) {
+          const statusCode = auth.status || 401;
+          res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: auth.reason || 'Unauthorized: Valid pairing key or session token required', code: 'AUTHENTICATION_REQUIRED' }));
           return;
         }
 
@@ -899,13 +923,16 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        const correlationId = payload.correlation_id || ('corr_stream_' + crypto.randomUUID().slice(0, 8));
         const streamToken = 'app_stream_tok_' + crypto.randomBytes(16).toString('hex');
         db.appStreamAuthTokens.set(streamToken, {
           machine_id,
           pid: pid ? parseInt(pid, 10) : null,
           hwnd: hwnd ? parseInt(hwnd, 10) : null,
           app_id: app_id || null,
-          user: isSessionValid ? 'admin' : 'paired_client',
+          app_name: payload.app_name || payload.name || null,
+          correlation_id: correlationId,
+          user: auth.role === 'admin' ? 'admin' : 'paired_client',
           created_at: Date.now(),
           expires_at: Date.now() + 60000 // 60s
         });
@@ -917,6 +944,7 @@ const server = http.createServer(async (req, res) => {
           machine_id,
           pid,
           hwnd,
+          correlation_id: correlationId,
           expires_in: 60
         }));
       } catch (e) {
@@ -949,7 +977,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     try {
-      const data = await sendAgentRequest(machineId, 'AppWindowList', { pid: pid ? parseInt(pid, 10) : null }, 8000);
+      const appId = parsedUrl.searchParams.get('app_id') || null;
+      const appName = parsedUrl.searchParams.get('name') || parsedUrl.searchParams.get('app_name') || null;
+      const data = await sendAgentRequest(machineId, 'AppWindowList', {
+        pid: pid ? parseInt(pid, 10) : null,
+        app_id: appId,
+        app_name: appName
+      }, 8000);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {
@@ -1904,6 +1938,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/v1/auth/enrollment-token' && method === 'POST') {
+    if (req.adminRole !== 'admin') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: Administrator privileges required to manage enrollment tokens', role: req.adminRole }));
+      return;
+    }
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
@@ -3533,6 +3572,630 @@ while True:
     return;
   }
 
+  // =========================================================================
+  // 17. DISASTER RECOVERY, FULL DISK WIPE & AUTO-REENROLLMENT APIS
+  // =========================================================================
+  if (pathname === '/api/v1/recovery/devices' && method === 'GET') {
+    const devices = Array.from(db.machines.values()).map(m => {
+      const profile = db.recoveryProfiles.get(m.id) || {
+        machine_id: m.id,
+        device_name: m.friendly_name || m.hostname || m.id,
+        hardware_uuid: m.hardware_uuid || null,
+        hardware_serial: m.hardware_serial || null,
+        platform: (m.os || 'linux').toLowerCase(),
+        recovery_mode: (m.os || '').toLowerCase().includes('win') ? 'windows_usb' : 'cloud_init',
+        installation_generation: m.installation_generation || 1,
+        status: db.revokedDevices.has(m.id) ? 'revoked' : (m.status === 'online' ? 'connected' : 'ready'),
+        auto_approve: true,
+        created_at: m.created_at || new Date().toISOString(),
+        last_recovery_at: m.last_recovery_at || null
+      };
+      const activeTickets = Array.from(db.recoveryTickets.values()).filter(t => t.machine_id === m.id && !t.used && t.expires_at > Date.now());
+      return {
+        ...profile,
+        machine_status: getMachineStatus(m),
+        last_seen: m.last_seen,
+        active_tickets_count: activeTickets.length,
+        active_ticket: activeTickets.length > 0 ? activeTickets[0].ticket : null
+      };
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, devices }));
+    return;
+  }
+
+  if (pathname === '/api/v1/recovery/profile' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id, hardware_uuid, hardware_serial, recovery_mode, auto_approve, owner, organization } = payload;
+        if (!machine_id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
+          return;
+        }
+        let machine = db.machines.get(machine_id);
+        if (!machine) {
+          machine = {
+            id: machine_id,
+            hostname: machine_id,
+            friendly_name: machine_id,
+            status: 'offline',
+            created_at: new Date().toISOString()
+          };
+          db.machines.set(machine_id, machine);
+        }
+        if (hardware_uuid) machine.hardware_uuid = hardware_uuid;
+        if (hardware_serial) machine.hardware_serial = hardware_serial;
+
+        const existing = db.recoveryProfiles.get(machine_id) || {};
+        const profile = {
+          machine_id,
+          device_name: payload.device_name || machine.friendly_name || machine_id,
+          hardware_uuid: hardware_uuid || machine.hardware_uuid || existing.hardware_uuid || null,
+          hardware_serial: hardware_serial || machine.hardware_serial || existing.hardware_serial || null,
+          platform: payload.platform || (machine.os || 'linux').toLowerCase(),
+          recovery_mode: recovery_mode || existing.recovery_mode || 'windows_usb',
+          auto_approve: auto_approve !== undefined ? Boolean(auto_approve) : (existing.auto_approve !== undefined ? existing.auto_approve : true),
+          owner: owner || existing.owner || req.adminUser || 'admin',
+          organization: organization || existing.organization || 'CyberVPS Fleet',
+          installation_generation: existing.installation_generation || machine.installation_generation || 1,
+          status: db.revokedDevices.has(machine_id) ? 'revoked' : 'ready',
+          updated_at: new Date().toISOString(),
+          created_at: existing.created_at || new Date().toISOString(),
+          history: existing.history || []
+        };
+        db.recoveryProfiles.set(machine_id, profile);
+        savePersistentState();
+        logAudit('recovery_profile_updated', req.adminUser || 'admin', machine_id, `Configured recovery profile: Mode=${profile.recovery_mode}, UUID=${profile.hardware_uuid || 'none'}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, profile }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/recovery/ticket' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id, ttl_hours } = payload;
+        if (!machine_id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
+          return;
+        }
+        if (!db.machines.has(machine_id) && !db.recoveryProfiles.has(machine_id)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: `Machine '${machine_id}' not found` }));
+          return;
+        }
+        if (db.revokedDevices.has(machine_id) || db.recoveryProfiles.get(machine_id)?.status === 'revoked') {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: `Cannot issue recovery ticket: Machine '${machine_id}' is revoked`, code: 'DEVICE_REVOKED' }));
+          return;
+        }
+        const profile = db.recoveryProfiles.get(machine_id);
+        const ticket = 'cvps_recov_' + crypto.randomBytes(16).toString('hex');
+        const ttl = Math.min(Math.max(parseInt(ttl_hours || '24', 10), 1), 720); // 1h to 30d
+        const ticketRecord = {
+          ticket,
+          machine_id,
+          hardware_uuid: profile?.hardware_uuid || null,
+          created_at: Date.now(),
+          expires_at: Date.now() + ttl * 3600 * 1000,
+          used: false,
+          issued_by: req.adminUser || 'admin'
+        };
+        db.recoveryTickets.set(ticket, ticketRecord);
+        savePersistentState();
+        logAudit('recovery_ticket_issued', req.adminUser || 'admin', machine_id, `Issued recovery ticket for ${machine_id} (Expires in ${ttl}h)`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          ticket,
+          machine_id,
+          expires_at: new Date(ticketRecord.expires_at).toISOString(),
+          expires_in_hours: ttl
+        }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/recovery/claim' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id, hardware_uuid, recovery_ticket, os, hostname, arch, agent_version } = payload;
+        if (!machine_id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
+          return;
+        }
+
+        // 1. Check permanent revocation guard
+        if (db.revokedDevices.has(machine_id) || db.recoveryProfiles.get(machine_id)?.status === 'revoked') {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, status: 'revoked', error: 'Device permanently revoked by administrator. Automatic re-enrollment forbidden.', code: 'DEVICE_REVOKED' }));
+          return;
+        }
+
+        const profile = db.recoveryProfiles.get(machine_id);
+        let authenticated = false;
+        let authReason = '';
+
+        // 2. Validate single-use recovery ticket
+        if (recovery_ticket) {
+          if (db.recoveryTickets.has(recovery_ticket)) {
+            const ticket = db.recoveryTickets.get(recovery_ticket);
+            if (ticket.used) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'Recovery ticket has already been used.', code: 'TICKET_ALREADY_USED' }));
+              return;
+            }
+            if (Date.now() > ticket.expires_at) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'Recovery ticket expired.', code: 'TICKET_EXPIRED' }));
+              return;
+            }
+            if (ticket.machine_id !== machine_id) {
+              res.writeHead(403, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: `Ticket was issued for '${ticket.machine_id}', not '${machine_id}'.`, code: 'TICKET_MISMATCH' }));
+              return;
+            }
+            ticket.used = true;
+            authenticated = true;
+            authReason = 'Verified Single-Use Recovery Ticket';
+          } else {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Invalid recovery ticket.', code: 'INVALID_TICKET' }));
+            return;
+          }
+        }
+
+        // 3. Fallback to hardware UUID attestation
+        if (!authenticated && hardware_uuid && profile && profile.hardware_uuid) {
+          if (profile.hardware_uuid.toLowerCase() === hardware_uuid.toLowerCase()) {
+            if (profile.auto_approve) {
+              authenticated = true;
+              authReason = 'Hardware-Linked SMBIOS UUID Match';
+            } else {
+              profile.status = 'awaiting_approval';
+              savePersistentState();
+              res.writeHead(202, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'Hardware recognized but administrator approval required before re-enrollment.', code: 'AWAITING_OWNER_APPROVAL' }));
+              return;
+            }
+          }
+        }
+
+        if (!authenticated) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: Valid recovery ticket or matching hardware UUID required for full-wipe re-enrollment.', code: 'RECOVERY_AUTH_REQUIRED' }));
+          return;
+        }
+
+        // 4. Perform Genuine Re-Enrollment: Bump generation, issue fresh token, revoke old session
+        let machine = db.machines.get(machine_id);
+        const prevGen = machine ? (machine.installation_generation || 1) : 0;
+        const newGen = prevGen + 1;
+
+        const freshToken = 'cvps_inst_' + crypto.randomBytes(12).toString('hex');
+        db.enrollmentTokens.add(freshToken);
+
+        if (!machine) {
+          const virtualIp = vpnPool.allocate(machine_id);
+          machine = {
+            id: machine_id,
+            hostname: hostname || machine_id,
+            friendly_name: profile?.device_name || hostname || machine_id,
+            os: os || profile?.platform || 'Linux',
+            arch: arch || 'x86_64',
+            agent_version: agent_version || '1.0.0',
+            status: 'online',
+            virtual_ip: virtualIp,
+            created_at: new Date().toISOString()
+          };
+          db.machines.set(machine_id, machine);
+        }
+
+        machine.installation_generation = newGen;
+        machine.last_recovery_at = new Date().toISOString();
+        machine.last_seen = new Date().toISOString();
+        machine.status = 'online';
+        if (hostname) machine.hostname = hostname;
+        if (os) machine.os = os;
+        if (arch) machine.arch = arch;
+        if (hardware_uuid) machine.hardware_uuid = hardware_uuid;
+
+        // Disconnect any stale ghost session
+        if (db.connectedAgents.has(machine_id)) {
+          try { db.connectedAgents.get(machine_id).close(4000, 'Re-enrolled fresh installation'); } catch (_) {}
+          db.connectedAgents.delete(machine_id);
+        }
+
+        if (profile) {
+          profile.status = 're_enrolled';
+          profile.installation_generation = newGen;
+          profile.last_recovery_at = machine.last_recovery_at;
+          if (hardware_uuid) profile.hardware_uuid = hardware_uuid;
+          profile.history = profile.history || [];
+          profile.history.unshift({
+            generation: newGen,
+            timestamp: machine.last_recovery_at,
+            auth_reason: authReason,
+            os: machine.os,
+            hostname: machine.hostname
+          });
+          if (profile.history.length > 50) profile.history.pop();
+        }
+
+        savePersistentState();
+        logAudit('device_full_wipe_recovered', 'recovery_bootstrap', machine_id, `Fresh OS Re-enrolled (Gen ${prevGen} -> Gen ${newGen}) via ${authReason}`);
+
+        const serverBase = process.env.RENDER_EXTERNAL_URL || (tunnelManager && tunnelManager.publicUrl) || `http://${req.headers.host || '127.0.0.1:8080'}`;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          machine_id,
+          token: freshToken,
+          enrollment_token: freshToken,
+          server_url: serverBase,
+          generation: newGen,
+          message: `Successfully claimed existing device record '${machine_id}' (Generation ${newGen})`
+        }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/recovery/usb/config' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const ticketParam = parsedUrl.searchParams.get('ticket');
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
+      return;
+    }
+    const machine = db.machines.get(machineId);
+    const profile = db.recoveryProfiles.get(machineId);
+    let ticket = ticketParam;
+    if (!ticket) {
+      const existing = Array.from(db.recoveryTickets.values()).find(t => t.machine_id === machineId && !t.used && t.expires_at > Date.now());
+      if (existing) {
+        ticket = existing.ticket;
+      } else {
+        ticket = 'cvps_recov_' + crypto.randomBytes(16).toString('hex');
+        db.recoveryTickets.set(ticket, {
+          ticket,
+          machine_id: machineId,
+          hardware_uuid: profile?.hardware_uuid || machine?.hardware_uuid || null,
+          created_at: Date.now(),
+          expires_at: Date.now() + 24 * 3600 * 1000,
+          used: false,
+          issued_by: 'usb_config_generator'
+        });
+        savePersistentState();
+      }
+    }
+
+    const serverBase = process.env.RENDER_EXTERNAL_URL || (tunnelManager && tunnelManager.publicUrl) || `http://${req.headers.host || '127.0.0.1:8080'}`;
+
+    const autounattendXml = `<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "Start-Sleep -Seconds 5; if (Test-Path 'C:\\Windows\\Setup\\Scripts\\bootstrap.ps1') { &amp; 'C:\\Windows\\Setup\\Scripts\\bootstrap.ps1' }"</CommandLine>
+          <Description>CyberVPS Automatic First-Boot Auto-Reenrollment Bootstrap</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>`;
+
+    const setupCompleteCmd = `@echo off
+REM ============================================================================
+REM CYBERVPS SPACE STATION - WINDOWS RECOVERY USB POST-INSTALL SCRIPT
+REM Put this file in: sources\\$OEM$\\$$\\Setup\\Scripts\\SetupComplete.cmd on USB
+REM Windows Setup automatically executes this with SYSTEM privilege after clean install!
+REM ============================================================================
+echo [*] Windows clean installation complete. Launching CyberVPS auto-reenrollment...
+powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0bootstrap.ps1" >> "C:\\ProgramData\\CyberVPS\\recovery.log" 2>&1
+exit /b 0
+`;
+
+    const bootstrapPs1 = `# ============================================================================
+# CYBERVPS SPACE STATION - AUTOMATIC POST-INSTALL RECOVERY BOOTSTRAP
+# Target Machine: ${machineId}
+# ============================================================================
+$ErrorActionPreference = 'SilentlyContinue'
+$TargetDir = "C:\\ProgramData\\CyberVPS"
+New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
+$LogFile = Join-Path $TargetDir "recovery.log"
+
+Function Write-Log($msg) {
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "[$ts] $msg" | Tee-Object -FilePath $LogFile -Append
+}
+
+Write-Log "CyberVPS Recovery Bootstrap started."
+$ServerUrl = "${serverBase}"
+$MachineId = "${machineId}"
+$RecoveryTicket = "${ticket}"
+
+# Query SMBIOS Hardware UUID
+$HwUuid = ""
+try {
+    $HwUuid = (Get-CimInstance Win32_ComputerSystemProduct).UUID
+} catch {
+    $HwUuid = "UNKNOWN"
+}
+Write-Log "Detected SMBIOS Hardware UUID: $HwUuid"
+
+# Claim re-enrollment from Space Station
+$ClaimPayload = @{
+    machine_id = $MachineId
+    hardware_uuid = $HwUuid
+    recovery_ticket = $RecoveryTicket
+    os = "Windows"
+    hostname = $env:COMPUTERNAME
+    arch = "x64"
+} | ConvertTo-Json
+
+$ClaimUrl = "$ServerUrl/api/v1/recovery/claim"
+Write-Log "Contacting Control Plane: $ClaimUrl"
+
+try {
+    $res = Invoke-RestMethod -Uri $ClaimUrl -Method Post -ContentType "application/json" -Body $ClaimPayload -TimeoutSec 15
+    if ($res.success) {
+        Write-Log "Re-Enrollment Success! Generation: $($res.generation)"
+        $AgentToken = $res.token
+        
+        # Download Latest Agent
+        $AgentUrl = "$ServerUrl/api/v1/ota/download/universal-agent.py"
+        $AgentPath = Join-Path $TargetDir "universal-agent.py"
+        Invoke-WebRequest -Uri $AgentUrl -OutFile $AgentPath
+        
+        # Write agent config
+        $Cfg = @{
+            machine_id = $MachineId
+            token = $AgentToken
+            server_url = $ServerUrl
+            ghost_mode = $true
+        } | ConvertTo-Json
+        Set-Content -Path (Join-Path $TargetDir "config.json") -Value $Cfg
+        
+        # Launch agent
+        Start-Process -FilePath "python.exe" -ArgumentList "\`"$AgentPath\`" --config \`"$TargetDir\\config.json\`" --ghost" -WindowStyle Hidden
+        Write-Log "CyberVPS Agent started in background."
+    } else {
+        Write-Log "Claim rejected: $($res.error)"
+    }
+} catch {
+    Write-Log "Bootstrap exception: $_"
+}
+`;
+
+    const provisionJson = {
+      cybervps_edition: "v2.1.0",
+      machine_id: machineId,
+      server_url: serverBase,
+      recovery_ticket: ticket,
+      hardware_uuid: profile?.hardware_uuid || machine?.hardware_uuid || null,
+      generated_at: new Date().toISOString()
+    };
+
+    const instructions = `CyberVPS Space Station — Windows Clean Install USB Setup Guide
+========================================================================
+To automatically reconnect this machine to CyberVPS after wiping the disk:
+
+Step 1: Create a bootable Windows USB using Rufus, Ventoy, or Microsoft Media Creation Tool.
+Step 2: Copy 'autounattend.xml' to the ROOT of the USB drive (e.g. E:\\autounattend.xml).
+Step 3: Create the folder: E:\\sources\\$OEM$\\$$\\Setup\\Scripts\\
+Step 4: Copy 'SetupComplete.cmd' and 'bootstrap.ps1' into that folder:
+        E:\\sources\\$OEM$\\$$\\Setup\\Scripts\\SetupComplete.cmd
+        E:\\sources\\$OEM$\\$$\\Setup\\Scripts\\bootstrap.ps1
+        E:\\sources\\$OEM$\\$$\\Setup\\Scripts\\provision.json
+
+Step 5: Boot your PC from the USB, delete all partitions, wipe the disk, and install Windows.
+Result: Windows Setup will automatically run SetupComplete.cmd on first boot, securely claim
+        device record '${machineId}', and CyberVPS will appear ONLINE in the dashboard automatically!`;
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      machine_id: machineId,
+      server_url: serverBase,
+      recovery_ticket: ticket,
+      files: {
+        'autounattend.xml': autounattendXml,
+        'SetupComplete.cmd': setupCompleteCmd,
+        'bootstrap.ps1': bootstrapPs1,
+        'provision.json': JSON.stringify(provisionJson, null, 2),
+        'README_RECOVERY_USB.txt': instructions
+      }
+    }));
+    return;
+  }
+
+  if (pathname === '/api/v1/recovery/vps/cloud-init' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    const ticketParam = parsedUrl.searchParams.get('ticket');
+    if (!machineId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
+      return;
+    }
+    const machine = db.machines.get(machineId);
+    const profile = db.recoveryProfiles.get(machineId);
+    let ticket = ticketParam;
+    if (!ticket) {
+      const existing = Array.from(db.recoveryTickets.values()).find(t => t.machine_id === machineId && !t.used && t.expires_at > Date.now());
+      if (existing) {
+        ticket = existing.ticket;
+      } else {
+        ticket = 'cvps_recov_' + crypto.randomBytes(16).toString('hex');
+        db.recoveryTickets.set(ticket, {
+          ticket,
+          machine_id: machineId,
+          hardware_uuid: profile?.hardware_uuid || machine?.hardware_uuid || null,
+          created_at: Date.now(),
+          expires_at: Date.now() + 24 * 3600 * 1000,
+          used: false,
+          issued_by: 'vps_cloudinit_generator'
+        });
+        savePersistentState();
+      }
+    }
+
+    const serverBase = process.env.RENDER_EXTERNAL_URL || (tunnelManager && tunnelManager.publicUrl) || `http://${req.headers.host || '127.0.0.1:8080'}`;
+
+    const cloudConfigYaml = `#cloud-config
+# CyberVPS Space Station - First-Boot VPS Rebuild Provisioning
+# Target Machine: ${machineId}
+package_update: true
+packages:
+  - python3
+  - python3-psutil
+  - curl
+write_files:
+  - path: /etc/cybervps/provision.json
+    permissions: '0600'
+    content: |
+      {"machine_id":"${machineId}","server_url":"${serverBase}","recovery_ticket":"${ticket}"}
+runcmd:
+  - mkdir -p /etc/cybervps /var/log/cybervps
+  - curl -sSL "${serverBase}/api/v1/recovery/claim" -H "Content-Type: application/json" -d '{"machine_id":"${machineId}","recovery_ticket":"${ticket}","os":"Linux"}' -o /tmp/cvps_claim.json
+  - curl -sSL "${serverBase}/api/v1/ota/download/universal-agent.py" -o /usr/local/bin/cybervps-agent.py
+  - chmod +x /usr/local/bin/cybervps-agent.py
+  - python3 /usr/local/bin/cybervps-agent.py --server "${serverBase}" --bootstrap --recovery-ticket "${ticket}" --machine-id "${machineId}" >> /var/log/cybervps/agent.log 2>&1 &
+`;
+
+    const shellScript = `#!/usr/bin/env bash
+# CyberVPS Space Station - Standalone First-Boot Shell Script
+set -e
+SERVER_URL="${serverBase}"
+MACHINE_ID="${machineId}"
+RECOVERY_TICKET="${ticket}"
+
+echo "[*] Initializing CyberVPS VPS First-Boot Auto-Reenrollment..."
+mkdir -p /etc/cybervps /var/log/cybervps
+
+CLAIM_RES=$(curl -sSL "$SERVER_URL/api/v1/recovery/claim" \\
+  -H "Content-Type: application/json" \\
+  -d "{\\"machine_id\\":\\"$MACHINE_ID\\",\\"recovery_ticket\\":\\"$RECOVERY_TICKET\\",\\"os\\":\\"Linux\\"}")
+
+echo "[*] Claim response: $CLAIM_RES"
+
+curl -sSL "$SERVER_URL/api/v1/ota/download/universal-agent.py" -o /usr/local/bin/cybervps-agent.py
+chmod +x /usr/local/bin/cybervps-agent.py
+nohup python3 /usr/local/bin/cybervps-agent.py --server "$SERVER_URL" --bootstrap --recovery-ticket "$RECOVERY_TICKET" --machine-id "$MACHINE_ID" > /var/log/cybervps/agent.log 2>&1 &
+echo "[*] CyberVPS Agent active."
+`;
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      machine_id: machineId,
+      server_url: serverBase,
+      recovery_ticket: ticket,
+      cloud_config: cloudConfigYaml,
+      cloud_init: cloudConfigYaml,
+      shell_script: shellScript
+    }));
+    return;
+  }
+
+  if (pathname === '/api/v1/recovery/approve' && method === 'POST') {
+    if (req.adminRole !== 'admin') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Forbidden: Administrator privileges required to approve device re-enrollment' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id } = payload;
+        const profile = db.recoveryProfiles.get(machine_id);
+        if (!profile) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Recovery profile not found' }));
+          return;
+        }
+        profile.status = 'ready';
+        profile.auto_approve = true;
+        savePersistentState();
+        logAudit('recovery_approved', req.adminUser || 'admin', machine_id, `Manually approved re-enrollment for ${machine_id}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: `Re-enrollment approved for '${machine_id}'` }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/recovery/revoke' && method === 'POST') {
+    if (req.adminRole !== 'admin') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Forbidden: Administrator privileges required to revoke device' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const { machine_id, reason } = payload;
+        if (!machine_id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
+          return;
+        }
+        const profile = db.recoveryProfiles.get(machine_id);
+        if (profile) {
+          profile.status = 'revoked';
+          profile.auto_approve = false;
+        }
+        db.revokedDevices.add(machine_id);
+        db.deviceRevocationCodes.set(machine_id, 'revoked_manual_' + Date.now());
+        for (const t of db.recoveryTickets.values()) {
+          if (t.machine_id === machine_id) t.used = true;
+        }
+        savePersistentState();
+        logAudit('device_revoked', req.adminUser || 'admin', machine_id, `Permanently revoked device: ${reason || 'Administrator decision'}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: `Device '${machine_id}' revoked. Automatic re-enrollment permanently disabled.` }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // 7. EMBEDDED DASHBOARD UI
   if (pathname === '/' || pathname === '/dashboard') {
     const indexPath = path.join(__dirname, '../index.html');
@@ -3625,7 +4288,16 @@ function verifyAppStreamAuthorization(request, parsedUrl) {
     if (record.machine_id !== machineId) {
       return { authorized: false, error: 'Forbidden: Stream token not authorized for this machine', status: 403 };
     }
-    return { authorized: true, user: record.user || 'paired_client', machineId, pid: record.pid, hwnd: record.hwnd };
+    return {
+      authorized: true,
+      user: record.user || 'paired_client',
+      machineId,
+      pid: record.pid,
+      hwnd: record.hwnd,
+      appId: record.app_id,
+      appName: record.app_name,
+      correlationId: record.correlation_id
+    };
   }
 
   return { authorized: false, error: 'Unauthorized: Invalid or expired app stream token', status: 401 };
@@ -3694,8 +4366,8 @@ function verifyTerminalAuthorization(request, parsedUrl) {
   }
 
   // Guard: Agent enrollment token MUST NOT be accepted as browser authorization
-  const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
-  if (cred === configuredMaster || db.enrollmentTokens.has(cred)) {
+  const configuredMaster = process.env.ENROLLMENT_TOKEN;
+  if ((configuredMaster && cred === configuredMaster) || db.enrollmentTokens.has(cred) || cred === 'cvps_enroll_master_token') {
     return { authorized: false, error: 'Unauthorized: Agent enrollment token cannot be used for terminal authorization', status: 401 };
   }
 
@@ -3934,27 +4606,68 @@ wssAppStream.on('connection', (ws, request) => {
   }
 
   const streamId = 'app_stream_' + crypto.randomUUID().slice(0, 8);
+  const correlationId = auth.correlationId || parsed.searchParams.get('correlation_id') || ('corr_stream_' + crypto.randomUUID().slice(0, 8));
+  const appId = parsed.searchParams.get('app_id') || auth.appId || null;
+  const appName = parsed.searchParams.get('name') || parsed.searchParams.get('app_name') || auth.appName || null;
+
   db.appStreams.set(streamId, {
     streamId,
+    correlationId,
     machineId,
     pid,
     hwnd,
+    appId,
+    appName,
     wsBrowser: ws,
-    startedAt: Date.now()
+    startedAt: Date.now(),
+    frameCount: 0,
+    byteCount: 0
   });
 
-  logAudit('app_stream_started', auth.user || 'user', machineId, `Live app stream ${streamId} started for PID ${pid || 'active'} (HWND: ${hwnd || 'auto'})`);
+  logAudit('app_stream_started', auth.user || 'user', machineId, `Live app stream ${streamId} started for PID ${pid || 'active'} (HWND: ${hwnd || 'auto'}) [corr: ${correlationId}]`);
+
+  // Milestone 1: WebSocket connection established and stream registered
+  try {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'stage',
+        stage: 'ws_connected',
+        stream_id: streamId,
+        correlation_id: correlationId,
+        timestamp: Date.now()
+      }));
+    }
+  } catch (_) {}
+
+  const isAgentConnected = db.connectedAgents.has(machineId) && db.connectedAgents.get(machineId).readyState === WebSocket.OPEN;
 
   sendServerCommand(machineId, {
     type: 'AppStreamStart',
     payload: {
       stream_id: streamId,
+      correlation_id: correlationId,
       pid: pid || null,
       hwnd: hwnd || null,
+      app_id: appId,
+      app_name: appName,
       fps,
       quality
     }
   });
+
+  // Milestone 2: Agent command dispatched
+  try {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'stage',
+        stage: 'agent_notified',
+        stream_id: streamId,
+        correlation_id: correlationId,
+        agent_online: isAgentConnected,
+        timestamp: Date.now()
+      }));
+    }
+  } catch (_) {}
 
   ws.on('message', (data) => {
     try {
@@ -4003,16 +4716,17 @@ function handleAgentMessage(ws, msg) {
     return { success: false, error: 'Missing type or payload' };
   }
 
-  const configuredMaster = process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
+  const configuredMaster = process.env.ENROLLMENT_TOKEN;
 
   if (type === 'Auth') {
-    const { machine_id, token, agent_version, hostname, os, arch, capabilities, username } = payload;
+    const { machine_id, token, agent_version, hostname, os, arch, capabilities, username, hardware_uuid, hardware_serial } = payload;
     if (!machine_id) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Missing machine_id' } }));
       return { success: false, error: 'Missing machine_id' };
     }
 
-    if (!db.enrollmentTokens.has(token) && token !== configuredMaster) {
+    const isTokenValid = token && ((configuredMaster && token === configuredMaster) || db.enrollmentTokens.has(token));
+    if (!isTokenValid) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Invalid token' } }));
       return { success: false, error: 'Invalid enrollment token' };
     }
@@ -4020,6 +4734,8 @@ function handleAgentMessage(ws, msg) {
     // Auto-allocate Virtual IP for Mode B
     const virtualIp = vpnPool.allocate(machine_id);
     const detectedUsername = username || capabilities?.username || capabilities?.user || payload.profile?.username || (capabilities?.is_root ? 'root' : (os === 'Windows' ? 'expert' : 'user'));
+    const hwUuid = hardware_uuid || payload.smbios_uuid || payload.profile?.hardware_uuid || null;
+    const hwSerial = hardware_serial || payload.serial_number || payload.profile?.hardware_serial || null;
 
     const machineInfo = {
       id: machine_id,
@@ -4030,6 +4746,8 @@ function handleAgentMessage(ws, msg) {
       os_version: payload.profile?.os_full || payload.os_version || 'standard',
       arch: arch || 'x86_64',
       agent_version: agent_version || '1.0.0',
+      hardware_uuid: hwUuid,
+      hardware_serial: hwSerial,
       status: 'online',
       virtual_ip: virtualIp,
       created_at: new Date().toISOString(),
@@ -4053,6 +4771,28 @@ function handleAgentMessage(ws, msg) {
 
     db.machines.set(machine_id, machineInfo);
     db.deviceRevocationCodes.set(machine_id, machineInfo.revocation_code);
+
+    // Ensure recovery profile exists and links hardware identity
+    if (!db.recoveryProfiles.has(machine_id)) {
+      db.recoveryProfiles.set(machine_id, {
+        machine_id,
+        device_name: hostname || machine_id,
+        hardware_uuid: hwUuid,
+        hardware_serial: hwSerial,
+        recovery_mode: os === 'Windows' ? 'usb_unattended' : 'vps_cloudinit',
+        installation_generation: 1,
+        status: 'ready',
+        auto_approve: true,
+        created_at: new Date().toISOString(),
+        history: [{ event: 'initial_enrollment', timestamp: new Date().toISOString(), generation: 1 }]
+      });
+    } else {
+      const prof = db.recoveryProfiles.get(machine_id);
+      if (hwUuid && !prof.hardware_uuid) prof.hardware_uuid = hwUuid;
+      if (hwSerial && !prof.hardware_serial) prof.hardware_serial = hwSerial;
+    }
+    savePersistentState();
+
     logAudit('agent_enrolled', 'agent', machine_id, `Connected [${machineInfo.hostname}] (${machineInfo.os_version}) -> Assigned Virtual IP: ${virtualIp}`);
     broadcastTelemetry(machineInfo);
 
@@ -4131,6 +4871,16 @@ function handleAgentMessage(ws, msg) {
       if (!m.friendly_name || m.friendly_name === machine_id) {
         m.friendly_name = payload.hostname;
       }
+    }
+
+    const hwUuid = payload.hardware_uuid || telemetry?.hardware_uuid || payload.profile?.hardware_uuid;
+    const hwSerial = payload.hardware_serial || telemetry?.hardware_serial || payload.profile?.hardware_serial;
+    if (hwUuid && !m.hardware_uuid) m.hardware_uuid = hwUuid;
+    if (hwSerial && !m.hardware_serial) m.hardware_serial = hwSerial;
+    const recProf = db.recoveryProfiles.get(machine_id);
+    if (recProf) {
+      if (hwUuid && !recProf.hardware_uuid) recProf.hardware_uuid = hwUuid;
+      if (hwSerial && !recProf.hardware_serial) recProf.hardware_serial = hwSerial;
     }
 
     if (telemetry) {
@@ -4248,8 +4998,24 @@ function handleAgentMessage(ws, msg) {
   else if (type === 'AppStreamFrame') {
     const { stream_id } = payload;
     const stream = db.appStreams.get(stream_id);
-    if (stream && stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
-      stream.wsBrowser.send(JSON.stringify({ type: 'frame', ...payload }));
+    if (stream) {
+      if (stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
+        stream.frameCount = (stream.frameCount || 0) + 1;
+        stream.byteCount = (stream.byteCount || 0) + (payload.data ? payload.data.length : 0);
+        stream.wsBrowser.send(JSON.stringify({
+          type: 'frame',
+          ...payload,
+          correlation_id: stream.correlationId || payload.correlation_id,
+          server_relay_timestamp: Date.now()
+        }));
+      } else {
+        // Browser closed: send AppStreamStop to agent to stop wasteful capture loop
+        sendServerCommand(stream.machineId, {
+          type: 'AppStreamStop',
+          payload: { stream_id: stream_id }
+        });
+        db.appStreams.delete(stream_id);
+      }
     }
     return { success: true };
   }
@@ -4258,7 +5024,12 @@ function handleAgentMessage(ws, msg) {
     const { stream_id } = payload;
     const stream = db.appStreams.get(stream_id);
     if (stream && stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
-      stream.wsBrowser.send(JSON.stringify({ type: 'status', ...payload }));
+      stream.wsBrowser.send(JSON.stringify({
+        type: 'status',
+        ...payload,
+        correlation_id: stream.correlationId || payload.correlation_id,
+        server_relay_timestamp: Date.now()
+      }));
     }
     return { success: true };
   }
@@ -4977,8 +5748,17 @@ function getUniversalBridgeDashboardHtml(host) {
 </body>
 </html>`;
 }
+server.on('clientError', (err, socket) => {
+  console.error('[SERVER CLIENT ERROR]', err.message, err.code);
+  if (!socket.destroyed) {
+    socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+  }
+});
+server.on('error', (err) => {
+  console.error('[SERVER ERROR]', err);
+});
 
-server.listen(PORT, '0.0.0.0', async () => {
+server.listen(PORT, async () => {
   console.log(`================================================================`);
   console.log(`🛰️  CYBERVPS SPACE STATION UNIVERSAL CONTROL PLANE READY`);
   console.log(`================================================================`);
@@ -5017,6 +5797,13 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🌉 Mode A (TCP Port Bridge API): ${publicUrl}/api/v1/bridge/mappings`);
   console.log(`🪐 Mode B (Virtual Network Mesh): ${publicUrl}/api/v1/vpn/network`);
   console.log(`================================================================`);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[SERVER UNCAUGHT EXCEPTION]', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[SERVER UNHANDLED REJECTION]', reason);
 });
 
 // Clean process termination

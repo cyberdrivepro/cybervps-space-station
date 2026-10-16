@@ -11,7 +11,7 @@ const { WebSocket, WebSocketServer } = require('ws');
 const assert = require('assert');
 const { spawn, execSync } = require('child_process');
 
-const SERVER_URL = 'http://localhost:8080';
+const SERVER_URL = 'http://127.0.0.1:8080';
 
 async function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -20,7 +20,15 @@ async function wait(ms) {
 async function request(url, options = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
-    const req = http.request(u, options, (res) => {
+    const headers = { ...(options.headers || {}) };
+    if (!headers['Connection']) {
+      headers['Connection'] = 'close';
+    }
+    if (options.body && !headers['Content-Length']) {
+      headers['Content-Length'] = Buffer.byteLength(options.body);
+    }
+    const reqOptions = { agent: false, ...options, headers };
+    const req = http.request(u, reqOptions, (res) => {
       let body = '';
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
@@ -48,8 +56,14 @@ async function runTests() {
   if (!healthCheck || healthCheck.statusCode !== 200) {
     console.log('[*] Starting local Space Station Control Plane for testing...');
     serverProcess = spawn(process.execPath, [require('path').join(__dirname, '../services/server.js')], {
-      env: { ...process.env, ENABLE_TUNNEL: 'false', PAIRING_KEY: 'test_pair_key_123' },
-      stdio: 'ignore'
+      env: {
+        ...process.env,
+        ENABLE_TUNNEL: 'false',
+        PAIRING_KEY: 'test_pair_key_123',
+        ENROLLMENT_TOKEN: 'test_enroll_token_999',
+        ADMIN_SECRET: 'test_admin_secret_123'
+      },
+      stdio: 'inherit'
     });
     await wait(1200);
   }
@@ -98,14 +112,14 @@ async function runTests() {
   // TEST 4: Enroll Remote Node & Verify Mode B Virtual IP Allocation
   console.log('\n[TEST 4] Connecting Remote Node Agent & Testing Mode B Virtual IP...');
   const remoteNodeId = 'vps_ubuntu_station_' + Math.random().toString(36).slice(2, 6);
-  const agentWs = new WebSocket(`ws://localhost:8080/api/v1/relay/connect`);
+  const agentWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/relay/connect`);
   await new Promise(r => agentWs.on('open', r));
 
   agentWs.send(JSON.stringify({
     type: 'Auth',
     payload: {
       machine_id: remoteNodeId,
-      token: 'cvps_enroll_master_token',
+      token: 'test_enroll_token_999',
       agent_version: '1.0.0',
       hostname: 'remote-vps-node',
       os: 'Linux',
@@ -401,7 +415,7 @@ async function runTests() {
 
   // Start Windows Port Bridge Client locally
   const { WindowsPortBridgeClient } = require('../apps/windows-client/bridge-daemon');
-  const winBridge = new WindowsPortBridgeClient({ serverUrl: SERVER_URL });
+  const winBridge = new WindowsPortBridgeClient({ serverUrl: SERVER_URL, token: 'test_enroll_token_999' });
   await winBridge.start(false);
   const activeMapping = await winBridge.addMapping('test_m6767', remoteNodeId, 6767, 16767);
   console.log(`  ✅ Windows Client bound local port: 127.0.0.1:${activeMapping.localPort}`);
@@ -427,6 +441,7 @@ async function runTests() {
   assert(conflictMapping.hasConflict, 'Conflict flag must be true');
   console.log(`  ✅ Conflict handled safely: Preferred port 18888 was occupied; automatically resolved to ${conflictMapping.localPort}`);
   dummyServer.close();
+  winBridge.stop();
 
   // TEST 9: Remote Access & Secure Pairing Verification
   console.log('\n[TEST 9] Testing Remote Access & Pairing endpoints (/api/v1/access/*)...');
@@ -464,7 +479,7 @@ async function runTests() {
       type: 'Auth',
       payload: {
         machine_id: httpNodeId,
-        token: 'cvps_enroll_master_token',
+        token: 'test_enroll_token_999',
         agent_version: '1.0.0',
         hostname: 'vps-http-worker',
         os: 'Linux',
@@ -507,11 +522,12 @@ async function runTests() {
   console.log('\n[TEST 13] Testing HTTP Port Discovery and Heartbeat processing...');
   const discRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Enrollment-Token': 'test_enroll_token_999' },
     body: JSON.stringify({
       type: 'DiscoveryReport',
       payload: {
         machine_id: httpNodeId,
+        token: 'test_enroll_token_999',
         ports: [
           { port: 80, protocol: 'TCP', bind_address: '0.0.0.0', process_name: 'nginx' },
           { port: 3000, protocol: 'TCP', bind_address: '127.0.0.1', process_name: 'api-service' }
@@ -528,7 +544,7 @@ async function runTests() {
 
   // TEST 14: Command Polling via GET /api/v1/relay/poll
   console.log('\n[TEST 14] Testing Command Queuing and Polling via GET /api/v1/relay/poll...');
-  const pollRes = await request(`${SERVER_URL}/api/v1/relay/poll?machine_id=${httpNodeId}&token=cvps_enroll_master_token`);
+  const pollRes = await request(`${SERVER_URL}/api/v1/relay/poll?machine_id=${httpNodeId}&token=test_enroll_token_999`);
   assert.strictEqual(pollRes.statusCode, 200);
   const pollData = JSON.parse(pollRes.body);
   assert(Array.isArray(pollData.commands), 'Poll response must contain commands array');
@@ -689,7 +705,7 @@ async function runTests() {
 
   // 21a. Unauthenticated connection must be rejected with HTTP 401
   let unauthRejected = false;
-  const unauthWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24`);
+  const unauthWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24`);
   await new Promise((resolve) => {
     unauthWs.on('open', () => { unauthWs.close(); resolve(); });
     unauthWs.on('unexpected-response', (req, res) => {
@@ -703,7 +719,7 @@ async function runTests() {
 
   // 21b. Agent enrollment token cannot be used for browser terminal authorization
   let enrollRejected = false;
-  const enrollWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=cvps_enroll_master_token`);
+  const enrollWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=test_enroll_token_999`);
   await new Promise((resolve) => {
     enrollWs.on('open', () => { enrollWs.close(); resolve(); });
     enrollWs.on('unexpected-response', (req, res) => {
@@ -717,7 +733,7 @@ async function runTests() {
 
   // 21c. Direct pairing key must NOT be accepted on terminal WebSocket stream
   let directPairingRejected = false;
-  const directPairWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=test_pair_key_123`);
+  const directPairWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=test_pair_key_123`);
   await new Promise((resolve) => {
     directPairWs.on('open', () => { directPairWs.close(); resolve(); });
     directPairWs.on('unexpected-response', (req, res) => {
@@ -731,7 +747,7 @@ async function runTests() {
 
   // 21d. Untrusted Origin header must be rejected with HTTP 403 Forbidden
   let untrustedOriginRejected = false;
-  const untrustedWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=any_token`, {
+  const untrustedWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=any_token`, {
     headers: { 'Origin': 'http://malicious-attacker-site.com' }
   });
   await new Promise((resolve) => {
@@ -753,7 +769,7 @@ async function runTests() {
   });
   const mismatchToken = JSON.parse(mismatchTokenRes.body).token;
   let mismatchProfileRejected = false;
-  const mismatchWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=privileged&token=${encodeURIComponent(mismatchToken)}`);
+  const mismatchWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=privileged&token=${encodeURIComponent(mismatchToken)}`);
   await new Promise((resolve) => {
     mismatchWs.on('open', () => { mismatchWs.close(); resolve(); });
     mismatchWs.on('unexpected-response', (req, res) => {
@@ -778,7 +794,7 @@ async function runTests() {
   console.log('  ✅ Single-use machine-scoped terminal token successfully acquired.');
 
   // 21g. Connect with valid single-use terminal token and receive live stream
-  const termClientWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=privileged&token=${encodeURIComponent(singleUseToken)}`);
+  const termClientWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=privileged&token=${encodeURIComponent(singleUseToken)}`);
   await new Promise((resolve, reject) => {
     termClientWs.on('open', resolve);
     termClientWs.on('error', reject);
@@ -804,7 +820,7 @@ async function runTests() {
 
   // 21e. Replay attack prevention: single-use token cannot be reused
   let replayedTokenRejected = false;
-  const replayWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=${encodeURIComponent(singleUseToken)}`);
+  const replayWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&token=${encodeURIComponent(singleUseToken)}`);
   await new Promise((resolve) => {
     replayWs.on('open', () => { replayWs.close(); resolve(); });
     replayWs.on('unexpected-response', (req, res) => {
@@ -828,7 +844,7 @@ async function runTests() {
   assert.strictEqual(autoTokenData.profile, 'auto', 'Token profile must default to auto');
   assert(autoTokenData.resolved_profile, 'Token response must include resolved_profile');
 
-  const autoClientWs = new WebSocket(`ws://localhost:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=auto&token=${encodeURIComponent(autoTokenData.token)}`);
+  const autoClientWs = new WebSocket(`ws://127.0.0.1:8080/api/v1/terminal/stream?machine_id=${remoteNodeId}&cols=80&rows=24&profile=auto&token=${encodeURIComponent(autoTokenData.token)}`);
   await new Promise((resolve, reject) => {
     autoClientWs.on('open', resolve);
     autoClientWs.on('error', reject);
@@ -1287,17 +1303,17 @@ async function runTests() {
   const pairedHeaderJson = JSON.parse(pairedHeaderRes.body);
   assert(pairedHeaderJson.apps || pairedHeaderJson.applications, 'Paired client must receive application inventory');
 
-  // 4. Public request with master enrollment token succeeds with 200
+  // 4. Public request with hardcoded master token cvps_enroll_master_token must FAIL with 401
   const masterKeyRes = await request(`${SERVER_URL}/api/v1/apps/list?machine_id=${remoteNodeId}`, {
     headers: { 'X-Simulate-Public': 'true', 'X-CVPS-Pairing-Key': 'cvps_enroll_master_token' }
   });
-  assert.strictEqual(masterKeyRes.statusCode, 200, 'Client with cvps_enroll_master_token must succeed with 200');
+  assert.strictEqual(masterKeyRes.statusCode, 401, 'Hardcoded cvps_enroll_master_token must be rejected with 401');
 
-  // 5. Query parameter pairing key (?pairing_key=test_pair_key_123) succeeds with 200
+  // 5. Query parameter pairing key (?pairing_key=test_pair_key_123) is rejected with 401 to prevent URL credential leakage
   const queryPairRes = await request(`${SERVER_URL}/api/v1/apps/list?machine_id=${remoteNodeId}&pairing_key=test_pair_key_123`, {
     headers: { 'X-Simulate-Public': 'true' }
   });
-  assert.strictEqual(queryPairRes.statusCode, 200, 'Query param pairing_key must be accepted with 200');
+  assert.strictEqual(queryPairRes.statusCode, 401, 'Query param pairing_key must be rejected with 401 for URL safety');
 
   // 6. Privilege isolation: Mutating action (process kill) requires explicit capability check and critical process protection
   const killCritRes = await request(`${SERVER_URL}/api/v1/apps/action`, {
@@ -1487,9 +1503,17 @@ async function runTests() {
     serverProcess.kill('SIGTERM');
     await wait(800);
     serverProcess = spawn(process.execPath, [require('path').join(__dirname, '../services/server.js')], {
-      env: { ...process.env, ENABLE_TUNNEL: 'false', PAIRING_KEY: 'test_pair_key_123' },
-      stdio: 'ignore'
+      env: {
+        ...process.env,
+        ENABLE_TUNNEL: 'false',
+        PAIRING_KEY: 'test_pair_key_123',
+        ENROLLMENT_TOKEN: 'test_enroll_token_999',
+        ADMIN_SECRET: 'test_admin_secret_123'
+      },
+      stdio: 'inherit'
     });
+    serverProcess.on('exit', (code, sig) => console.log(`[TEST HARNESS] serverProcess EXITED with code ${code}, signal ${sig}`));
+    serverProcess.on('error', (err) => console.log(`[TEST HARNESS] serverProcess ERROR:`, err));
     let postRestartMachines = null;
     for (let r = 0; r < 12; r++) {
       await wait(400);
@@ -1527,6 +1551,146 @@ async function runTests() {
   assert(secTest.includes('ALL AGENT SECURITY') && secTest.includes('PASSED'), 'Agent security test must pass');
   console.log('  ✅ Agent Security & Execution Boundaries verified: privilege fail-closed & duplicate prevention operational.');
 
+  // TEST 38: Automatic Full-Wipe Disaster Recovery, Hardware SMBIOS UUID Claim & Generation Lifecycle
+  console.log('\n[TEST 38] Testing Automatic Full-Wipe Disaster Recovery & Re-Enrollment...');
+  const recoveryNodeId = 'vps_recov_test_' + Math.random().toString(36).slice(2, 6);
+  const testHardwareUuid = '4C4C4544-004B-4D10-8032-B2C04F343232';
+  const testHardwareSerial = 'VMware-56 4d b2 c0 4f 34';
+
+  console.log('    [*] Step 1: Registering initial hardware...');
+  // 1. Initial agent enrollment reporting hardware identity
+  const recovAuthRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Enrollment-Token': 'test_enroll_token_999' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: recoveryNodeId,
+        token: 'test_enroll_token_999',
+        hostname: 'recov-node-orig',
+        hardware_uuid: testHardwareUuid,
+        hardware_serial: testHardwareSerial,
+        os: 'Windows',
+        arch: 'x64'
+      }
+    })
+  });
+  console.log('    [*] Step 1 status:', recovAuthRes.statusCode);
+  assert.strictEqual(recovAuthRes.statusCode, 200, 'Initial hardware registration must return 200');
+
+  console.log('    [*] Step 2: Configuring auto_approve policy...');
+  // 2. Configure Auto-Approve policy on this machine
+  const policyRes = await request(`${SERVER_URL}/api/v1/recovery/profile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': 'test_pair_key_123' },
+    body: JSON.stringify({
+      machine_id: recoveryNodeId,
+      policy: 'auto_approve'
+    })
+  });
+  console.log('    [*] Step 2 status:', policyRes.statusCode);
+  assert.strictEqual(policyRes.statusCode, 200, 'Setting recovery profile must return 200');
+
+  console.log('    [*] Step 3: Claiming wiped machine via hardware UUID...');
+  // 3. Disaster Claim: Machine wiped, local files erased, agent boots fresh and claims by hardware UUID
+  const claimRes = await request(`${SERVER_URL}/api/v1/recovery/claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      machine_id: recoveryNodeId,
+      hardware_uuid: testHardwareUuid,
+      hardware_serial: testHardwareSerial,
+      os: 'Windows',
+      arch: 'x64'
+    })
+  });
+  console.log('    [*] Step 3 status:', claimRes.statusCode);
+  assert.strictEqual(claimRes.statusCode, 200, 'Hardware claim must return 200 OK');
+  const claimData = JSON.parse(claimRes.body);
+  assert.strictEqual(claimData.success, true, 'Claim must succeed');
+  assert.strictEqual(claimData.machine_id, recoveryNodeId, 'Must claim identical machine identity');
+  assert(claimData.enrollment_token || claimData.token, 'Claim must provide fresh enrollment token');
+  assert(claimData.generation >= 2, 'Generation must be bumped on full recovery');
+  console.log(`  ✅ Full-wipe recovery claim verified: Device re-enrolled seamlessly (Gen ${claimData.generation}).`);
+
+  console.log('    [*] Step 4: Testing USB and cloud-init config templates...');
+  // 4. Recovery Config Templates: Windows SetupComplete.cmd & Linux Cloud-Init
+  const usbRes = await request(`${SERVER_URL}/api/v1/recovery/usb/config?machine_id=${recoveryNodeId}`);
+  console.log('    [*] Step 4 USB status:', usbRes.statusCode);
+  assert.strictEqual(usbRes.statusCode, 200, 'USB config must return 200');
+  const usbData = JSON.parse(usbRes.body);
+  assert(usbData.files['SetupComplete.cmd'].includes('CyberVPS'), 'Must generate valid SetupComplete.cmd');
+
+  const cloudInitRes = await request(`${SERVER_URL}/api/v1/recovery/vps/cloud-init?machine_id=${recoveryNodeId}`);
+  console.log('    [*] Step 4 cloud-init status:', cloudInitRes.statusCode);
+  assert.strictEqual(cloudInitRes.statusCode, 200, 'Cloud-init endpoint must return 200');
+  const cloudInitData = JSON.parse(cloudInitRes.body);
+  assert((cloudInitData.cloud_init || cloudInitData.cloud_config).includes('#cloud-config'), 'Must generate valid cloud-init YAML');
+  console.log('  ✅ Unattended recovery packages verified: Windows SetupComplete.cmd and Linux cloud-init.');
+
+  console.log('    [*] Step 5: Testing revocation guard...');
+  // 5. Revocation guard: Revoked machines cannot be claimed
+  const adminLoginRes = await request(`${SERVER_URL}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'Cyberexpert2026!' })
+  });
+  console.log('    [*] Step 5 admin login status:', adminLoginRes.statusCode);
+  assert.strictEqual(adminLoginRes.statusCode, 200, 'Admin login must return 200 OK');
+  const adminTok = JSON.parse(adminLoginRes.body).token;
+  const revokeRes = await request(`${SERVER_URL}/api/v1/recovery/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${adminTok}` },
+    body: JSON.stringify({ machine_id: recoveryNodeId })
+  });
+  console.log('    [*] Step 5 revoke status:', revokeRes.statusCode);
+  assert.strictEqual(revokeRes.statusCode, 200, 'Device revocation must return 200');
+
+  const blockedClaimRes = await request(`${SERVER_URL}/api/v1/recovery/claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      machine_id: recoveryNodeId,
+      hardware_uuid: testHardwareUuid
+    })
+  });
+  console.log('    [*] Step 5 blocked claim status:', blockedClaimRes.statusCode);
+  const blockedClaimData = JSON.parse(blockedClaimRes.body);
+  assert.strictEqual(blockedClaimData.success, false, 'Revoked machine claim must fail');
+  assert(blockedClaimData.status === 'revoked' || blockedClaimData.code === 'DEVICE_REVOKED', 'Status must report revoked');
+  console.log('  ✅ Revocation guard verified: Revoked machine strictly blocked from claiming identity.');
+
+  // TEST 39: Zero Hardcoded Master Token & RBAC Fail-Closed Enforcement
+  console.log('\n[TEST 39] Testing Fail-Closed Security & Role Separation...');
+  // 1. cvps_enroll_master_token on protected admin endpoint returns 401
+  const masterOnAdminRes = await request(`${SERVER_URL}/api/v1/auth/enrollment-token`, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer cvps_enroll_master_token' }
+  });
+  assert.strictEqual(masterOnAdminRes.statusCode, 401, 'Hardcoded token on admin API must return 401');
+
+  // 2. Agent enrollment token on admin API returns 403 (Privilege Escalation Prevention)
+  const enrollOnAdminRes = await request(`${SERVER_URL}/api/v1/auth/enrollment-token`, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer test_enroll_token_999' }
+  });
+  assert.strictEqual(enrollOnAdminRes.statusCode, 403, 'Enrollment token on admin API must return 403 Forbidden');
+
+  // 3. Pairing key cannot access admin-only endpoint
+  const pairOnAdminRes = await request(`${SERVER_URL}/api/v1/auth/enrollment-token`, {
+    method: 'POST',
+    headers: { 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(pairOnAdminRes.statusCode, 403, 'Pairing key cannot escalate to admin operations');
+
+  // 4. Valid admin session succeeds with 200
+  const validAdminRes = await request(`${SERVER_URL}/api/v1/auth/enrollment-token`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${adminTok}` }
+  });
+  assert.strictEqual(validAdminRes.statusCode, 200, 'Valid admin session must return 200');
+  console.log('  ✅ Strict Role Separation verified: Admin (200) vs Operator/Pairing (403) vs Enrollment Token (403) vs Obsolete Master (401).');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -1534,7 +1698,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 37 ADVANCED SECURITY, CONTROL PLANE, HA, APPS, HOSTING & INFRASTRUCTURE TESTS PASSED!');
+  console.log('🎉 ALL 39 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA & STREAMING TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

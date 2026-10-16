@@ -1,88 +1,48 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "services": {
-    "cybervps-render-control": {
-      "root": ".",
-      "framework": "container",
-      "runtime": "container",
-      "entrypoint": "Dockerfile",
-      "buildCommand": "npm install",
-      "bindings": [
-        {
-          "type": "service",
-          "service": "control-plane",
-          "format": "url",
-          "env": "CONTROL_PLANE_URL"
-        },
-        {
-          "type": "service",
-          "service": "public-gateway",
-          "format": "url",
-          "env": "PUBLIC_GATEWAY_URL"
-        },
-        {
-          "type": "service",
-          "service": "relay",
-          "format": "url",
-          "env": "RELAY_URL"
-        }
-      ]
-    },
-    "control-plane": {
-      "root": "services/control-plane",
-      "runtime": "rust",
-      "entrypoint": "src/main.rs",
-      "bindings": [
-        {
-          "type": "service",
-          "service": "public-gateway",
-          "format": "url",
-          "env": "PUBLIC_GATEWAY_URL"
-        }
-      ]
-    },
-    "public-gateway": {
-      "root": "services/public-gateway",
-      "runtime": "rust",
-      "entrypoint": "src/main.rs"
-    },
-    "relay": {
-      "root": "services/relay",
-      "runtime": "rust",
-      "entrypoint": "src/main.rs"
-    },
-    "core": {
-      "root": "agent/core",
-      "runtime": "rust",
-      "entrypoint": "src/main.rs",
-      "bindings": [
-        {
-          "type": "service",
-          "service": "relay",
-          "format": "url",
-          "env": "RELAY_URL"
-        }
-      ]
-    }
-  },
-  "rewrites": [
-    {
-      "source": "/tunnel/(.*)",
-      "destination": {
-        "service": "public-gateway"
-      }
-    },
-    {
-      "source": "/api/v1/relay/(.*)",
-      "destination": {
-        "service": "relay"
-      }
-    },
+  "cleanUrls": true,
+  "headers": [
     {
       "source": "/(.*)",
-      "destination": {
-        "service": "cybervps-render-control"
-      }
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization, X-Machine-ID, X-Enrollment-Token, X-CVPS-Pairing-Key, X-Session-Token, X-Admin-Token, X-Pairing-Key, X-Simulate-Public" }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "https://cybervps-space-station.up.railway.app/health"
+    },
+    {
+      "source": "/healthz",
+      "destination": "https://cybervps-space-station.up.railway.app/healthz"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://cybervps-space-station.up.railway.app/api/:path*"
+    },
+    {
+      "source": "/tunnel/:path*",
+      "destination": "https://cybervps-space-station.up.railway.app/tunnel/:path*"
+    },
+    {
+      "source": "/install.:ext*",
+      "destination": "https://cybervps-space-station.up.railway.app/install.:ext*"
+    },
+    {
+      "source": "/agent/:path*",
+      "destination": "https://cybervps-space-station.up.railway.app/agent/:path*"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/((?!api/|tunnel/|agent/|install\\.).*)",
+      "destination": "/index.html"
     }
   ]
 }

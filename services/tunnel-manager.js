@@ -22,9 +22,19 @@ class TunnelManager {
     this.port = options.port || 8080;
     this.status = 'idle'; // idle | starting | connected | reconnecting | failed | stopped
     this.providerName = 'localhost';
-    this.publicUrl = options.publicUrl || `http://127.0.0.1:${this.port}`;
-    this.pairingKey = options.pairingKey || process.env.PAIRING_KEY || process.env.CYBERVPS_TOKEN || 'cvps_enroll_master_token';
-    this.sessionTokens = new Set();
+    const isCloudOrProd = !!(
+      process.env.RENDER_EXTERNAL_URL ||
+      process.env.RAILWAY_ENVIRONMENT ||
+      process.env.VERCEL ||
+      process.env.NODE_ENV === 'production'
+    );
+    if (options.pairingKey || process.env.PAIRING_KEY) {
+      this.pairingKey = options.pairingKey || process.env.PAIRING_KEY;
+    } else if (isCloudOrProd) {
+      this.pairingKey = null; // Fail closed in production if not explicitly configured
+    } else {
+      this.pairingKey = 'cvps_dev_' + crypto.randomBytes(12).toString('hex');
+    }
     this.activeChild = null;
     this.reconnectTimer = null;
     this.reconnectAttempts = 0;

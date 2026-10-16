@@ -898,6 +898,7 @@
     <ul class="nav-list">
       <li><a class="nav-item active" onclick="navigate('overview')"><svg viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>Overview</a></li>
       <li><a class="nav-item" onclick="navigate('machines')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Instances Fleet</a></li>
+      <li><a class="nav-item" onclick="navigate('recovery')"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>Disaster Recovery</a></li>
       <li><a class="nav-item" onclick="navigate('apps')"><svg viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>Applications</a></li>
       <li><a class="nav-item" onclick="navigate('desktop')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/><circle cx="12" cy="10" r="2"/></svg>Remote Desktop</a></li>
       <li><a class="nav-item" onclick="navigate('backends')"><svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 9 6 6m0-6-6 6"/></svg>Multi-Backend HA</a></li>
@@ -1106,6 +1107,73 @@
               </thead>
               <tbody id="machines-table-body">
                 <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No instances connected. Run the 1-line installer on a machine to connect.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: DISASTER RECOVERY & HARDWARE-LINKED AUTO-RE-ENROLLMENT -->
+      <div id="view-recovery" class="view-panel" style="display:none;">
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem;">
+            <div>
+              <div class="card-title" style="display:flex; align-items:center; gap:0.5rem;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+                Durable Disaster Recovery & Auto-Enrollment Registry
+              </div>
+              <div class="card-desc">Persistent hardware identity (SMBIOS UUID & Motherboard Serial) survives full OS wipe, reset, or VPS rebuild without manual reconnection.</div>
+            </div>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="openRecoveryTicketModal()">⚡ Issue Recovery Ticket</button>
+              <button class="btn btn-secondary" onclick="openRecoveryUsbModal()">🪟 Windows SetupComplete.cmd</button>
+              <button class="btn btn-secondary" onclick="openRecoveryCloudInitModal()">🐧 Linux VPS Cloud-Init</button>
+              <button class="btn btn-secondary" onclick="loadRecoveryDevices()">🔄 Refresh Registry</button>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; padding:1.25rem; border-top:1px solid var(--border-subtle); background:rgba(0,0,0,0.1);">
+            <div style="background:var(--bg-card); padding:1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+              <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Registered Hardware</div>
+              <div id="rec-stat-total" style="font-size:1.5rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;">0</div>
+            </div>
+            <div style="background:var(--bg-card); padding:1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+              <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Auto-Approve Enabled</div>
+              <div id="rec-stat-auto" style="font-size:1.5rem; font-weight:700; color:var(--status-success); margin-top:0.25rem;">0</div>
+            </div>
+            <div style="background:var(--bg-card); padding:1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+              <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Require Approval</div>
+              <div id="rec-stat-approval" style="font-size:1.5rem; font-weight:700; color:var(--status-warning); margin-top:0.25rem;">0</div>
+            </div>
+            <div style="background:var(--bg-card); padding:1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+              <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Max Generation Bump</div>
+              <div id="rec-stat-gen" style="font-size:1.5rem; font-weight:700; color:var(--accent-cyan); margin-top:0.25rem;">Gen 1</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Hardware Identity Map</div>
+              <div class="card-desc">Known device hardware signatures bound to stable machine records across deployments.</div>
+            </div>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Instance</th>
+                  <th>Hardware SMBIOS UUID</th>
+                  <th>Motherboard Serial</th>
+                  <th>Generation</th>
+                  <th>Re-Enrollment Policy</th>
+                  <th>Recovery State</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="recovery-table-body">
+                <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2.5rem;">Loading disaster recovery device registry...</td></tr>
               </tbody>
             </table>
           </div>
@@ -2739,6 +2807,104 @@
     </div>
   </div>
 
+  <!-- MODAL: WINDOWS UNATTENDED USB RECOVERY (SetupComplete.cmd) -->
+  <div id="modal-recovery-usb" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeRecoveryUsbModal();">
+    <div class="modal" style="max-width:700px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+          Windows Automatic Re-Enrollment (SetupComplete.cmd)
+        </strong>
+        <button class="btn-icon" onclick="closeRecoveryUsbModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:1rem; font-size:0.85rem; color:var(--text-secondary); line-height:1.5;">
+        <p>Place this script inside your bootable Windows USB at: <br><code style="color:var(--accent-cyan); font-family:var(--font-mono);">sources\$OEM$\$$\Setup\Scripts\SetupComplete.cmd</code><br>Or run it in an administrative terminal on a reset machine. Windows executes this script automatically as SYSTEM upon first boot.</p>
+        
+        <div style="margin-top:0.75rem;">
+          <label style="display:block; font-size:0.75rem; color:var(--text-muted); margin-bottom:0.25rem;">Target Machine</label>
+          <select id="rec-usb-machine-select" class="form-control" onchange="fetchRecoveryUsbScript(this.value)" style="width:100%;">
+          </select>
+        </div>
+
+        <div style="margin-top:1rem; position:relative;">
+          <pre id="rec-usb-script-content" style="background:#090d16; border:1px solid var(--border-subtle); padding:1rem; border-radius:var(--radius-sm); font-family:var(--font-mono); font-size:0.75rem; max-height:260px; overflow-y:auto; color:#a5b4fc; white-space:pre-wrap; word-break:break-all;">Loading SetupComplete.cmd...</pre>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:0.5rem; padding:0.75rem 1rem; border-top:1px solid var(--border-subtle);">
+        <button class="btn btn-secondary" onclick="copyRecoveryUsbScript()">📋 Copy Script</button>
+        <button class="btn btn-primary" onclick="downloadRecoveryUsbScript()">💾 Download .cmd File</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: LINUX VPS CLOUD-INIT REBUILD -->
+  <div id="modal-recovery-cloudinit" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeRecoveryCloudInitModal();">
+    <div class="modal" style="max-width:700px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+          Linux VPS Rebuild / First-Boot Cloud-Init (user-data)
+        </strong>
+        <button class="btn-icon" onclick="closeRecoveryCloudInitModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:1rem; font-size:0.85rem; color:var(--text-secondary); line-height:1.5;">
+        <p>Paste this YAML into your Cloud Provider's <strong>User Data / Cloud-Init</strong> field when creating or rebuilding your VPS (DigitalOcean, Hetzner, AWS, Linode, Vultr):</p>
+        
+        <div style="margin-top:0.75rem;">
+          <label style="display:block; font-size:0.75rem; color:var(--text-muted); margin-bottom:0.25rem;">Target Machine</label>
+          <select id="rec-cloudinit-machine-select" class="form-control" onchange="fetchRecoveryCloudInitScript(this.value)" style="width:100%;">
+          </select>
+        </div>
+
+        <div style="margin-top:1rem; position:relative;">
+          <pre id="rec-cloudinit-script-content" style="background:#090d16; border:1px solid var(--border-subtle); padding:1rem; border-radius:var(--radius-sm); font-family:var(--font-mono); font-size:0.75rem; max-height:260px; overflow-y:auto; color:#a5b4fc; white-space:pre-wrap; word-break:break-all;">Loading cloud-init YAML...</pre>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:0.5rem; padding:0.75rem 1rem; border-top:1px solid var(--border-subtle);">
+        <button class="btn btn-secondary" onclick="copyRecoveryCloudInitScript()">📋 Copy Cloud-Init YAML</button>
+        <button class="btn btn-primary" onclick="closeRecoveryCloudInitModal()">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ISSUE RECOVERY TICKET -->
+  <div id="modal-recovery-ticket" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeRecoveryTicketModal();">
+    <div class="modal" style="max-width:550px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--status-warning)" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Issue One-Time Machine Recovery Ticket
+        </strong>
+        <button class="btn-icon" onclick="closeRecoveryTicketModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:1rem; font-size:0.85rem; color:var(--text-secondary); line-height:1.5;">
+        <p>Mint a cryptographic 24-hour single-use recovery ticket that allows an agent on a wiped machine to reclaim its existing identity.</p>
+        
+        <div style="margin-top:0.75rem;">
+          <label style="display:block; font-size:0.75rem; color:var(--text-muted); margin-bottom:0.25rem;">Target Instance</label>
+          <select id="rec-ticket-machine-select" class="form-control" style="width:100%;">
+          </select>
+        </div>
+
+        <div style="margin-top:0.75rem;">
+          <label style="display:block; font-size:0.75rem; color:var(--text-muted); margin-bottom:0.25rem;">Validity Window</label>
+          <input type="text" class="form-control" value="24 Hours (Automatic Single-Use Expiry)" readonly style="width:100%; opacity:0.8;">
+        </div>
+
+        <div id="rec-ticket-result-box" style="display:none; margin-top:1rem; padding:0.75rem; background:#090d16; border:1px solid var(--border-subtle); border-radius:var(--radius-sm);">
+          <div style="font-size:0.75rem; color:var(--status-success); font-weight:600; margin-bottom:0.25rem;">✓ Ticket Issued Successfully</div>
+          <div id="rec-ticket-val" style="font-family:var(--font-mono); font-size:0.8rem; color:var(--accent-cyan); word-break:break-all; user-select:all;"></div>
+          <div style="margin-top:0.5rem; font-size:0.75rem; color:var(--text-muted);">Run on recovered host:</div>
+          <pre id="rec-ticket-cmd" style="margin-top:0.25rem; font-family:var(--font-mono); font-size:0.75rem; color:#a5b4fc; background:rgba(0,0,0,0.3); padding:0.5rem; border-radius:3px; word-break:break-all; white-space:pre-wrap;"></pre>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:0.5rem; padding:0.75rem 1rem; border-top:1px solid var(--border-subtle);">
+        <button class="btn btn-secondary" onclick="closeRecoveryTicketModal()">Cancel</button>
+        <button class="btn btn-primary" id="btn-generate-rec-ticket" onclick="generateRecoveryTicket()">⚡ Mint Recovery Ticket</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: CONFIRMED FORCE STOP APP -->
   <div id="modal-app-kill" class="modal-backdrop">
     <div class="modal" style="max-width:440px;">
@@ -3167,7 +3333,7 @@
         const opts = { ...options };
         opts.headers = { ...(opts.headers || {}) };
         
-        const pairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || 'cvps_enroll_master_token';
+        const pairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || '';
         if (pairKey && !opts.headers['X-CVPS-Pairing-Key']) {
           opts.headers['X-CVPS-Pairing-Key'] = pairKey;
         }
@@ -3238,7 +3404,7 @@
 
     let appConfig = {
       serverUrl: savedUrl || defaultOrigin,
-      pairingKey: localStorage.getItem('cvps_pairing_key') || 'cvps_enroll_master_token',
+      pairingKey: localStorage.getItem('cvps_pairing_key') || '',
       refreshInterval: parseInt(localStorage.getItem('cvps_refresh_interval') || '4000', 10),
       theme: localStorage.getItem('cvps_theme') || 'dark'
     };
@@ -3310,7 +3476,7 @@
         'Accept': 'application/json',
         ...options.headers
       };
-      const effectivePairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || 'cvps_enroll_master_token';
+      const effectivePairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || '';
       if (effectivePairKey && !headers['X-CVPS-Pairing-Key']) {
         headers['X-CVPS-Pairing-Key'] = effectivePairKey;
       }
@@ -4791,13 +4957,13 @@
     function resetSettings() {
       if (!confirm('Reset all settings to default values?')) return;
       localStorage.removeItem('cvps_server_url');
-      localStorage.setItem('cvps_pairing_key', 'cvps_enroll_master_token');
+      localStorage.removeItem('cvps_pairing_key');
       localStorage.removeItem('cvps_refresh_interval');
       appConfig.serverUrl = defaultRailway;
-      appConfig.pairingKey = 'cvps_enroll_master_token';
+      appConfig.pairingKey = '';
       appConfig.refreshInterval = 4000;
       document.getElementById('setting-server-url').value = defaultRailway;
-      document.getElementById('setting-pairing-key').value = 'cvps_enroll_master_token';
+      document.getElementById('setting-pairing-key').value = '';
       document.getElementById('setting-refresh-interval').value = '4000';
       localStorage.setItem('cvps_server_url', defaultRailway);
       setupSyncInterval();
@@ -5463,7 +5629,8 @@
         'desktop': 'Remote Desktop & Headless Unattended Access',
         'doctor': 'System Doctor & Diagnostics',
         'logs': 'Security & Audit Activity Logs',
-        'settings': 'Settings & Backend Configuration'
+        'settings': 'Settings & Backend Configuration',
+        'recovery': 'Durable Disaster Recovery & Auto-Enrollment'
       };
 
       document.getElementById('breadcrumb-title').innerText = navTitles[viewName] || 'Space Station';
@@ -5532,6 +5699,301 @@
         });
       } else if (viewName === 'settings') {
         initSettingsView();
+      } else if (viewName === 'recovery') {
+        loadRecoveryDevices();
+      }
+    }
+
+    // =========================================================================
+    // DISASTER RECOVERY & HARDWARE-LINKED RE-ENROLLMENT CONTROLLER
+    // =========================================================================
+    let cachedRecoveryData = { devices: [], usbFiles: {}, cloudInit: '' };
+
+    async function loadRecoveryDevices() {
+      const tbody = document.getElementById('recovery-table-body');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2rem;">Fetching durable device registry...</td></tr>';
+      
+      try {
+        const res = await apiRequest('/api/v1/recovery/devices');
+        if (!res.ok || !res.data || !res.data.success) {
+          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--status-danger); padding:2rem;">Failed to load device registry: ${escapeHtml((res.data && res.data.error) || 'API error')}</td></tr>`;
+          return;
+        }
+        const devices = res.data.devices || [];
+        cachedRecoveryData.devices = devices;
+        let autoCount = 0;
+        let manualCount = 0;
+        let maxGen = 1;
+        
+        if (devices.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2.5rem;">No machines registered yet. Instances register their SMBIOS hardware signature automatically upon enrollment.</td></tr>';
+        } else {
+          tbody.innerHTML = devices.map(d => {
+            if (d.policy === 'auto_approve') autoCount++;
+            else manualCount++;
+            if (d.generation > maxGen) maxGen = d.generation;
+
+            const isApproved = d.policy === 'auto_approve';
+            const isRevoked = d.revoked === true;
+            
+            let statusBadge = `<span class="badge" style="background:rgba(34,197,94,0.15); color:var(--status-success); border:1px solid rgba(34,197,94,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem;">Enrolled</span>`;
+            if (isRevoked) {
+              statusBadge = `<span class="badge" style="background:rgba(239,68,68,0.15); color:var(--status-danger); border:1px solid rgba(239,68,68,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem;">Revoked</span>`;
+            } else if (d.re_enrollment_required) {
+              statusBadge = `<span class="badge" style="background:rgba(234,179,8,0.15); color:var(--status-warning); border:1px solid rgba(234,179,8,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem;">Re-Enrollment Req</span>`;
+            }
+
+            return `
+              <tr>
+                <td>
+                  <div style="font-weight:600; color:var(--text-primary);">${escapeHtml(d.device_name || d.machine_id)}</div>
+                  <div style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono);">${escapeHtml(d.machine_id)}</div>
+                </td>
+                <td>
+                  <div style="font-family:var(--font-mono); font-size:0.8rem; color:var(--accent-cyan);">${escapeHtml(d.hardware_uuid || 'Auto-probed on heartbeat')}</div>
+                </td>
+                <td>
+                  <div style="font-family:var(--font-mono); font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(d.hardware_serial || 'Standard Platform / VPS')}</div>
+                </td>
+                <td>
+                  <span class="badge" style="background:rgba(99,102,241,0.15); color:var(--accent-indigo); border:1px solid rgba(99,102,241,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem;">Gen ${d.generation || 1}</span>
+                </td>
+                <td>
+                  <button class="btn btn-sm ${isApproved ? 'btn-secondary' : 'btn-primary'}" onclick="toggleRecoveryPolicy('${escapeHtml(d.machine_id)}', '${isApproved ? 'require_approval' : 'auto_approve'}')" style="font-size:0.75rem; padding:0.25rem 0.5rem;">
+                    ${isApproved ? '🛡️ Auto-Approve' : '🔒 Require Approval'}
+                  </button>
+                </td>
+                <td>${statusBadge}</td>
+                <td>
+                  <div style="display:flex; gap:0.35rem;">
+                    <button class="btn btn-sm btn-secondary" onclick="openRecoveryTicketModal('${escapeHtml(d.machine_id)}')" title="Issue single-use recovery ticket" style="font-size:0.75rem; padding:0.25rem 0.5rem;">⚡ Ticket</button>
+                    <button class="btn btn-sm btn-danger" onclick="revokeRecoveryDevice('${escapeHtml(d.machine_id)}')" title="Revoke device access" style="font-size:0.75rem; padding:0.25rem 0.5rem;">Revoke</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+
+        const elTot = document.getElementById('rec-stat-total');
+        if (elTot) elTot.innerText = devices.length;
+        const elAuto = document.getElementById('rec-stat-auto');
+        if (elAuto) elAuto.innerText = autoCount;
+        const elApp = document.getElementById('rec-stat-approval');
+        if (elApp) elApp.innerText = manualCount;
+        const elGen = document.getElementById('rec-stat-gen');
+        if (elGen) elGen.innerText = `Gen ${maxGen}`;
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--status-danger); padding:2rem;">Network error fetching device registry: ${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    async function toggleRecoveryPolicy(machineId, newPolicy) {
+      try {
+        const res = await apiRequest('/api/v1/recovery/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId, policy: newPolicy })
+        });
+        if (res.ok && res.data && res.data.success) {
+          showToast(`Policy updated to ${newPolicy === 'auto_approve' ? 'Auto-Approve' : 'Manual Approval'}`, 'success');
+          loadRecoveryDevices();
+        } else {
+          showToast(`Failed to update policy: ${(res.data && res.data.error) || 'Error'}`, 'error');
+        }
+      } catch (e) {
+        showToast(`Failed to update policy: ${e.message}`, 'error');
+      }
+    }
+
+    async function revokeRecoveryDevice(machineId) {
+      if (!confirm(`Are you sure you want to revoke disaster recovery access for machine '${machineId}'? The device will be blocked from claiming identity after resets.`)) return;
+      try {
+        const res = await apiRequest('/api/v1/recovery/revoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId })
+        });
+        if (res.ok && res.data && res.data.success) {
+          showToast(`Machine ${machineId} recovery permissions revoked`, 'success');
+          loadRecoveryDevices();
+        } else {
+          showToast(`Revocation failed: ${(res.data && res.data.error) || 'Administrator permissions required'}`, 'error');
+        }
+      } catch (e) {
+        showToast(`Revocation error: ${e.message}`, 'error');
+      }
+    }
+
+    function openRecoveryTicketModal(targetMachineId) {
+      const modal = document.getElementById('modal-recovery-ticket');
+      const select = document.getElementById('rec-ticket-machine-select');
+      const resBox = document.getElementById('rec-ticket-result-box');
+      if (resBox) resBox.style.display = 'none';
+
+      if (select) {
+        select.innerHTML = '';
+        const machines = (cachedRecoveryData.devices && cachedRecoveryData.devices.length) ? cachedRecoveryData.devices : (appState.machines || []);
+        machines.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.machine_id || m.id;
+          opt.textContent = `${m.device_name || m.friendly_name || m.id} (${m.machine_id || m.id})`;
+          if ((m.machine_id || m.id) === targetMachineId) opt.selected = true;
+          select.appendChild(opt);
+        });
+      }
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function closeRecoveryTicketModal() {
+      const modal = document.getElementById('modal-recovery-ticket');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function generateRecoveryTicket() {
+      const select = document.getElementById('rec-ticket-machine-select');
+      const machineId = select ? select.value : '';
+      if (!machineId) {
+        showToast('Please select a target machine', 'warning');
+        return;
+      }
+      const btn = document.getElementById('btn-generate-rec-ticket');
+      if (btn) btn.disabled = true;
+
+      try {
+        const res = await apiRequest('/api/v1/recovery/ticket', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId })
+        });
+        if (res.ok && res.data && res.data.success) {
+          const ticket = res.data.ticket;
+          const resBox = document.getElementById('rec-ticket-result-box');
+          const valBox = document.getElementById('rec-ticket-val');
+          const cmdBox = document.getElementById('rec-ticket-cmd');
+          if (resBox) resBox.style.display = 'block';
+          if (valBox) valBox.innerText = ticket;
+          const serverBase = normalizeServerUrl(appConfig.serverUrl) || window.location.origin;
+          if (cmdBox) cmdBox.innerText = `python agent/universal-agent.py --server "${serverBase}" --bootstrap --recovery-ticket "${ticket}" --machine-id "${machineId}"`;
+          showToast('Single-use recovery ticket issued!', 'success');
+        } else {
+          showToast(`Failed to generate ticket: ${(res.data && res.data.error) || 'Error'}`, 'error');
+        }
+      } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function openRecoveryUsbModal(targetMachineId) {
+      const modal = document.getElementById('modal-recovery-usb');
+      const select = document.getElementById('rec-usb-machine-select');
+      if (select) {
+        select.innerHTML = '';
+        const machines = (cachedRecoveryData.devices && cachedRecoveryData.devices.length) ? cachedRecoveryData.devices : (appState.machines || []);
+        machines.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.machine_id || m.id;
+          opt.textContent = `${m.device_name || m.friendly_name || m.id} (${m.machine_id || m.id})`;
+          if ((m.machine_id || m.id) === targetMachineId) opt.selected = true;
+          select.appendChild(opt);
+        });
+        if (select.value) fetchRecoveryUsbScript(select.value);
+      }
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function closeRecoveryUsbModal() {
+      const modal = document.getElementById('modal-recovery-usb');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function fetchRecoveryUsbScript(machineId) {
+      const pre = document.getElementById('rec-usb-script-content');
+      if (pre) pre.innerText = 'Fetching SetupComplete.cmd configuration...';
+      try {
+        const res = await apiRequest(`/api/v1/recovery/usb/config?machine_id=${encodeURIComponent(machineId)}`);
+        if (res.ok && res.data && res.data.success) {
+          cachedRecoveryData.usbFiles = res.data.files || {};
+          const cmd = (res.data.files && res.data.files['SetupComplete.cmd']) || 'REM SetupComplete.cmd generated';
+          if (pre) pre.innerText = cmd;
+        } else {
+          if (pre) pre.innerText = `Error generating script: ${(res.data && res.data.error) || 'Failed'}`;
+        }
+      } catch (e) {
+        if (pre) pre.innerText = `Error: ${e.message}`;
+      }
+    }
+
+    function copyRecoveryUsbScript() {
+      const pre = document.getElementById('rec-usb-script-content');
+      if (pre && pre.innerText) {
+        navigator.clipboard.writeText(pre.innerText).then(() => {
+          showToast('Copied SetupComplete.cmd to clipboard!', 'success');
+        });
+      }
+    }
+
+    function downloadRecoveryUsbScript() {
+      const pre = document.getElementById('rec-usb-script-content');
+      if (!pre || !pre.innerText) return;
+      const blob = new Blob([pre.innerText], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'SetupComplete.cmd';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast('Downloaded SetupComplete.cmd', 'success');
+    }
+
+    function openRecoveryCloudInitModal(targetMachineId) {
+      const modal = document.getElementById('modal-recovery-cloudinit');
+      const select = document.getElementById('rec-cloudinit-machine-select');
+      if (select) {
+        select.innerHTML = '';
+        const machines = (cachedRecoveryData.devices && cachedRecoveryData.devices.length) ? cachedRecoveryData.devices : (appState.machines || []);
+        machines.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.machine_id || m.id;
+          opt.textContent = `${m.device_name || m.friendly_name || m.id} (${m.machine_id || m.id})`;
+          if ((m.machine_id || m.id) === targetMachineId) opt.selected = true;
+          select.appendChild(opt);
+        });
+        if (select.value) fetchRecoveryCloudInitScript(select.value);
+      }
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function closeRecoveryCloudInitModal() {
+      const modal = document.getElementById('modal-recovery-cloudinit');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function fetchRecoveryCloudInitScript(machineId) {
+      const pre = document.getElementById('rec-cloudinit-script-content');
+      if (pre) pre.innerText = 'Fetching Cloud-Init user-data...';
+      try {
+        const res = await apiRequest(`/api/v1/recovery/vps/cloud-init?machine_id=${encodeURIComponent(machineId)}`);
+        if (res.ok && res.data && res.data.success) {
+          cachedRecoveryData.cloudInit = res.data.cloud_init || '';
+          if (pre) pre.innerText = res.data.cloud_init || res.data.bash_script || '# Cloud-init user data';
+        } else {
+          if (pre) pre.innerText = `Error: ${(res.data && res.data.error) || 'Failed'}`;
+        }
+      } catch (e) {
+        if (pre) pre.innerText = `Error: ${e.message}`;
+      }
+    }
+
+    function copyRecoveryCloudInitScript() {
+      const pre = document.getElementById('rec-cloudinit-script-content');
+      if (pre && pre.innerText) {
+        navigator.clipboard.writeText(pre.innerText).then(() => {
+          showToast('Copied Cloud-Init YAML to clipboard!', 'success');
+        });
       }
     }
 
@@ -7200,8 +7662,7 @@
             `;
             tip = `
               <div style="margin-top:1.5rem; padding:0.75rem 1rem; background:rgba(0,0,0,0.25); border-radius:var(--radius-sm); font-size:0.75rem; color:var(--text-secondary); max-width:480px; margin-left:auto; margin-right:auto; text-align:left;">
-                <strong>Pairing Guidance:</strong> Pairing keys authorize secure dashboard actions without requiring OS-level root/administrator access on the host. Default self-hosted master key:
-                <pre style="margin-top:0.35rem; font-family:var(--font-mono); color:var(--accent-cyan); overflow-x:auto;">cvps_enroll_master_token</pre>
+                <strong>Pairing Guidance:</strong> Pairing keys authorize secure dashboard actions without requiring OS-level root/administrator access on the host. Configure your custom key in Settings or set CVPS_PAIRING_KEY on your backend.
               </div>
             `;
           } else if (isOffline) {
@@ -7599,8 +8060,33 @@
       lastFpsCheck: 0,
       byteCounter: 0,
       lastByteCheck: 0,
-      activeImg: null
+      activeImg: null,
+      watchdogTimers: {
+        wsConnect: null,
+        agentStart: null,
+        captureStatus: null,
+        firstFrame: null
+      },
+      currentStage: 'idle',
+      streamSessionId: 0,
+      correlationId: null,
+      firstFrameReceived: false
     };
+
+    function clearAllAppStreamTimers() {
+      if (appStreamState.pingTimer) {
+        clearInterval(appStreamState.pingTimer);
+        appStreamState.pingTimer = null;
+      }
+      if (appStreamState.watchdogTimers) {
+        for (const key of Object.keys(appStreamState.watchdogTimers)) {
+          if (appStreamState.watchdogTimers[key]) {
+            clearTimeout(appStreamState.watchdogTimers[key]);
+            appStreamState.watchdogTimers[key] = null;
+          }
+        }
+      }
+    }
 
     async function openAppLiveViewer(appId, appName, pids = []) {
       const machineId = appState.apps.machineId || appState.selectedMachineId || (appState.machines[0]?.id);
@@ -7659,7 +8145,11 @@
       select.innerHTML = '<option value="">Auto-Detect Main Window</option>';
 
       try {
-        const query = pid ? `?machine_id=${encodeURIComponent(machineId)}&pid=${encodeURIComponent(pid)}` : `?machine_id=${encodeURIComponent(machineId)}`;
+        let query = `?machine_id=${encodeURIComponent(machineId)}`;
+        if (pid) query += `&pid=${encodeURIComponent(pid)}`;
+        if (appStreamState.appId) query += `&app_id=${encodeURIComponent(appStreamState.appId)}`;
+        if (appStreamState.appName) query += `&name=${encodeURIComponent(appStreamState.appName)}`;
+
         const res = await apiRequest(`/api/v1/apps/windows${query}`);
         const windows = (res && res.data && res.data.windows) || (res && res.windows);
         if (windows && Array.isArray(windows) && windows.length > 0) {
@@ -7677,19 +8167,16 @@
     }
 
     async function startAppStreamConnection() {
+      clearAllAppStreamTimers();
       if (appStreamState.ws) {
         try { appStreamState.ws.close(); } catch (_) {}
         appStreamState.ws = null;
       }
-      if (appStreamState.pingTimer) {
-        clearInterval(appStreamState.pingTimer);
-        appStreamState.pingTimer = null;
-      }
-      if (appStreamState.firstFrameTimeout) {
-        clearTimeout(appStreamState.firstFrameTimeout);
-        appStreamState.firstFrameTimeout = null;
-      }
       appStreamState.firstFrameReceived = false;
+      const currentSessionId = ++appStreamState.streamSessionId;
+      const correlationId = 'corr_stream_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      appStreamState.correlationId = correlationId;
+      appStreamState.currentStage = 'authorizing';
 
       try {
         const pairingKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || '';
@@ -7703,9 +8190,13 @@
             pid: appStreamState.pid,
             hwnd: appStreamState.hwnd,
             app_id: appStreamState.appId,
+            app_name: appStreamState.appName,
+            correlation_id: correlationId,
             pairing_key: pairingKey
           })
         });
+
+        if (currentSessionId !== appStreamState.streamSessionId) return;
 
         const tokenPayload = (tokenRes && tokenRes.data) ? tokenRes.data : tokenRes;
         if (!tokenRes || !tokenRes.ok || !tokenPayload || !tokenPayload.token) {
@@ -7748,26 +8239,49 @@
         wsUrl.pathname = '/api/v1/apps/stream';
         wsUrl.searchParams.set('machine_id', appStreamState.machineId);
         wsUrl.searchParams.set('token', streamToken);
+        wsUrl.searchParams.set('correlation_id', correlationId);
         if (appStreamState.pid) wsUrl.searchParams.set('pid', appStreamState.pid);
         if (appStreamState.hwnd) wsUrl.searchParams.set('hwnd', appStreamState.hwnd);
+        if (appStreamState.appId) wsUrl.searchParams.set('app_id', appStreamState.appId);
+        if (appStreamState.appName) wsUrl.searchParams.set('name', appStreamState.appName);
         wsUrl.searchParams.set('fps', appStreamState.targetFps);
         wsUrl.searchParams.set('quality', appStreamState.quality);
 
         const ws = new WebSocket(wsUrl.toString());
         appStreamState.ws = ws;
+        appStreamState.currentStage = 'ws_connecting';
 
-        // Watchdog: If first frame doesn't arrive within 8 seconds, alert gracefully
-        appStreamState.firstFrameTimeout = setTimeout(() => {
-          if (!appStreamState.firstFrameReceived && appStreamState.ws === ws) {
+        // Stage Watchdog 1: WS_CONNECT_TIMEOUT (6 seconds)
+        appStreamState.watchdogTimers.wsConnect = setTimeout(() => {
+          if (currentSessionId === appStreamState.streamSessionId && ws.readyState !== WebSocket.OPEN) {
+            try { ws.close(); } catch (_) {}
             showAppStreamError(
-              'FIRST_FRAME_TIMEOUT',
-              'Stream Output Waiting',
-              'The background stream initialized, but the remote host has not yielded graphical frames yet. The target process may be idle, hidden, or running in an inactive session.'
+              'WS_CONNECT_TIMEOUT',
+              'Stream Gateway Connection Timeout',
+              'Unable to establish WebSocket connection to the stream gateway within 6 seconds. Check network connectivity or firewall rules.'
             );
           }
-        }, 8000);
+        }, 6000);
 
         ws.onopen = () => {
+          if (currentSessionId !== appStreamState.streamSessionId) return;
+          if (appStreamState.watchdogTimers.wsConnect) {
+            clearTimeout(appStreamState.watchdogTimers.wsConnect);
+            appStreamState.watchdogTimers.wsConnect = null;
+          }
+          appStreamState.currentStage = 'agent_dispatching';
+
+          // Stage Watchdog 2: AGENT_START_TIMEOUT (7 seconds from WS open)
+          appStreamState.watchdogTimers.agentStart = setTimeout(() => {
+            if (currentSessionId === appStreamState.streamSessionId && !appStreamState.firstFrameReceived) {
+              showAppStreamError(
+                'AGENT_START_TIMEOUT',
+                'Host Agent Acknowledgment Timeout',
+                'The stream gateway connected, but the remote host agent did not confirm capture initialization within 7 seconds.'
+              );
+            }
+          }, 7000);
+
           // Start periodic RTT ping
           appStreamState.lastPingSent = performance.now();
           ws.send(JSON.stringify({ type: 'ping', client_time: Date.now() }));
@@ -7780,9 +8294,10 @@
         };
 
         ws.onmessage = (event) => {
+          if (currentSessionId !== appStreamState.streamSessionId) return;
           try {
             const msg = JSON.parse(event.data);
-            handleAppStreamMessage(msg);
+            handleAppStreamMessage(msg, currentSessionId);
           } catch (e) {
             console.error('AppStream message parse error:', e);
           }
@@ -7793,14 +8308,8 @@
         };
 
         ws.onclose = (e) => {
-          if (appStreamState.pingTimer) {
-            clearInterval(appStreamState.pingTimer);
-            appStreamState.pingTimer = null;
-          }
-          if (appStreamState.firstFrameTimeout) {
-            clearTimeout(appStreamState.firstFrameTimeout);
-            appStreamState.firstFrameTimeout = null;
-          }
+          if (currentSessionId !== appStreamState.streamSessionId) return;
+          clearAllAppStreamTimers();
           if (document.getElementById('modal-app-live-viewer').style.display !== 'none') {
             if (e.code === 4001) {
               showAppStreamError(
@@ -7823,7 +8332,9 @@
       }
     }
 
-    function handleAppStreamMessage(msg) {
+    function handleAppStreamMessage(msg, sessionId) {
+      if (sessionId && sessionId !== appStreamState.streamSessionId) return;
+
       if (msg.type === 'pong') {
         const rtt = Math.max(1, Math.round(performance.now() - appStreamState.lastPingSent));
         const pingEl = document.getElementById('app-stream-ping');
@@ -7831,15 +8342,68 @@
         return;
       }
 
+      if (msg.type === 'stage') {
+        if (msg.stage === 'agent_notified') {
+          if (appStreamState.watchdogTimers.agentStart) {
+            clearTimeout(appStreamState.watchdogTimers.agentStart);
+            appStreamState.watchdogTimers.agentStart = null;
+          }
+          appStreamState.currentStage = 'awaiting_capture';
+          // Stage Watchdog 3: CAPTURE_STATUS_TIMEOUT (8 seconds)
+          if (!appStreamState.watchdogTimers.captureStatus && !appStreamState.firstFrameReceived) {
+            appStreamState.watchdogTimers.captureStatus = setTimeout(() => {
+              if (sessionId === appStreamState.streamSessionId && !appStreamState.firstFrameReceived) {
+                showAppStreamError(
+                  'CAPTURE_STATUS_TIMEOUT',
+                  'Capture Status Timeout',
+                  'The remote host agent received the stream command, but did not return capture or window status within 8 seconds.'
+                );
+              }
+            }, 8000);
+          }
+        }
+        return;
+      }
+
       if (msg.type === 'status') {
+        if (appStreamState.watchdogTimers.agentStart) {
+          clearTimeout(appStreamState.watchdogTimers.agentStart);
+          appStreamState.watchdogTimers.agentStart = null;
+        }
+        if (appStreamState.watchdogTimers.captureStatus) {
+          clearTimeout(appStreamState.watchdogTimers.captureStatus);
+          appStreamState.watchdogTimers.captureStatus = null;
+        }
+
+        if (msg.status === 'worker_started') {
+          appStreamState.currentStage = 'worker_running';
+          // Stage Watchdog 4: FIRST_FRAME_TIMEOUT (10 seconds from worker start)
+          if (!appStreamState.watchdogTimers.firstFrame && !appStreamState.firstFrameReceived) {
+            appStreamState.watchdogTimers.firstFrame = setTimeout(() => {
+              if (sessionId === appStreamState.streamSessionId && !appStreamState.firstFrameReceived) {
+                showAppStreamError(
+                  'FIRST_FRAME_TIMEOUT',
+                  'Stream Output Waiting',
+                  'The background stream worker initialized, but the remote host has not yielded graphical frames yet. The target process may be idle, hidden, or running in an inactive session.'
+                );
+              }
+            }, 10000);
+          }
+          return;
+        }
+
         if (msg.status === 'unauthorized') {
           showAppStreamError('INVALID_OR_EXPIRED_TICKET', 'Stream Session Unauthorized', msg.error || 'Stream ticket rejected or expired.');
         } else if (msg.status === 'permission_denied') {
           showAppStreamError('CAPTURE_PERMISSION_DENIED', 'Capture Permission Denied', msg.error || 'Host agent lacks permission to capture this process window.');
+        } else if (msg.status === 'session_zero_isolated') {
+          showAppStreamError('INTERACTIVE_SESSION_UNAVAILABLE', 'Interactive Session Unavailable', msg.error || 'Agent is running in Windows Session 0 and cannot access the logged-in user desktop.');
         } else if (msg.status === 'wayland_restricted' || msg.status === 'capture_unsupported') {
           showAppStreamError('CAPTURE_UNSUPPORTED', 'Capture Unsupported', msg.error || 'Display server does not support direct window capture.');
         } else if (msg.status === 'window_closed' || msg.status === 'window_not_found') {
           showAppStreamError('WINDOW_NOT_FOUND', 'Window Not Found', msg.error || 'The graphical window has closed or has ceased rendering.');
+        } else if (msg.status === 'capture_frame_empty') {
+          showAppStreamError('CAPTURE_FRAME_EMPTY', 'Blank Frame Detected', msg.error || 'Captured frame buffer is completely blank or hardware composited offscreen.');
         } else if (!msg.has_gui || msg.status === 'no_window' || msg.status === 'no_gui' || msg.status === 'no_display') {
           showAppStreamError(
             'NO_GRAPHICAL_WINDOW',
@@ -7847,7 +8411,8 @@
             msg.error || 'This process is running without an interactive graphical window (e.g. background service, daemon, or worker).'
           );
         } else if (msg.is_minimized) {
-          document.getElementById('app-stream-minimized-notice').style.display = 'flex';
+          const minimizedNotice = document.getElementById('app-stream-minimized-notice');
+          if (minimizedNotice) minimizedNotice.style.display = 'flex';
         } else if (msg.status === 'disconnected') {
           showAppStreamError('AGENT_DISCONNECTED', 'Host Agent Disconnected', msg.error || 'Target machine lost connection.');
         }
@@ -7855,29 +8420,46 @@
       }
 
       if (msg.type === 'frame') {
-        appStreamState.firstFrameReceived = true;
-        if (appStreamState.firstFrameTimeout) {
-          clearTimeout(appStreamState.firstFrameTimeout);
-          appStreamState.firstFrameTimeout = null;
+        if (!msg.data || typeof msg.data !== 'string' || msg.data.length < 50) return;
+
+        // Clear all pending capture watchdogs immediately
+        if (appStreamState.watchdogTimers.agentStart) {
+          clearTimeout(appStreamState.watchdogTimers.agentStart);
+          appStreamState.watchdogTimers.agentStart = null;
         }
-
-        // Hide loading and errors, show canvas
-        document.getElementById('app-stream-loading').style.display = 'none';
-        document.getElementById('app-stream-error').style.display = 'none';
-
-        const minimizedNotice = document.getElementById('app-stream-minimized-notice');
-        if (msg.is_minimized) {
-          if (minimizedNotice) minimizedNotice.style.display = 'flex';
-        } else {
-          if (minimizedNotice) minimizedNotice.style.display = 'none';
+        if (appStreamState.watchdogTimers.captureStatus) {
+          clearTimeout(appStreamState.watchdogTimers.captureStatus);
+          appStreamState.watchdogTimers.captureStatus = null;
+        }
+        if (appStreamState.watchdogTimers.firstFrame) {
+          clearTimeout(appStreamState.watchdogTimers.firstFrame);
+          appStreamState.watchdogTimers.firstFrame = null;
         }
 
         const canvas = document.getElementById('app-stream-canvas');
         if (!canvas) return;
-        canvas.style.display = 'block';
 
         const img = new Image();
         img.onload = () => {
+          if (sessionId && sessionId !== appStreamState.streamSessionId) return;
+
+          // Confirmed first frame decode success!
+          appStreamState.firstFrameReceived = true;
+          appStreamState.currentStage = 'streaming';
+
+          // Hide loading and errors, show canvas
+          document.getElementById('app-stream-loading').style.display = 'none';
+          document.getElementById('app-stream-error').style.display = 'none';
+
+          const minimizedNotice = document.getElementById('app-stream-minimized-notice');
+          if (msg.is_minimized) {
+            if (minimizedNotice) minimizedNotice.style.display = 'flex';
+          } else {
+            if (minimizedNotice) minimizedNotice.style.display = 'none';
+          }
+
+          canvas.style.display = 'block';
+
           if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
             canvas.width = img.naturalWidth;
             canvas.height = img.naturalHeight;
@@ -7899,7 +8481,7 @@
           }
 
           // Update Bitrate measurement
-          const byteLen = (msg.data ? msg.data.length * 0.75 : 0);
+          const byteLen = msg.data.length * 0.75;
           appStreamState.byteCounter += byteLen;
           if (now - appStreamState.lastByteCheck >= 1000) {
             const kbps = Math.round((appStreamState.byteCounter * 8) / (1024 * ((now - appStreamState.lastByteCheck) / 1000)));
@@ -7907,6 +8489,16 @@
             if (brEl) brEl.innerText = `${kbps} kbps`;
             appStreamState.byteCounter = 0;
             appStreamState.lastByteCheck = now;
+          }
+        };
+
+        img.onerror = () => {
+          if (!appStreamState.firstFrameReceived) {
+            showAppStreamError(
+              'FRAME_DECODE_FAILED',
+              'Frame Decode Failed',
+              'The browser received image frame data but was unable to decode the graphic buffer.'
+            );
           }
         };
 
@@ -7961,7 +8553,7 @@
             <button class="btn btn-secondary" onclick="openDetailsFromStream()">🔍 Inspect Process</button>
             <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
           `;
-        } else if (category === 'CAPTURE_PERMISSION_DENIED') {
+        } else if (category === 'CAPTURE_PERMISSION_DENIED' || category === 'INTERACTIVE_SESSION_UNAVAILABLE') {
           actionsEl.innerHTML = `
             <button class="btn btn-secondary" onclick="openTerminalFromStream()">💻 Open Terminal</button>
             <button class="btn btn-secondary" onclick="openDetailsFromStream()">🔍 Inspect Process</button>
@@ -7983,14 +8575,7 @@
     }
 
     function closeAppLiveViewer() {
-      if (appStreamState.firstFrameTimeout) {
-        clearTimeout(appStreamState.firstFrameTimeout);
-        appStreamState.firstFrameTimeout = null;
-      }
-      if (appStreamState.pingTimer) {
-        clearInterval(appStreamState.pingTimer);
-        appStreamState.pingTimer = null;
-      }
+      clearAllAppStreamTimers();
       if (appStreamState.ws) {
         try {
           if (appStreamState.ws.readyState === WebSocket.OPEN) {
