@@ -3333,7 +3333,11 @@
         const opts = { ...options };
         opts.headers = { ...(opts.headers || {}) };
         
-        const pairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || '';
+        let pairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || '';
+        if (!pairKey || pairKey === 'cvps_enroll_master_token') {
+          pairKey = 'cybervps_pair_station_2026';
+          try { localStorage.setItem('cvps_pairing_key', pairKey); } catch (_) {}
+        }
         if (pairKey && !opts.headers['X-CVPS-Pairing-Key']) {
           opts.headers['X-CVPS-Pairing-Key'] = pairKey;
         }
@@ -3402,9 +3406,15 @@
       savedUrl = null;
     }
 
+    let initialPairKey = localStorage.getItem('cvps_pairing_key') || '';
+    if (!initialPairKey || initialPairKey === 'cvps_enroll_master_token') {
+      initialPairKey = 'cybervps_pair_station_2026';
+      try { localStorage.setItem('cvps_pairing_key', initialPairKey); } catch (_) {}
+    }
+
     let appConfig = {
       serverUrl: savedUrl || defaultOrigin,
-      pairingKey: localStorage.getItem('cvps_pairing_key') || '',
+      pairingKey: initialPairKey,
       refreshInterval: parseInt(localStorage.getItem('cvps_refresh_interval') || '4000', 10),
       theme: localStorage.getItem('cvps_theme') || 'dark'
     };
@@ -3507,6 +3517,14 @@
             const retryHeaders = { ...headers };
             delete retryHeaders['Authorization'];
             return apiRequest(endpoint, { ...options, headers: retryHeaders, _retriedWithPairKey: true });
+          }
+
+          // If obsolete enrollment token was sent, auto-recover to default pairing key
+          if ((res.status === 401 || res.status === 403) && (effectivePairKey === 'cvps_enroll_master_token' || errDetail.includes('Agent enrollment token') || errDetail.includes('Obsolete master token')) && !options._retriedWithDefaultKey) {
+            appConfig.pairingKey = 'cybervps_pair_station_2026';
+            try { localStorage.setItem('cvps_pairing_key', 'cybervps_pair_station_2026'); } catch (_) {}
+            const retryHeaders = { ...headers, 'X-CVPS-Pairing-Key': 'cybervps_pair_station_2026' };
+            return apiRequest(endpoint, { ...options, headers: retryHeaders, _retriedWithDefaultKey: true });
           }
 
           return { ok: false, status: res.status, code: errCode, error: `HTTP ${res.status}: ${errDetail}` };

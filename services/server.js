@@ -527,6 +527,9 @@ function verifyAdminAuthorization(req) {
 
   if (candidates.length > 0) {
     if (hadEnrollmentToken && candidates.length === 1) {
+      if (candidates[0].token === 'cvps_enroll_master_token') {
+        return { authorized: false, reason: 'Obsolete master token cannot be used for dashboard access. Please use your instance pairing key', code: 'INVALID_CREDENTIAL', status: 401 };
+      }
       return { authorized: false, reason: 'Forbidden: Agent enrollment token cannot be used for administrative or client operations', code: 'INSUFFICIENT_ROLE', status: 403 };
     }
     if (hadExpiredSession) {
