@@ -3646,6 +3646,7 @@
     } finally {
       appState._syncInProgress = false;
     }
+  }
 
     // 5. RENDER PRESENTATION LAYER
     function renderAllViews() {
@@ -9477,11 +9478,13 @@
       }
     }
 
-    // 12. INITIALIZATION ON DOM READY
-    window.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('setting-server-url').value = appConfig.serverUrl;
-      document.getElementById('setting-pairing-key').value = appConfig.pairingKey;
-      document.getElementById('setting-refresh-interval').value = String(appConfig.refreshInterval);
+    function initApp() {
+      const urlEl = document.getElementById('setting-server-url');
+      if (urlEl) urlEl.value = appConfig.serverUrl;
+      const pairEl = document.getElementById('setting-pairing-key');
+      if (pairEl) pairEl.value = appConfig.pairingKey;
+      const refEl = document.getElementById('setting-refresh-interval');
+      if (refEl) refEl.value = String(appConfig.refreshInterval);
 
       // Escape key closes modals
       window.addEventListener('keydown', (e) => {
@@ -9501,7 +9504,13 @@
       setupSyncInterval();
       initTelemetryStream();
       syncData(false);
-    });
+    }
+
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', initApp);
+    } else {
+      initApp();
+    }
   </script>
 </body>
 </html>
