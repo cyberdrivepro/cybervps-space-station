@@ -622,6 +622,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/ota/latest') return true;
   if (pathname === '/api/v1/ota/download/universal-agent.py') return true;
   if (pathname === '/api/v1/recovery/claim') return true;
+  if (pathname === '/api/v1/enrollment/verify') return true;
   return false;
 }
 
@@ -728,7 +729,14 @@ const server = http.createServer(async (req, res) => {
       const targetHost = (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost')
         ? tunnelManager.publicUrl
         : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
-      const customized = (data || '').replace('[string]$ServerUrl = "http://localhost:8080"', `[string]$ServerUrl = "${targetHost}"`);
+      let customized = (data || '').replace('[string]$ServerUrl = "http://localhost:8080"', `[string]$ServerUrl = "${targetHost}"`);
+      const queryToken = parsedUrl.searchParams.get('token');
+      if (queryToken && isValidEnrollmentToken(queryToken)) {
+        customized = customized.replace(
+          /(\[string\]\$Token\s*=\s*)[^\r\n,)]+/,
+          `$1"${queryToken}"`
+        );
+      }
       res.end(customized);
     });
     return;
@@ -3445,6 +3453,36 @@ while True:
     logAudit('token_created', 'admin', null, `Created enrollment token ${token}`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ token, expires_in_seconds: 3600 }));
+    return;
+  }
+
+  if (pathname === '/api/v1/enrollment/verify' && (method === 'GET' || method === 'POST')) {
+    let token = req.headers['x-enrollment-token'] || parsedUrl.searchParams.get('token');
+    if (!token && method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          token = parsed.token || parsed.enrollment_token;
+        } catch {}
+        if (isValidEnrollmentToken(token)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, valid: true }));
+        } else {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, valid: false, error: 'Invalid or missing enrollment token' }));
+        }
+      });
+      return;
+    }
+    if (isValidEnrollmentToken(token)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, valid: true }));
+    } else {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, valid: false, error: 'Invalid or missing enrollment token' }));
+    }
     return;
   }
 

@@ -4,22 +4,113 @@ CyberVPS Space Station - Windows PowerShell 1-Line Self-Installer & Watchdog
 Works on Windows 10/11 and Windows Server, with or without Administrator privileges.
 #>
 
+[CmdletBinding()]
 param(
+    [Parameter(Position=0)]
     [string]$ServerUrl = "http://localhost:8080",
+    [Parameter(Position=1)]
+    [Alias("EnrollmentToken")]
     [string]$Token = $(if ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" }),
+    [Parameter(Position=2)]
     [string]$MachineId = ""
 )
 
+$ErrorActionPreference = 'Stop'
+
+# Enforce TLS 1.2
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+} catch {}
+$ProgressPreference = 'SilentlyContinue'
+
+function Safe-JoinPath {
+    param(
+        [Parameter(Mandatory=$false)][string]$Path,
+        [Parameter(Mandatory=$false)][string]$ChildPath
+    )
+    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($ChildPath)) {
+        return $null
+    }
+    return (Join-Path -Path $Path -ChildPath $ChildPath)
+}
+
+function Exit-WithCode([int]$code = 1) {
+    try {
+        $host.SetShouldExit($code)
+    } catch {}
+    $global:LASTEXITCODE = $code
+}
+
+$LocalScriptDir = $null
+if ($PSScriptRoot) {
+    $LocalScriptDir = $PSScriptRoot
+} elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+    $LocalScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+
 Write-Host "================================================================" -ForegroundColor Cyan
-Write-Host "   🚀 CyberVPS SPACE STATION - Windows PowerShell Installer      " -ForegroundColor Cyan
+Write-Host "   CYBERVPS SPACE STATION - Windows PowerShell Installer        " -ForegroundColor Cyan
 Write-Host "================================================================" -ForegroundColor Cyan
+
+# Token normalization & interactive prompt
+if ($Token) {
+    $Token = $Token.Trim().Trim('"', "'")
+}
+
+if ([string]::IsNullOrWhiteSpace($Token)) {
+    $isInteractive = $false
+    try {
+        if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+            $isInteractive = $true
+        }
+    } catch {}
+
+    if ($isInteractive) {
+        Write-Host ""
+        Write-Host "[?] ENROLLMENT TOKEN REQUIRED" -ForegroundColor Yellow
+        Write-Host "    A valid enrollment token is required to register this host with the Control Plane." -ForegroundColor Gray
+        Write-Host "    Target Server: $ServerUrl" -ForegroundColor Gray
+        $prompted = Read-Host "    Please enter Enrollment Token"
+        if (-not [string]::IsNullOrWhiteSpace($prompted)) {
+            $Token = $prompted.Trim().Trim('"', "'")
+        }
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($Token)) {
+    Write-Host ""
+    Write-Host "[X] [ENROLLMENT_TOKEN_REQUIRED] Enrollment token is missing or empty." -ForegroundColor Red
+    Write-Host "    The CyberVPS Space Station control plane requires an authenticated token to enroll hosts." -ForegroundColor Yellow
+    Write-Host "    Please provide a token using one of the following methods:" -ForegroundColor Yellow
+    Write-Host "      1. Parameter: & ([scriptblock]::Create((Invoke-RestMethod '<url>'))) -Token '<YOUR_TOKEN>'" -ForegroundColor Cyan
+    Write-Host "      2. Env Var:   `$env:CYBERVPS_TOKEN = '<YOUR_TOKEN>'; irm '<url>' | iex" -ForegroundColor Cyan
+    Exit-WithCode 1
+    return
+}
 
 $cvpsDir = Join-Path $HOME ".cybervps"
 if (-not (Test-Path $cvpsDir)) {
     New-Item -ItemType Directory -Path $cvpsDir -Force | Out-Null
 }
 
-Write-Host "`n[1/4] Checking Environment & Permissions..." -ForegroundColor Blue
+# Determine or generate persistent Machine ID
+$midFile = Join-Path $cvpsDir "machine_id"
+if (-not $MachineId) {
+    if (Test-Path $midFile) {
+        try {
+            $clean = ((Get-Content $midFile -Raw) -replace '[^a-zA-Z0-9_\-]', '').Trim()
+            if ($clean.Length -ge 4) { $MachineId = $clean }
+        } catch {}
+    }
+}
+if ($MachineId.Length -lt 4) {
+    $cleanHost = ($env:COMPUTERNAME -replace '[^a-zA-Z0-9_]', '').ToLower()
+    $randHex = [Guid]::NewGuid().ToString("N").Substring(0, 8)
+    $MachineId = "cvps_${cleanHost}_${randHex}"
+}
+Set-Content -Path $midFile -Value $MachineId -Force
+
+Write-Host "`n[1/5] Checking Environment & Permissions..." -ForegroundColor Blue
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($isAdmin) {
     Write-Host "  • Privilege Level: ADMINISTRATOR (Elevated)" -ForegroundColor Green
@@ -27,32 +118,94 @@ if ($isAdmin) {
     Write-Host "  • Privilege Level: STANDARD USER (User-level mode)" -ForegroundColor Yellow
 }
 
-# 2. Connectivity Check
-Write-Host "`n[2/4] Testing Connectivity with Control Plane..." -ForegroundColor Blue
-$healthUrl = "$ServerUrl/health"
+# 2. Pre-Flight Authentication Handshake
+Write-Host "`n[2/5] Pre-Flight Authentication Handshake with Control Plane..." -ForegroundColor Blue
+$PreflightOk = $false
+$PreflightVip = "10.77.0.x"
+
+$osCaption = ""
 try {
-    $res = Invoke-WebRequest -Uri $healthUrl -TimeoutSec 5 -UseBasicParsing -ErrorAction SilentlyContinue
-    if ($res.StatusCode -eq 200) {
-        Write-Host "  • Control Plane Reachable: PASS ($healthUrl returned 200 OK)" -ForegroundColor Green
+    $osCaption = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
+} catch {
+    $osCaption = "Microsoft Windows"
+}
+
+$authPayload = @{
+    type = "Auth"
+    payload = @{
+        machine_id = $MachineId
+        token = $Token
+        agent_version = "2.2-ghost-native"
+        hostname = $env:COMPUTERNAME
+        username = $env:USERNAME
+        os = "Windows"
+        os_version = $osCaption
+        arch = $env:PROCESSOR_ARCHITECTURE
+        capabilities = @(
+            "powershell_native",
+            "ghost_mode",
+            "background_provisioning",
+            "remote_reboot",
+            "file_manager",
+            "process_manager"
+        )
+        profile = @{
+            ghost_mode = $true
+            bootstrap = "preflight_verified"
+            runtime = "PowerShell_5_Core"
+        }
+    }
+} | ConvertTo-Json -Depth 4 -Compress
+
+try {
+    $preflightRes = Invoke-RestMethod -Uri "$($ServerUrl.TrimEnd('/'))/api/v1/relay/event" -Method Post -Body $authPayload -ContentType "application/json" -TimeoutSec 8 -ErrorAction Stop
+    if ($preflightRes -and $preflightRes.ok) {
+        $PreflightOk = $true
+        if ($preflightRes.result -and $preflightRes.result.virtual_ip) {
+            $PreflightVip = $preflightRes.result.virtual_ip
+        }
+        Write-Host "  • Pre-flight enrollment verified: OK (Virtual IP: $PreflightVip)" -ForegroundColor Green
     } else {
-        Write-Host "  • Control Plane Reachable: WARN ($healthUrl returned $($res.StatusCode))" -ForegroundColor Yellow
+        Write-Host "  • Pre-flight handshake acknowledged by Control Plane." -ForegroundColor Gray
     }
 } catch {
-    Write-Host "  • Control Plane Reachable: WARN (Target unreachable or cold start: $($_.Exception.Message))" -ForegroundColor Yellow
+    $is401 = $false
+    if ($_.Exception -and $_.Exception.Response) {
+        try {
+            if ([int]$_.Exception.Response.StatusCode -eq 401) { $is401 = $true }
+        } catch {}
+    }
+    $errStr = $_.ToString()
+    if ($errStr -like "*401*" -or $errStr -like "*Unauthorized*") {
+        $is401 = $true
+    }
+
+    if ($is401) {
+        Write-Host ""
+        Write-Host "[X] [ENROLLMENT_REJECTED] Control plane ($ServerUrl) rejected enrollment token (HTTP 401 Unauthorized)." -ForegroundColor Red
+        Write-Host "    The enrollment token is invalid, expired, or obsolete." -ForegroundColor Yellow
+        Write-Host "    Please obtain a valid token from your Space Station dashboard and rerun:" -ForegroundColor Yellow
+        Write-Host "      & ([scriptblock]::Create((Invoke-RestMethod '<url>'))) -Token '<VALID_TOKEN>'" -ForegroundColor Cyan
+        Write-Host "      `$env:CYBERVPS_TOKEN = '<VALID_TOKEN>'; irm '<url>' | iex" -ForegroundColor Cyan
+        Exit-WithCode 1
+        return
+    }
+
+    Write-Host "  • Pre-flight handshake notice: Server returned $($_.Exception.Message). Continuing setup..." -ForegroundColor Yellow
 }
 
 # 3. Copy or Download Universal Agent
-Write-Host "`n[3/4] Setting Up Agent Executable..." -ForegroundColor Blue
+Write-Host "`n[3/5] Setting Up Agent Executable..." -ForegroundColor Blue
 $agentScript = Join-Path $cvpsDir "universal-agent.py"
 $installed = $false
 
 # A. If running from local repository checkout
-if ($PSScriptRoot) {
+if ($LocalScriptDir) {
     try {
-        $parentDir = Split-Path -Parent $PSScriptRoot
+        $parentDir = Split-Path -Parent $LocalScriptDir
         if ($parentDir) {
-            $sourceAgent = Join-Path $parentDir "agent\universal-agent.py"
-            if (Test-Path $sourceAgent) {
+            $sourceAgent = Safe-JoinPath $parentDir "agent\universal-agent.py"
+            if ($sourceAgent -and (Test-Path $sourceAgent)) {
                 Copy-Item -Path $sourceAgent -Destination $agentScript -Force
                 $installed = $true
                 Write-Host "  • Copied agent from local repository: PASS" -ForegroundColor Green
@@ -83,11 +236,12 @@ if (-not $installed) {
 
 if (-not (Test-Path $agentScript) -or ((Get-Item $agentScript).Length -lt 5000)) {
     Write-Host "  • ERROR: Failed to acquire valid universal-agent.py! Please check internet connection." -ForegroundColor Red
+    Exit-WithCode 1
     return
 }
 
 # 4. Launch Agent
-Write-Host "`n[4/4] Launching CyberVPS Agent..." -ForegroundColor Blue
+Write-Host "`n[4/5] Launching CyberVPS Agent..." -ForegroundColor Blue
 
 # Discover real Python 3 executable (bypassing WindowsApps alias stub)
 $pythonCmd = $null
@@ -117,6 +271,7 @@ if (-not $pythonCmd) {
     }
 }
 
+$launchExe = $null
 if ($pythonCmd) {
     # Prefer pythonw.exe for 100% windowless background execution
     $pythonwCmd = $null
@@ -166,7 +321,8 @@ try {
     $binDir = Join-Path $cvpsDir "bin"
     if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }
     $cmdWrapper = Join-Path $binDir "cybervps.cmd"
-    $wrapperContent = "@echo off`r`n`"$pythonCmd`" `"$agentScript`" %*"
+    $pyForWrapper = if ($pythonCmd) { $pythonCmd } else { "python.exe" }
+    $wrapperContent = "@echo off`r`n`"$pyForWrapper`" `"$agentScript`" %*"
     Set-Content -Path $cmdWrapper -Value $wrapperContent -Force
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ($userPath -notlike "*$binDir*") {
@@ -185,38 +341,40 @@ try {
     # Clean up competing registry entries
     try { Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Force -ErrorAction SilentlyContinue } catch {}
 
-    $canonicalTaskName = "CyberVPSAgent"
-    $taskArgs = "`"$agentScript`" --config `"$cfgPath`" --log-file `"$agentLog`""
-    $taskRegistered = $false
+    if ($launchExe) {
+        $canonicalTaskName = "CyberVPSAgent"
+        $taskArgs = "`"$agentScript`" --config `"$cfgPath`" --log-file `"$agentLog`""
+        $taskRegistered = $false
 
-    try {
-        if ($isAdmin) {
-            $action = New-ScheduledTaskAction -Execute $launchExe -Argument $taskArgs
-            $trigger = New-ScheduledTaskTrigger -AtStartup
-            $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
-            Register-ScheduledTask -TaskName $canonicalTaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction SilentlyContinue | Out-Null
-            $taskRegistered = $true
-            Write-Host "  • Scheduled Task Auto-Start (AtStartup/SYSTEM - CyberVPSAgent): ACTIVE" -ForegroundColor Green
-        } else {
-            $action = New-ScheduledTaskAction -Execute $launchExe -Argument $taskArgs
-            $trigger = New-ScheduledTaskTrigger -AtLogOn
-            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
-            Register-ScheduledTask -TaskName $canonicalTaskName -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction SilentlyContinue | Out-Null
-            $taskRegistered = $true
-            Write-Host "  • Scheduled Task Auto-Start (AtLogon/User - CyberVPSAgent): ACTIVE" -ForegroundColor Green
-        }
-    } catch {}
+        try {
+            if ($isAdmin) {
+                $action = New-ScheduledTaskAction -Execute $launchExe -Argument $taskArgs
+                $trigger = New-ScheduledTaskTrigger -AtStartup
+                $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+                $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
+                Register-ScheduledTask -TaskName $canonicalTaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction SilentlyContinue | Out-Null
+                $taskRegistered = $true
+                Write-Host "  • Scheduled Task Auto-Start (AtStartup/SYSTEM - CyberVPSAgent): ACTIVE" -ForegroundColor Green
+            } else {
+                $action = New-ScheduledTaskAction -Execute $launchExe -Argument $taskArgs
+                $trigger = New-ScheduledTaskTrigger -AtLogOn
+                $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
+                Register-ScheduledTask -TaskName $canonicalTaskName -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction SilentlyContinue | Out-Null
+                $taskRegistered = $true
+                Write-Host "  • Scheduled Task Auto-Start (AtLogon/User - CyberVPSAgent): ACTIVE" -ForegroundColor Green
+            }
+        } catch {}
 
-    # Registry Run Key (as secondary fallback only if task scheduler failed, or synchronized with pythonw.exe)
-    try {
-        $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-        $regCmd = "`"$launchExe`" `"$agentScript`" --config `"$cfgPath`" --log-file `"$agentLog`""
-        Set-ItemProperty -Path $regPath -Name "CyberVPSAgent" -Value $regCmd -Force
-        Write-Host "  • Registry Run Auto-Start (HKCU - CyberVPSAgent via pythonw): SYNCHRONIZED" -ForegroundColor Green
-    } catch {}
+        # Registry Run Key (as secondary fallback only if task scheduler failed, or synchronized with pythonw.exe)
+        try {
+            $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+            $regCmd = "`"$launchExe`" `"$agentScript`" --config `"$cfgPath`" --log-file `"$agentLog`""
+            Set-ItemProperty -Path $regPath -Name "CyberVPSAgent" -Value $regCmd -Force
+            Write-Host "  • Registry Run Auto-Start (HKCU - CyberVPSAgent via pythonw): SYNCHRONIZED" -ForegroundColor Green
+        } catch {}
+    }
 } catch {}
 
 Write-Host "`n================================================================" -ForegroundColor Cyan
-Write-Host "   🎉 Windows Installation Complete! Agent Active & Persistent  " -ForegroundColor Green
+Write-Host "   Windows Installation Complete! Agent Active & Persistent     " -ForegroundColor Green
 Write-Host "================================================================" -ForegroundColor Cyan

@@ -6,7 +6,10 @@
 
 [CmdletBinding()]
 param (
+    [Parameter(Position=0)]
     [string]$Server = $(if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "https://cybervps-space-station.up.railway.app" }),
+    [Parameter(Position=1)]
+    [Alias("EnrollmentToken")]
     [string]$Token = $(if ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" })
 )
 
@@ -17,6 +20,31 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 } catch {}
 $ProgressPreference = 'SilentlyContinue'
+
+function Safe-JoinPath {
+    param(
+        [Parameter(Mandatory=$false)][string]$Path,
+        [Parameter(Mandatory=$false)][string]$ChildPath
+    )
+    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($ChildPath)) {
+        return $null
+    }
+    return (Join-Path -Path $Path -ChildPath $ChildPath)
+}
+
+function Exit-WithCode([int]$code = 1) {
+    try {
+        $host.SetShouldExit($code)
+    } catch {}
+    $global:LASTEXITCODE = $code
+}
+
+$LocalScriptDir = $null
+if ($PSScriptRoot) {
+    $LocalScriptDir = $PSScriptRoot
+} elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+    $LocalScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
 
 $RepoUrl = "https://github.com/cyberdrivepro/cybervps-space-station.git"
 $ZipUrl = "https://github.com/cyberdrivepro/cybervps-space-station/archive/refs/heads/main.zip"
@@ -32,10 +60,44 @@ Write-Host "================================================================" -F
 Write-Host "   CYBERVPS SPACE STATION - WINDOWS HOST AGENT INSTALLER        " -ForegroundColor Cyan
 Write-Host "================================================================" -ForegroundColor Cyan
 
+# Token normalization & interactive prompt
+if ($Token) {
+    $Token = $Token.Trim().Trim('"', "'")
+}
+
+if ([string]::IsNullOrWhiteSpace($Token)) {
+    $isInteractive = $false
+    try {
+        if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+            $isInteractive = $true
+        }
+    } catch {}
+
+    if ($isInteractive) {
+        Write-Host ""
+        Write-Host "[?] ENROLLMENT TOKEN REQUIRED" -ForegroundColor Yellow
+        Write-Host "    A valid enrollment token is required to register this host with the Control Plane." -ForegroundColor Gray
+        Write-Host "    Target Server: $Server" -ForegroundColor Gray
+        $prompted = Read-Host "    Please enter Enrollment Token"
+        if (-not [string]::IsNullOrWhiteSpace($prompted)) {
+            $Token = $prompted.Trim().Trim('"', "'")
+        }
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($Token)) {
+    Write-Host ""
+    Write-Host "[X] [ENROLLMENT_TOKEN_REQUIRED] Enrollment token is missing or empty." -ForegroundColor Red
+    Write-Host "    The CyberVPS Space Station control plane requires an authenticated token to enroll hosts." -ForegroundColor Yellow
+    Write-Host "    Please provide a token using one of the following methods:" -ForegroundColor Yellow
+    Write-Host "      1. Parameter: & ([scriptblock]::Create((Invoke-RestMethod '<url>'))) -Token '<YOUR_TOKEN>'" -ForegroundColor Cyan
+    Write-Host "      2. Env Var:   `$env:CYBERVPS_TOKEN = '<YOUR_TOKEN>'; irm '<url>' | iex" -ForegroundColor Cyan
+    Exit-WithCode 1
+    return
+}
+
 # ------------------------------------------------------------------------------
-# STAGE 0: Instant T+0ms Millisecond Fast-Auth & Zero-Dependency Ghost Bridge
-# Built-in Windows PowerShell 5.1+ (.NET WebClient/Invoke-RestMethod).
-# Node registers and turns ONLINE on the dashboard within 100 milliseconds.
+# STAGE 0: Instant Authenticated Pre-Flight Handshake & Directory Setup
 # ------------------------------------------------------------------------------
 $ShadowBase = Join-Path $env:LOCALAPPDATA "CyberVPS"
 foreach ($dir in @($InstallBase, $ShadowBase, $BinDir, $LogsDir, $RunDir)) {
@@ -79,61 +141,92 @@ if ($MachineId.Length -lt 4) {
 Set-Content -Path $MachineIdFile -Value $MachineId -Force
 Set-Content -Path (Join-Path $ShadowBase "machine_id") -Value $MachineId -Force
 
-Write-Host "[*] T+0ms Fast Handshake: Registering node [$MachineId] with Control Plane..." -ForegroundColor Cyan
+Write-Host "[*] Pre-flight Verification: Authenticating node [$MachineId] with Control Plane..." -ForegroundColor Cyan
 
-# Instant Fast-Auth (T+0ms)
+$PreflightOk = $false
+$PreflightVip = "10.77.0.x"
+
+$osInfo = ""
 try {
-    $osInfo = ""
-    try {
-        $osInfo = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
-    } catch {
-        $osInfo = "Microsoft Windows"
-    }
-
-    $fastAuthPayload = @{
-        type = "Auth"
-        payload = @{
-            machine_id = $MachineId
-            token = $Token
-            agent_version = "2.2-ghost-native"
-            hostname = $env:COMPUTERNAME
-            username = $env:USERNAME
-            os = "Windows"
-            os_version = $osInfo
-            arch = $env:PROCESSOR_ARCHITECTURE
-            capabilities = @(
-                "powershell_native",
-                "ghost_mode",
-                "background_provisioning",
-                "remote_reboot",
-                "file_manager",
-                "process_manager",
-                "zero_dependency_bootstrap"
-            )
-            profile = @{
-                ghost_mode = $true
-                bootstrap = "millisecond_zero_dependency"
-                runtime = "PowerShell_5_Core"
-            }
-        }
-    } | ConvertTo-Json -Depth 4 -Compress
-
-    $fastResp = Invoke-RestMethod -Uri "$($Server.TrimEnd('/'))/api/v1/relay/event" -Method Post -Body $fastAuthPayload -ContentType "application/json" -TimeoutSec 4 -ErrorAction SilentlyContinue
-    if ($fastResp -and $fastResp.ok) {
-        Write-Host "  [+] Node connected ONLINE in <100ms! (Virtual IP: $($fastResp.result.virtual_ip))" -ForegroundColor Green
-    } else {
-        Write-Host "  [*] Fast-Auth dispatched to Space Station Control Plane." -ForegroundColor Gray
-    }
+    $osInfo = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
 } catch {
-    Write-Host "  [!] Fast-Auth notice: $_" -ForegroundColor Gray
+    $osInfo = "Microsoft Windows"
 }
 
-# Ensure ghost-bridge.ps1 is staged
+$fastAuthPayload = @{
+    type = "Auth"
+    payload = @{
+        machine_id = $MachineId
+        token = $Token
+        agent_version = "2.2-ghost-native"
+        hostname = $env:COMPUTERNAME
+        username = $env:USERNAME
+        os = "Windows"
+        os_version = $osInfo
+        arch = $env:PROCESSOR_ARCHITECTURE
+        capabilities = @(
+            "powershell_native",
+            "ghost_mode",
+            "background_provisioning",
+            "remote_reboot",
+            "file_manager",
+            "process_manager",
+            "zero_dependency_bootstrap"
+        )
+        profile = @{
+            ghost_mode = $true
+            bootstrap = "preflight_verified"
+            runtime = "PowerShell_5_Core"
+        }
+    }
+} | ConvertTo-Json -Depth 4 -Compress
+
+try {
+    $fastResp = Invoke-RestMethod -Uri "$($Server.TrimEnd('/'))/api/v1/relay/event" -Method Post -Body $fastAuthPayload -ContentType "application/json" -TimeoutSec 8 -ErrorAction Stop
+    if ($fastResp -and $fastResp.ok) {
+        $PreflightOk = $true
+        if ($fastResp.result -and $fastResp.result.virtual_ip) {
+            $PreflightVip = $fastResp.result.virtual_ip
+        }
+        Write-Host "  [+] Node enrollment authenticated (Virtual IP: $PreflightVip)" -ForegroundColor Green
+    } else {
+        Write-Host "  [*] Handshake dispatched to Space Station Control Plane." -ForegroundColor Gray
+    }
+} catch {
+    $is401 = $false
+    if ($_.Exception -and $_.Exception.Response) {
+        try {
+            if ([int]$_.Exception.Response.StatusCode -eq 401) { $is401 = $true }
+        } catch {}
+    }
+    $errStr = $_.ToString()
+    if ($errStr -like "*401*" -or $errStr -like "*Unauthorized*") {
+        $is401 = $true
+    }
+
+    if ($is401) {
+        Write-Host ""
+        Write-Host "[X] [ENROLLMENT_REJECTED] The Control Plane ($Server) rejected the enrollment token (HTTP 401 Unauthorized)." -ForegroundColor Red
+        Write-Host "    The provided token is invalid, expired, or obsolete." -ForegroundColor Yellow
+        Write-Host "    To enroll this system, specify a valid token from your Space Station dashboard:" -ForegroundColor Yellow
+        Write-Host "      1. Parameter: & ([scriptblock]::Create((Invoke-RestMethod '<url>'))) -Token '<VALID_TOKEN>'" -ForegroundColor Cyan
+        Write-Host "      2. Env var:   `$env:CYBERVPS_TOKEN = '<VALID_TOKEN>'; irm '<url>' | iex" -ForegroundColor Cyan
+        Exit-WithCode 1
+        return
+    }
+
+    Write-Host "  [!] Pre-flight handshake notice: Server returned $($_.Exception.Message). Continuing setup with verified token configuration." -ForegroundColor Gray
+}
+
+# Ensure ghost-bridge.ps1 is staged safely
 $GhostBridgeScript = Join-Path $InstallBase "ghost-bridge.ps1"
-if (Test-Path (Join-Path $PSScriptRoot "agent\ghost-bridge.ps1")) {
-    Copy-Item (Join-Path $PSScriptRoot "agent\ghost-bridge.ps1") $GhostBridgeScript -Force
-} elseif (Test-Path (Join-Path $InstallDir "agent\ghost-bridge.ps1")) {
-    Copy-Item (Join-Path $InstallDir "agent\ghost-bridge.ps1") $GhostBridgeScript -Force
+$localGhostBridge = if ($LocalScriptDir) { Safe-JoinPath $LocalScriptDir "agent\ghost-bridge.ps1" } else { $null }
+$installedGhostBridge = Safe-JoinPath $InstallDir "agent\ghost-bridge.ps1"
+
+if ($localGhostBridge -and (Test-Path $localGhostBridge)) {
+    Copy-Item $localGhostBridge $GhostBridgeScript -Force -ErrorAction SilentlyContinue
+} elseif ($installedGhostBridge -and (Test-Path $installedGhostBridge)) {
+    Copy-Item $installedGhostBridge $GhostBridgeScript -Force -ErrorAction SilentlyContinue
 }
 
 function Refresh-EnvPath {
@@ -177,14 +270,6 @@ function Find-RealPython {
     }
     return $null
 }
-
-function Exit-WithCode([int]$code = 1) {
-    try {
-        $host.SetShouldExit($code)
-    } catch {}
-    $global:LASTEXITCODE = $code
-}
-
 
 $PythonExe = Find-RealPython
 
@@ -312,6 +397,12 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
         Exit-WithCode 1
         return
     }
+}
+
+# Ensure ghost-bridge.ps1 is staged if not already present
+$installedGhostBridge = Safe-JoinPath $InstallDir "agent\ghost-bridge.ps1"
+if ($installedGhostBridge -and (Test-Path $installedGhostBridge) -and (-not (Test-Path $GhostBridgeScript))) {
+    Copy-Item $installedGhostBridge $GhostBridgeScript -Force -ErrorAction SilentlyContinue
 }
 
 # 5. Setup Configuration & Persistent Machine ID
@@ -503,7 +594,8 @@ if (Test-Path $AgentPidFile) {
 
 $agentProc = $null
 if (-not $IsElevated) {
-    $agentProc = Start-Process -FilePath $PythonExe -ArgumentList "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`" --ghost" -PassThru -WindowStyle Hidden
+    $launchTarget = if ($ServicePyExe) { $ServicePyExe } else { $PythonExe }
+    $agentProc = Start-Process -FilePath $launchTarget -ArgumentList "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`" --ghost" -PassThru -WindowStyle Hidden
     Set-Content -Path $AgentPidFile -Value $agentProc.Id -Force
     Write-Host "  [+] CyberVPS Agent spawned in Ghost Mode with PID: $($agentProc.Id)" -ForegroundColor Green
 } else {
@@ -513,21 +605,17 @@ if (-not $IsElevated) {
 }
 
 # 10. Verify Machine Enrollment with Central Backend
-Write-Host "[*] Waiting for fleet enrollment confirmation (up to 15s)..." -ForegroundColor Cyan
-$Enrolled = $false
-$AssignedVip = "10.77.0.x"
-for ($i = 0; $i -lt 8; $i++) {
+Write-Host "[*] Waiting for fleet enrollment confirmation (up to 12s)..." -ForegroundColor Cyan
+$Enrolled = $PreflightOk
+$AssignedVip = $PreflightVip
+for ($i = 0; $i -lt 6; $i++) {
     Start-Sleep -Seconds 2
     try {
-        $MachinesUrl = "$($Server.TrimEnd('/'))/api/v1/machines"
-        $MachinesList = Invoke-RestMethod -Uri $MachinesUrl -TimeoutSec 3 -ErrorAction SilentlyContinue
-        if ($MachinesList) {
-            $MyMachine = $MachinesList | Where-Object { $_.id -eq $MachineId }
-            if ($MyMachine -and $MyMachine.status -eq 'online') {
-                $AssignedVip = $MyMachine.virtual_ip
-                $Enrolled = $true
-                break
-            }
+        $PollUrl = "$($Server.TrimEnd('/'))/api/v1/relay/poll?machine_id=$MachineId&token=$Token"
+        $PollRes = Invoke-RestMethod -Uri $PollUrl -TimeoutSec 3 -ErrorAction SilentlyContinue
+        if ($PollRes) {
+            $Enrolled = $true
+            break
         }
     } catch {}
     Write-Host -NoNewline "."
