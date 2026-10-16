@@ -966,7 +966,7 @@
 
     <div class="content-body">
       <!-- Global Connection Notice when backend offline -->
-      <div id="connection-banner" class="connection-banner warning">
+      <div id="connection-banner" class="connection-banner warning" style="display:none;">
         <div>
           <strong>Control Plane Backend Offline</strong>
           <div style="font-size:0.75rem; margin-top:2px;">Unable to reach control plane API. Displaying truthful empty states. Run <code style="color:var(--text-primary);">cybervps start</code> or configure your server in Settings.</div>
@@ -3164,7 +3164,7 @@
 
       try {
         const start = performance.now();
-        const res = await fetch(url, { ...options, headers, credentials: 'include', signal: controller.signal });
+        const res = await fetch(url, { ...options, headers, signal: controller.signal });
         clearTimeout(timeoutId);
         const duration = Math.round(performance.now() - start);
 
@@ -3194,7 +3194,7 @@
 
     // 4. CORE DATA SYNCHRONIZATION
     async function syncData(manual = false) {
-      const healthCheck = await apiRequest('/health', { timeout: 3000 });
+      const healthCheck = await apiRequest('/health', { timeout: 8000 });
 
       const statusDot = document.getElementById('status-dot');
       const statusLabel = document.getElementById('status-label');

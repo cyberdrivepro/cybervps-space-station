@@ -484,6 +484,8 @@ function requireAdminAuth(req, res) {
 function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/system/info') return true;
   if (pathname === '/api/v1/config') return true;
+  if (pathname === '/api/v1/telemetry/stream') return true;
+  if (pathname === '/api/v1/audit') return true;
   if (pathname.startsWith('/api/v1/relay/')) return true;
   if (pathname.startsWith('/api/v1/access/')) return true;
   if (pathname === '/api/v1/terminal/token') return true;
@@ -502,9 +504,15 @@ const server = http.createServer(async (req, res) => {
   const method = req.method;
 
   // CORS Headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const reqOrigin = req.headers['origin'];
+  if (reqOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', reqOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Machine-ID, X-Enrollment-Token, X-CVPS-Pairing-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Machine-ID, X-Enrollment-Token, X-CVPS-Pairing-Key, X-Session-Token, X-Admin-Token, X-Pairing-Key, X-Simulate-Public');
 
   if (method === 'OPTIONS') {
     res.writeHead(204);
@@ -839,6 +847,13 @@ const server = http.createServer(async (req, res) => {
         wireguard_mesh: true
       }
     }));
+    return;
+  }
+
+  // 2C. AUDIT LOG ENDPOINT
+  if (pathname === '/api/v1/audit' && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(db.auditLogs.slice(0, 100)));
     return;
   }
 
