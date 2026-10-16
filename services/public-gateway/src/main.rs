@@ -2,7 +2,7 @@ use axum::{
     body::Body,
     extract::{Path, Request, State},
     http::{header, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::any,
     Router,
 };
@@ -10,7 +10,7 @@ use cybervps_configuration::ControlPlaneConfig;
 use cybervps_observability::init_tracing;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::info;
 
 pub struct GatewayState {
     pub base_domain: String,
@@ -45,17 +45,17 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn proxy_tunnel_root(
+    State(_state): State<Arc<GatewayState>>,
     Path(tunnel_id): Path<String>,
     req: Request<Body>,
-    State(_state): State<Arc<GatewayState>>,
 ) -> Response {
     handle_proxy_stream(&tunnel_id, "", req).await
 }
 
 async fn proxy_tunnel_path(
+    State(_state): State<Arc<GatewayState>>,
     Path((tunnel_id, path)): Path<(String, String)>,
     req: Request<Body>,
-    State(_state): State<Arc<GatewayState>>,
 ) -> Response {
     handle_proxy_stream(&tunnel_id, &path, req).await
 }

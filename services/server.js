@@ -740,6 +740,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 2B. SAFE CONFIGURATION ENDPOINT
+  if (pathname === '/api/v1/config' && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      version: '2.2.0',
+      base_domain: BASE_DOMAIN,
+      ha_backends_count: db.backends.size,
+      ghost_mode_supported: true,
+      auth_required: true,
+      features: {
+        port_bridge: true,
+        terminal: true,
+        file_manager: true,
+        desktop_rdp: true,
+        wireguard_mesh: true
+      }
+    }));
+    return;
+  }
+
   // 3. MACHINES & PORTS API
   if (pathname === '/api/v1/machines' && method === 'GET') {
     const list = Array.from(db.machines.values()).map(m => {

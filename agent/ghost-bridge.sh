@@ -165,7 +165,12 @@ while true; do
   LOOP=$((LOOP + 1))
   if [ $((LOOP % 3)) -eq 0 ]; then
     TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)
-    TELEM="{\"type\":\"Heartbeat\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"cpu_percent\":5.0,\"memory_used_mb\":120,\"memory_total_mb\":4096,\"ghost_mode\":true,\"timestamp\":\"${TS}\"}}"
+    MEM_TOTAL_KB=$(awk '/MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 4194304)
+    MEM_AVAIL_KB=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 2097152)
+    MEM_TOTAL_MB=$((MEM_TOTAL_KB / 1024))
+    MEM_USED_MB=$(((MEM_TOTAL_KB - MEM_AVAIL_KB) / 1024))
+    CPU_LOAD=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo 0.5)
+    TELEM="{\"type\":\"Heartbeat\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"cpu_percent\":${CPU_LOAD},\"memory_used_mb\":${MEM_USED_MB},\"memory_total_mb\":${MEM_TOTAL_MB},\"ghost_mode\":true,\"timestamp\":\"${TS}\"}}"
     http_post_json "${CLEAN_SERVER}/api/v1/relay/event" "${TELEM}" >/dev/null 2>&1 || true
   fi
 

@@ -250,14 +250,30 @@ while ($true) {
         # Heartbeat telemetry every 6 seconds (every 3rd loop)
         $loopCounter++
         if ($loopCounter % 3 -eq 0) {
+            $totMb = 8192
+            $usedMb = 512
+            $cpuPct = 2.0
+            try {
+                $osInfo = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+                if ($osInfo) {
+                    $totMb = [Math]::Round($osInfo.TotalVisibleMemorySize / 1024)
+                    $freeMb = [Math]::Round($osInfo.FreePhysicalMemory / 1024)
+                    $usedMb = [Math]::Max(1, $totMb - $freeMb)
+                }
+                $procInfo = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Measure-Object -Property LoadPercentage -Average
+                if ($procInfo -and $procInfo.Average -ne $null) {
+                    $cpuPct = [double]$procInfo.Average
+                }
+            } catch {}
+
             $telemetry = @{
                 type = "Heartbeat"
                 payload = @{
                     machine_id = $MachineId
                     token = $Token
-                    cpu_percent = 5.0
-                    memory_used_mb = 250
-                    memory_total_mb = 8192
+                    cpu_percent = $cpuPct
+                    memory_used_mb = $usedMb
+                    memory_total_mb = $totMb
                     ghost_mode = $true
                     timestamp = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
                 }
