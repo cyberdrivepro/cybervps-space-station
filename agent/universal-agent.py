@@ -3458,7 +3458,7 @@ class CyberVPSAgent:
         running_count = 0
         total_count = len(base_apps)
         enriched_apps = []
-
+        matched_keys = set()
         for app in base_apps:
             a_copy = dict(app)
             exe_n = (a_copy.get("exe_name") or "").lower()
@@ -3484,12 +3484,89 @@ class CyberVPSAgent:
                 a_copy["instance_count"] = len(unique_instances)
                 a_copy["instances"] = unique_instances
                 running_count += 1
+                if exe_n: matched_keys.add(exe_n)
+                matched_keys.add(f"{aid}.exe")
+                matched_keys.add(aid)
             else:
                 a_copy["status"] = "stopped"
                 a_copy["instance_count"] = 0
                 a_copy["instances"] = []
 
             enriched_apps.append(a_copy)
+
+        # Dynamic running processes enrichment (Brave, PowerShell, RustDesk, AnyDesk, Python, Copilot, etc.)
+        for proc_key, instances in (procs_by_name or {}).items():
+            if not proc_key or proc_key in matched_keys:
+                continue
+
+            first_inst = instances[0] if instances else {}
+            raw_name = first_inst.get("name") or proc_key
+            clean_name = raw_name
+            if clean_name.lower().endswith(".exe"):
+                clean_name = clean_name[:-4]
+            display_name = clean_name.replace("_", " ").replace("-", " ").title()
+
+            # Filter out low-level kernel and internal Windows/Linux daemons
+            ignored_procs = {
+                "system", "registry", "smss.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe",
+                "fontdrvhost.exe", "svchost.exe", "winlogon.exe", "dwm.exe", "sihost.exe", "taskhostw.exe",
+                "conhost.exe", "runtimebroker.exe", "searchindexer.exe", "spoolsv.exe", "wlanext.exe",
+                "kthreadd", "kworker", "systemd", "systemd-journald", "systemd-udevd", "cron", "dbus-daemon"
+            }
+            if proc_key.lower() in ignored_procs or clean_name.lower() in ignored_procs:
+                continue
+
+            app_id = clean_name.lower().replace(" ", "_")
+            if any(a.get("id") == app_id for a in enriched_apps):
+                continue
+
+            seen_pids = set()
+            unique_instances = []
+            for inst in instances:
+                if inst["pid"] not in seen_pids:
+                    seen_pids.add(inst["pid"])
+                    unique_instances.append(inst)
+
+            if not unique_instances:
+                continue
+
+            # Categorize based on known signatures
+            lower_name = clean_name.lower()
+            category = "Utilities"
+            publisher = "Desktop Application"
+            if any(k in lower_name for k in ["brave", "chrome", "firefox", "edge", "opera", "browser"]):
+                category = "Internet"
+                publisher = "Web Browser"
+            elif any(k in lower_name for k in ["code", "studio", "python", "node", "powershell", "bash", "cmd", "git", "terminal", "antigravity"]):
+                category = "Development"
+                publisher = "Development Tool"
+            elif any(k in lower_name for k in ["desk", "vnc", "mstsc", "rdp", "remote", "anydesk", "teamviewer"]):
+                category = "Network"
+                publisher = "Remote Management"
+            elif any(k in lower_name for k in ["sound", "audio", "music", "video", "media", "vlc", "spotify", "fxsound"]):
+                category = "Media"
+                publisher = "Media & Audio"
+            elif any(k in lower_name for k in ["office", "word", "excel", "notes", "writer", "copilot"]):
+                category = "Productivity"
+                publisher = "Productivity"
+
+            enriched_apps.append({
+                "id": app_id,
+                "name": raw_name if (len(raw_name) > 3 and not raw_name.islower()) else display_name,
+                "publisher": publisher,
+                "version": "Running",
+                "category": category,
+                "cmd": raw_name,
+                "exe_name": raw_name,
+                "source": "Running Host Process",
+                "icon": self._get_app_icon(app_id, display_name),
+                "can_control": True,
+                "status": "running",
+                "instance_count": len(unique_instances),
+                "instances": unique_instances
+            })
+            running_count += 1
+            total_count += 1
 
         return {
             "machine_id": self.machine_id,
@@ -3850,6 +3927,17 @@ class CyberVPSAgent:
                     if int(target_pid) > 0: target_pids.add(int(target_pid))
                 except Exception: pass
 
+        # Expand target_pids with child processes (for multi-process apps like Chrome, Brave, Explorer, Electron)
+        expanded_pids = set(target_pids)
+        if target_pids and psutil:
+            for p in list(target_pids):
+                try:
+                    proc = psutil.Process(p)
+                    for child in proc.children(recursive=True):
+                        expanded_pids.add(child.pid)
+                except Exception:
+                    pass
+
         sys_os = platform.system()
         if sys_os == "Windows":
             try:
@@ -3875,7 +3963,7 @@ class CyberVPSAgent:
                         if user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
                             w_pid = wintypes.DWORD()
                             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
-                            if not target_pids or w_pid.value in target_pids:
+                            if not expanded_pids or w_pid.value in expanded_pids:
                                 length = user32.GetWindowTextLengthW(hwnd)
                                 title = ""
                                 if length > 0:
@@ -3920,6 +4008,73 @@ class CyberVPSAgent:
                 else:
                     user32.EnumWindows(DESKENUM(cb), 0)
 
+                # Fallback: if no windows found for target_pid, check other processes with same name (e.g. explorer.exe)
+                if not windows and target_pids and psutil:
+                    target_proc_names = set()
+                    for p in target_pids:
+                        try:
+                            target_proc_names.add(psutil.Process(p).name().lower())
+                        except Exception:
+                            pass
+                    if target_proc_names:
+                        same_name_pids = set()
+                        for pr in psutil.process_iter(['pid', 'name']):
+                            try:
+                                if pr.info['name'] and pr.info['name'].lower() in target_proc_names:
+                                    same_name_pids.add(pr.info['pid'])
+                            except Exception:
+                                pass
+                        extra_pids = same_name_pids - expanded_pids
+                        if extra_pids:
+                            def cb_extra(hwnd, lp):
+                                try:
+                                    if user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
+                                        w_pid = wintypes.DWORD()
+                                        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
+                                        if w_pid.value in extra_pids:
+                                            length = user32.GetWindowTextLengthW(hwnd)
+                                            title = ""
+                                            if length > 0:
+                                                buf = ctypes.create_unicode_buffer(length + 1)
+                                                user32.GetWindowTextW(hwnd, buf, length + 1)
+                                                title = buf.value.strip()
+
+                                            cls_buf = ctypes.create_unicode_buffer(256)
+                                            user32.GetClassNameW(hwnd, cls_buf, 256)
+                                            cls_name = cls_buf.value
+                                            ignored_classes = [
+                                                "MSCTFIME UI", "IME", "Default IME",
+                                                "Internet Explorer_Hidden", "WorkerW"
+                                            ]
+                                            if cls_name in ignored_classes and not title:
+                                                return True
+
+                                            r = RECT()
+                                            user32.GetWindowRect(hwnd, ctypes.byref(r))
+                                            w = max(0, r.right - r.left)
+                                            h = max(0, r.bottom - r.top)
+                                            is_min = bool(user32.IsIconic(hwnd))
+
+                                            if (w > 20 and h > 20) or is_min or title:
+                                                windows.append({
+                                                    "hwnd": int(hwnd),
+                                                    "pid": int(w_pid.value),
+                                                    "title": title or f"Window (PID {w_pid.value})",
+                                                    "class_name": cls_name,
+                                                    "width": w,
+                                                    "height": h,
+                                                    "is_minimized": is_min,
+                                                    "is_visible": True
+                                                })
+                                except Exception:
+                                    pass
+                                return True
+
+                            if hDesk:
+                                user32.EnumDesktopWindows(hDesk, DESKENUM(cb_extra), 0)
+                            else:
+                                user32.EnumWindows(DESKENUM(cb_extra), 0)
+
                 if hDesk:
                     try: user32.CloseDesktop(hDesk)
                     except Exception: pass
@@ -3941,7 +4096,7 @@ class CyberVPSAgent:
                         wid_hex, desk_num, p_str, host, w_title = parts[0], parts[1], parts[2], parts[3], parts[4]
                         try:
                             w_pid_val = int(p_str)
-                            if not target_pids or w_pid_val in target_pids:
+                            if not expanded_pids or w_pid_val in expanded_pids:
                                 wid_int = int(wid_hex, 16)
                                 windows.append({
                                     "hwnd": wid_int,
@@ -3961,7 +4116,7 @@ class CyberVPSAgent:
 
             if not windows and not is_wayland:
                 try:
-                    for p in (target_pids or []):
+                    for p in (expanded_pids or target_pids or []):
                         wids = subprocess.check_output(["xdotool", "search", "--pid", str(p)], stderr=subprocess.DEVNULL, timeout=2).decode().split()
                         for wid in wids:
                             try:

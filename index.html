@@ -2857,14 +2857,17 @@
 
         <!-- Honest Non-GUI / Error State -->
         <div id="app-stream-error" style="display:none; text-align:center; padding:2.5rem 1.5rem; max-width:540px; margin:auto;">
-          <div style="width:52px; height:52px; border-radius:50%; background:rgba(234,179,8,0.12); border:1px solid rgba(234,179,8,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 1rem; color:#eab308; font-size:1.6rem;">
+          <div id="app-stream-error-icon" style="width:52px; height:52px; border-radius:50%; background:rgba(234,179,8,0.12); border:1px solid rgba(234,179,8,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 1rem; color:#eab308; font-size:1.6rem;">
             ⚠️
+          </div>
+          <div id="app-stream-error-badge" style="display:inline-block; margin-bottom:0.6rem;">
+            <span class="badge badge-warning" style="font-family:var(--font-mono); font-size:0.68rem; padding:0.2rem 0.5rem;">STREAM_DIAGNOSTIC</span>
           </div>
           <h3 id="app-stream-error-title" style="color:var(--text-primary); font-size:1.1rem; margin-bottom:0.5rem;">No Capturable Window</h3>
           <p id="app-stream-error-desc" style="color:var(--text-secondary); font-size:0.85rem; line-height:1.5; margin-bottom:1.5rem;">
             This process is running without an interactive graphical window (e.g. background service, daemon, or console worker).
           </p>
-          <div style="display:flex; align-items:center; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
+          <div id="app-stream-error-actions" style="display:flex; align-items:center; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
             <button class="btn btn-secondary" onclick="openTerminalFromStream()">💻 Open Terminal</button>
             <button class="btn btn-secondary" onclick="openDetailsFromStream()">🔍 Inspect Process</button>
             <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
@@ -6781,6 +6784,7 @@
               <span class="badge ${isRunning ? 'badge-success' : 'badge-subtle'}">${escapeHtml(p.status || 'Running')}</span>
             </td>
             <td style="text-align:right; white-space:nowrap;">
+              <button class="btn btn-primary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-right:3px; background:rgba(6,182,212,0.15); border-color:var(--accent-cyan); color:var(--accent-cyan);" onclick="openAppLiveViewer('${safeName}', '${safeName}', [${p.pid}])" title="Stream Live HD Window in Background (Zero Popups)">📺 View</button>
               <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem;" onclick="inspectProcessDetails(${p.pid})" title="View Details">🔍</button>
               <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="openKillProcessModal(${p.pid}, '${safeName}', '${safeUser}', false)" title="Graceful Terminate">🛑 End</button>
               <button class="btn btn-danger" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="openKillProcessModal(${p.pid}, '${safeName}', '${safeUser}', true)" title="Force Kill">⚡ Kill</button>
@@ -7415,9 +7419,8 @@
       if (!machineId) return showToast('No target machine selected', 'error');
 
       showToast(`Starting ${appId} into interactive visible desktop...`, 'info');
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/apps/action`, {
+        const res = await apiRequest('/api/v1/apps/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -7426,8 +7429,8 @@
             action: 'start'
           })
         });
-        const result = await res.json();
-        if (!res.ok || result.error) throw new Error(result.error || `Failed to start ${appId}`);
+        const result = (res && res.data) ? res.data : res;
+        if (!res.ok || result?.error) throw new Error(result?.error || res?.error || `Failed to start ${appId}`);
         showToast(`🚀 Successfully launched ${appId} on interactive desktop!`, 'success');
         await syncAppsInventory(true);
       } catch (err) {
@@ -7440,9 +7443,8 @@
       if (!machineId) return showToast('No target machine selected', 'error');
 
       showToast(`Sending graceful close (WM_CLOSE) to ${appId}...`, 'info');
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/apps/action`, {
+        const res = await apiRequest('/api/v1/apps/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -7452,8 +7454,8 @@
             pid
           })
         });
-        const result = await res.json();
-        if (!res.ok || result.error) throw new Error(result.error || `Failed to close ${appId}`);
+        const result = (res && res.data) ? res.data : res;
+        if (!res.ok || result?.error) throw new Error(result?.error || res?.error || `Failed to close ${appId}`);
         showToast(`Closed ${appId} cleanly.`, 'success');
         await syncAppsInventory(true);
       } catch (err) {
@@ -7481,9 +7483,8 @@
       closeAppKillModal();
 
       showToast(`Force terminating ${appId}...`, 'warning');
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/apps/action`, {
+        const res = await apiRequest('/api/v1/apps/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -7494,8 +7495,8 @@
             force: true
           })
         });
-        const result = await res.json();
-        if (!res.ok || result.error) throw new Error(result.error || `Failed to kill ${appId}`);
+        const result = (res && res.data) ? res.data : res;
+        if (!res.ok || result?.error) throw new Error(result?.error || res?.error || `Failed to kill ${appId}`);
         showToast(`Force terminated process for ${appId}`, 'success');
         await syncAppsInventory(true);
       } catch (err) {
@@ -7660,8 +7661,9 @@
       try {
         const query = pid ? `?machine_id=${encodeURIComponent(machineId)}&pid=${encodeURIComponent(pid)}` : `?machine_id=${encodeURIComponent(machineId)}`;
         const res = await apiRequest(`/api/v1/apps/windows${query}`);
-        if (res && res.windows && Array.isArray(res.windows) && res.windows.length > 0) {
-          res.windows.forEach(w => {
+        const windows = (res && res.data && res.data.windows) || (res && res.windows);
+        if (windows && Array.isArray(windows) && windows.length > 0) {
+          windows.forEach(w => {
             const opt = document.createElement('option');
             opt.value = w.hwnd;
             const title = (w.title || 'Untitled Window').slice(0, 32);
@@ -7683,24 +7685,61 @@
         clearInterval(appStreamState.pingTimer);
         appStreamState.pingTimer = null;
       }
+      if (appStreamState.firstFrameTimeout) {
+        clearTimeout(appStreamState.firstFrameTimeout);
+        appStreamState.firstFrameTimeout = null;
+      }
+      appStreamState.firstFrameReceived = false;
 
       try {
+        const pairingKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || '';
+
         // Request single-use 60s stream token
         const tokenRes = await apiRequest('/api/v1/apps/stream/token', {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             machine_id: appStreamState.machineId,
             pid: appStreamState.pid,
             hwnd: appStreamState.hwnd,
-            app_id: appStreamState.appId
+            app_id: appStreamState.appId,
+            pairing_key: pairingKey
           })
         });
 
-        if (!tokenRes || !tokenRes.token) {
-          throw new Error(tokenRes?.error || 'Failed to authorize live app stream session.');
+        const tokenPayload = (tokenRes && tokenRes.data) ? tokenRes.data : tokenRes;
+        if (!tokenRes || !tokenRes.ok || !tokenPayload || !tokenPayload.token) {
+          const errDetail = tokenPayload?.error || tokenRes?.error || 'Failed to authorize live app stream session.';
+          const errLower = errDetail.toLowerCase();
+          if (errLower.includes('unauthorized') || errLower.includes('pairing key') || tokenPayload?.code === 'AUTHENTICATION_REQUIRED') {
+            showAppStreamError(
+              'AUTHENTICATION_REQUIRED',
+              'Authentication Required',
+              'A valid Pairing Key or Admin Session is required to stream live application windows over public networks. Please configure your key in Settings.'
+            );
+            return;
+          }
+          if (errLower.includes('offline')) {
+            showAppStreamError(
+              'HOST_OFFLINE',
+              'Target Host Offline',
+              `The remote host '${appStreamState.machineId}' is offline or disconnected from the control plane.`
+            );
+            return;
+          }
+          if (errLower.includes('not found')) {
+            showAppStreamError(
+              'HOST_OFFLINE',
+              'Host Not Enrolled',
+              `Target machine '${appStreamState.machineId}' was not found in active fleet inventory.`
+            );
+            return;
+          }
+          showAppStreamError('STREAM_INITIALIZATION_FAILED', 'Stream Authorization Failed', errDetail);
+          return;
         }
 
-        const streamToken = tokenRes.token;
+        const streamToken = tokenPayload.token;
 
         // Establish WebSocket stream connection
         const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
@@ -7716,6 +7755,17 @@
 
         const ws = new WebSocket(wsUrl.toString());
         appStreamState.ws = ws;
+
+        // Watchdog: If first frame doesn't arrive within 8 seconds, alert gracefully
+        appStreamState.firstFrameTimeout = setTimeout(() => {
+          if (!appStreamState.firstFrameReceived && appStreamState.ws === ws) {
+            showAppStreamError(
+              'FIRST_FRAME_TIMEOUT',
+              'Stream Output Waiting',
+              'The background stream initialized, but the remote host has not yielded graphical frames yet. The target process may be idle, hidden, or running in an inactive session.'
+            );
+          }
+        }, 8000);
 
         ws.onopen = () => {
           // Start periodic RTT ping
@@ -7747,15 +7797,29 @@
             clearInterval(appStreamState.pingTimer);
             appStreamState.pingTimer = null;
           }
+          if (appStreamState.firstFrameTimeout) {
+            clearTimeout(appStreamState.firstFrameTimeout);
+            appStreamState.firstFrameTimeout = null;
+          }
           if (document.getElementById('modal-app-live-viewer').style.display !== 'none') {
             if (e.code === 4001) {
-              showAppStreamError('Session Unauthorized', 'Stream token rejected or expired. Please re-open the stream.');
+              showAppStreamError(
+                'INVALID_OR_EXPIRED_TICKET',
+                'Session Unauthorized',
+                'Live stream session token was rejected or expired. Please retry to mint a fresh ticket.'
+              );
+            } else if (!appStreamState.firstFrameReceived && e.code !== 1000) {
+              showAppStreamError(
+                'RELAY_CONNECTION_FAILED',
+                'Connection Interrupted',
+                'WebSocket connection to stream gateway closed unexpectedly.'
+              );
             }
           }
         };
 
       } catch (err) {
-        showAppStreamError('Stream Initialization Failed', err.message);
+        showAppStreamError('STREAM_INITIALIZATION_FAILED', 'Stream Initialization Failed', err.message);
       }
     }
 
@@ -7768,20 +7832,35 @@
       }
 
       if (msg.type === 'status') {
-        if (!msg.has_gui || msg.status === 'no_window' || msg.status === 'no_gui') {
+        if (msg.status === 'unauthorized') {
+          showAppStreamError('INVALID_OR_EXPIRED_TICKET', 'Stream Session Unauthorized', msg.error || 'Stream ticket rejected or expired.');
+        } else if (msg.status === 'permission_denied') {
+          showAppStreamError('CAPTURE_PERMISSION_DENIED', 'Capture Permission Denied', msg.error || 'Host agent lacks permission to capture this process window.');
+        } else if (msg.status === 'wayland_restricted' || msg.status === 'capture_unsupported') {
+          showAppStreamError('CAPTURE_UNSUPPORTED', 'Capture Unsupported', msg.error || 'Display server does not support direct window capture.');
+        } else if (msg.status === 'window_closed' || msg.status === 'window_not_found') {
+          showAppStreamError('WINDOW_NOT_FOUND', 'Window Not Found', msg.error || 'The graphical window has closed or has ceased rendering.');
+        } else if (!msg.has_gui || msg.status === 'no_window' || msg.status === 'no_gui' || msg.status === 'no_display') {
           showAppStreamError(
-            'No Capturable Window',
-            msg.error || 'This process is running without an interactive graphical window (e.g. background service or worker).'
+            'NO_GRAPHICAL_WINDOW',
+            'No Capturable Window Found',
+            msg.error || 'This process is running without an interactive graphical window (e.g. background service, daemon, or worker).'
           );
         } else if (msg.is_minimized) {
           document.getElementById('app-stream-minimized-notice').style.display = 'flex';
         } else if (msg.status === 'disconnected') {
-          showAppStreamError('Host Disconnected', msg.error || 'Target machine lost connection.');
+          showAppStreamError('AGENT_DISCONNECTED', 'Host Agent Disconnected', msg.error || 'Target machine lost connection.');
         }
         return;
       }
 
       if (msg.type === 'frame') {
+        appStreamState.firstFrameReceived = true;
+        if (appStreamState.firstFrameTimeout) {
+          clearTimeout(appStreamState.firstFrameTimeout);
+          appStreamState.firstFrameTimeout = null;
+        }
+
         // Hide loading and errors, show canvas
         document.getElementById('app-stream-loading').style.display = 'none';
         document.getElementById('app-stream-error').style.display = 'none';
@@ -7836,20 +7915,78 @@
       }
     }
 
-    function showAppStreamError(title, desc) {
+    function showAppStreamError(category, title, desc) {
+      if (!desc && title) {
+        desc = title;
+        title = category;
+        category = 'STREAM_INITIALIZATION_FAILED';
+      }
+
       document.getElementById('app-stream-loading').style.display = 'none';
       document.getElementById('app-stream-canvas').style.display = 'none';
       document.getElementById('app-stream-minimized-notice').style.display = 'none';
 
       const errPanel = document.getElementById('app-stream-error');
       if (errPanel) errPanel.style.display = 'block';
+
+      const badgeEl = document.getElementById('app-stream-error-badge');
+      if (badgeEl) {
+        const badgeColor = (category === 'AUTHENTICATION_REQUIRED' || category === 'INVALID_OR_EXPIRED_TICKET' || category === 'HOST_OFFLINE' || category === 'AGENT_DISCONNECTED')
+          ? 'badge-danger'
+          : 'badge-warning';
+        badgeEl.innerHTML = `<span class="badge ${badgeColor}" style="font-family:var(--font-mono); font-size:0.68rem; padding:0.2rem 0.55rem; letter-spacing:0.04em;">[${escapeHtml(category)}]</span>`;
+      }
+
       const titleEl = document.getElementById('app-stream-error-title');
-      if (titleEl) titleEl.innerText = title;
+      if (titleEl) titleEl.innerText = title || category;
+
       const descEl = document.getElementById('app-stream-error-desc');
-      if (descEl) descEl.innerText = desc;
+      if (descEl) descEl.innerText = desc || 'An unexpected condition prevented stream initialization.';
+
+      const actionsEl = document.getElementById('app-stream-error-actions');
+      if (actionsEl) {
+        if (category === 'AUTHENTICATION_REQUIRED') {
+          actionsEl.innerHTML = `
+            <button class="btn btn-secondary" onclick="closeAppLiveViewer(); navigate('settings');">⚙️ Open Settings</button>
+            <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
+          `;
+        } else if (category === 'HOST_OFFLINE' || category === 'AGENT_DISCONNECTED') {
+          actionsEl.innerHTML = `
+            <button class="btn btn-secondary" onclick="closeAppLiveViewer(); navigate('fleet');">🛰️ View Fleet Status</button>
+            <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
+          `;
+        } else if (category === 'NO_GRAPHICAL_WINDOW' || category === 'WINDOW_NOT_FOUND') {
+          actionsEl.innerHTML = `
+            <button class="btn btn-secondary" onclick="openTerminalFromStream()">💻 Open Terminal</button>
+            <button class="btn btn-secondary" onclick="openDetailsFromStream()">🔍 Inspect Process</button>
+            <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
+          `;
+        } else if (category === 'CAPTURE_PERMISSION_DENIED') {
+          actionsEl.innerHTML = `
+            <button class="btn btn-secondary" onclick="openTerminalFromStream()">💻 Open Terminal</button>
+            <button class="btn btn-secondary" onclick="openDetailsFromStream()">🔍 Inspect Process</button>
+            <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
+          `;
+        } else if (category === 'CAPTURE_UNSUPPORTED') {
+          actionsEl.innerHTML = `
+            <button class="btn btn-secondary" onclick="openTerminalFromStream()">💻 Open Terminal</button>
+            <button class="btn btn-secondary" onclick="openDetailsFromStream()">🔍 Inspect Process</button>
+          `;
+        } else {
+          actionsEl.innerHTML = `
+            <button class="btn btn-secondary" onclick="openTerminalFromStream()">💻 Open Terminal</button>
+            <button class="btn btn-secondary" onclick="openDetailsFromStream()">🔍 Inspect Process</button>
+            <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
+          `;
+        }
+      }
     }
 
     function closeAppLiveViewer() {
+      if (appStreamState.firstFrameTimeout) {
+        clearTimeout(appStreamState.firstFrameTimeout);
+        appStreamState.firstFrameTimeout = null;
+      }
       if (appStreamState.pingTimer) {
         clearInterval(appStreamState.pingTimer);
         appStreamState.pingTimer = null;

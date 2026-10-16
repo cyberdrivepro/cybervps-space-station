@@ -872,7 +872,8 @@ const server = http.createServer(async (req, res) => {
           bearerToken = authHdr.slice(7).trim();
         }
 
-        // Authenticate client identity
+        // Authenticate client identity (via verifyAdminAuthorization, pairing keys, session tokens, or loopback context)
+        const auth = verifyAdminAuthorization(req);
         const configuredMaster = process.env.PAIRING_KEY || process.env.CYBERVPS_TOKEN || process.env.ENROLLMENT_TOKEN || (tunnelManager && tunnelManager.pairingKey) || 'cvps_enroll_master_token';
         const isKeyValid = (pairing_key && (pairing_key === tunnelManager.pairingKey || pairing_key === configuredMaster || (db.enrollmentTokens && db.enrollmentTokens.has(pairing_key)))) ||
                            (bearerToken && (bearerToken === tunnelManager.pairingKey || bearerToken === configuredMaster || (db.enrollmentTokens && db.enrollmentTokens.has(bearerToken))));
@@ -880,9 +881,9 @@ const server = http.createServer(async (req, res) => {
                                (bearerToken && tunnelManager.isValidSession(bearerToken)) ||
                                (bearerToken && db.sessions && db.sessions.has(bearerToken));
 
-        if (!isKeyValid && !isSessionValid) {
+        if (!auth.authorized && !isKeyValid && !isSessionValid) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Unauthorized: Valid pairing key or session token required' }));
+          res.end(JSON.stringify({ success: false, error: 'Unauthorized: Valid pairing key or session token required', code: 'AUTHENTICATION_REQUIRED' }));
           return;
         }
 
@@ -3578,11 +3579,25 @@ function verifyAppStreamAuthorization(request, parsedUrl) {
         'cybervps-render-control.onrender.com',
         'cybervps-space-station.netlify.app',
         'localhost',
-        '127.0.0.1'
+        '127.0.0.1',
+        hostHeader,
+        hostHeader.split(':')[0]
       ]);
 
+      if (process.env.ALLOWED_ORIGINS) {
+        process.env.ALLOWED_ORIGINS.split(',').forEach(o => explicitTrustedOrigins.add(o.trim().toLowerCase()));
+      }
+      if (tunnelManager && tunnelManager.publicUrl) {
+        try { explicitTrustedOrigins.add(new URL(tunnelManager.publicUrl).hostname.toLowerCase()); } catch (_) {}
+      }
+      if (db.backends) {
+        for (const b of db.backends.values()) {
+          try { if (b.url) explicitTrustedOrigins.add(new URL(b.url).hostname.toLowerCase()); } catch (_) {}
+        }
+      }
+
       const isHostMatch = (originHost === hostHeader) || (originHostname === hostHeader.split(':')[0]);
-      const isTrustedStatic = explicitTrustedOrigins.has(originHostname);
+      const isTrustedStatic = explicitTrustedOrigins.has(originHost) || explicitTrustedOrigins.has(originHostname);
       const isLoopback = (originHostname === '127.0.0.1' || originHostname === 'localhost');
       const isCustomDomain = db.domains && db.domains.has(originHostname);
 

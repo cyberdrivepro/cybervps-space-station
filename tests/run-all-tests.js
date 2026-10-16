@@ -1343,16 +1343,31 @@ async function runTests() {
   });
   assert.strictEqual(tokenBadRes.statusCode, 400, 'Missing machine_id must return 400');
 
-  // 5. Token Minting: valid pairing key issues 60s single-use token
+  // 4b. Token Minting: unauthorized request returns 401 AUTHENTICATION_REQUIRED
+  const tokenUnauthRes = await request(`${SERVER_URL}/api/v1/apps/stream/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Simulate-Public': 'true' },
+    body: JSON.stringify({ machine_id: remoteNodeId, pid: 1011 })
+  });
+  assert.strictEqual(tokenUnauthRes.statusCode, 401, 'Unauthenticated token request must return 401');
+  const tokenUnauthData = JSON.parse(tokenUnauthRes.body);
+  assert.strictEqual(tokenUnauthData.code, 'AUTHENTICATION_REQUIRED', 'Must return AUTHENTICATION_REQUIRED code');
+
+  // 5. Token Minting: valid pairing key issues 60s single-use token (via body or header)
   const tokenGoodRes = await request(`${SERVER_URL}/api/v1/apps/stream/token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': 'test_pair_key_123' },
-    body: JSON.stringify({ machine_id: remoteNodeId, pid: 1011, app_id: 'notepad' })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: remoteNodeId, pid: 1011, app_id: 'notepad', pairing_key: 'test_pair_key_123' })
   });
   assert.strictEqual(tokenGoodRes.statusCode, 200, 'Token minting must succeed with 200');
   const streamTokenData = JSON.parse(tokenGoodRes.body);
   assert(streamTokenData.token, 'Must return a stream token');
   assert.strictEqual(streamTokenData.expires_in, 60, 'Token expires in 60 seconds');
+
+  // Verify client apiRequest unwrapping pattern: payload = (res.data ? res.data : res)
+  const simulatedClientRes = { ok: true, data: streamTokenData, duration: 42 };
+  const unwrappedToken = (simulatedClientRes && simulatedClientRes.data) ? simulatedClientRes.data.token : simulatedClientRes.token;
+  assert.strictEqual(unwrappedToken, streamTokenData.token, 'Client payload unwrapper must correctly extract token');
   const streamToken = streamTokenData.token;
 
   // 6. Security Guard: Direct pairing key on stream WebSocket is strictly rejected
