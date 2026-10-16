@@ -222,6 +222,16 @@ function initDefaultPlatformState() {
       last_check: new Date().toISOString(),
       failures_count: 0
     });
+    db.backends.set('be_netlify_cloud', {
+      id: 'be_netlify_cloud',
+      name: 'Edge Gateway (Netlify Cloud)',
+      url: 'https://cybervps-space-station.netlify.app',
+      role: 'secondary',
+      state: 'healthy',
+      latency_ms: 12,
+      last_check: new Date().toISOString(),
+      failures_count: 0
+    });
   }
 
   if (db.plugins.size === 0) {

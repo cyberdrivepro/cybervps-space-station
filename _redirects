@@ -1,0 +1,12 @@
+# CyberVPS Space Station - Netlify Edge Proxy Rules
+# Transparently reverse-proxies API and control-plane endpoints to the active cloud control plane
+
+/health        https://cybervps-space-station.up.railway.app/health        200!
+/healthz       https://cybervps-space-station.up.railway.app/healthz       200!
+/api/*         https://cybervps-space-station.up.railway.app/api/:splat    200!
+/tunnel/*      https://cybervps-space-station.up.railway.app/tunnel/:splat 200!
+/install.ps1   https://cybervps-space-station.up.railway.app/install.ps1   200!
+/install.sh    https://cybervps-space-station.up.railway.app/install.sh    200!
+/agent/*       https://cybervps-space-station.up.railway.app/agent/:splat  200!
+/scripts/*     https://cybervps-space-station.up.railway.app/scripts/:splat 200!
+/doctor.sh     https://cybervps-space-station.up.railway.app/doctor.sh     200!

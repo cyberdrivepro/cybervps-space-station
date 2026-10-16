@@ -1,0 +1,46 @@
+# CyberVPS Space Station - Netlify Configuration
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization, X-Machine-ID, X-Enrollment-Token, X-CVPS-Pairing-Key, X-Session-Token, X-Admin-Token, X-Pairing-Key"
+
+[[redirects]]
+  from = "/health"
+  to = "https://cybervps-space-station.up.railway.app/health"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/healthz"
+  to = "https://cybervps-space-station.up.railway.app/healthz"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://cybervps-space-station.up.railway.app/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/tunnel/*"
+  to = "https://cybervps-space-station.up.railway.app/tunnel/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/install.*"
+  to = "https://cybervps-space-station.up.railway.app/install.:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/agent/*"
+  to = "https://cybervps-space-station.up.railway.app/agent/:splat"
+  status = 200
+  force = true

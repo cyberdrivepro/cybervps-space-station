@@ -2368,7 +2368,9 @@
             <div style="display:flex; gap:0.75rem; margin-top:1.5rem; flex-wrap:wrap;">
               <button class="btn btn-primary" onclick="saveSettings()">Save & Connect</button>
               <button class="btn btn-secondary" onclick="testBackendDirect()">Test Reachability</button>
-              <button class="btn btn-secondary" onclick="useRailwayDefault()">Use Railway Control Plane</button>
+              <button class="btn btn-secondary" onclick="useRailwayDefault()">Railway Backend</button>
+              <button class="btn btn-secondary" onclick="useNetlifyDefault()">Netlify Edge</button>
+              <button class="btn btn-secondary" onclick="useRenderDefault()">Render Backend</button>
               <button class="btn btn-danger" onclick="resetSettings()">Reset Defaults</button>
             </div>
 
@@ -3053,8 +3055,9 @@
 
     const defaultRailway = 'https://cybervps-space-station.up.railway.app';
     const defaultRender = 'https://cybervps-render-control.onrender.com';
-    const isGitHubPages = window.location.hostname.endsWith('github.io');
-    const defaultOrigin = isGitHubPages ? defaultRailway : (window.location.origin.startsWith('http') ? window.location.origin : defaultRailway);
+    const defaultNetlify = 'https://cybervps-space-station.netlify.app';
+    const isStaticHost = window.location.hostname.endsWith('github.io') || window.location.hostname.endsWith('netlify.app');
+    const defaultOrigin = isStaticHost ? defaultRailway : (window.location.origin.startsWith('http') ? window.location.origin : defaultRailway);
 
     if (paramBackend) {
       const normalizedParam = normalizeServerUrl(paramBackend);
@@ -4556,6 +4559,16 @@
 
     function useRailwayDefault() {
       document.getElementById('setting-server-url').value = defaultRailway;
+      saveSettings();
+    }
+
+    function useNetlifyDefault() {
+      document.getElementById('setting-server-url').value = defaultNetlify;
+      saveSettings();
+    }
+
+    function useRenderDefault() {
+      document.getElementById('setting-server-url').value = defaultRender;
       saveSettings();
     }
 
