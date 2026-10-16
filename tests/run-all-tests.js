@@ -1798,7 +1798,7 @@ async function runTests() {
   });
   assert.strictEqual(unauthBootRes.statusCode, 401, 'Unauthenticated bootstrap request must be rejected with 401');
 
-  // 2. Authenticated operator request mints single-use bootstrap capability
+  // 2. Authenticated operator request mints single-use bootstrap capability (POST and GET)
   const authBootRes = await request(`${SERVER_URL}/api/v1/enrollment/bootstrap`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
@@ -1807,15 +1807,30 @@ async function runTests() {
   const bootData = JSON.parse(authBootRes.body);
   assert(bootData.ticket && bootData.ticket.startsWith('cvps_boot_'), 'Ticket must start with cvps_boot_');
   assert(bootData.command && bootData.command.includes(bootData.ticket), 'Command must embed the single-use ticket');
+  assert(!bootData.command.includes('<url>') && !bootData.command.includes('<ONE_CLICK_TICKET>'), 'Command must not have placeholders');
   assert(bootData.expires_in >= 1800, 'Ticket must have active expiry window');
 
-  // 3. GET /install.ps1 with ticket injects token seamlessly
+  // Verify GET also works for bootstrap ticket minting
+  const getBootRes = await request(`${SERVER_URL}/api/v1/enrollment/bootstrap`, {
+    method: 'GET',
+    headers: { 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(getBootRes.statusCode, 200, 'GET /api/v1/enrollment/bootstrap must return 200 OK');
+
+  // 3. Security Boundary: Ticket CANNOT access admin or operator endpoints
+  const adminAttempt = await request(`${SERVER_URL}/api/v1/enrollment/bootstrap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': bootData.ticket }
+  });
+  assert.strictEqual(adminAttempt.statusCode, 403, 'Bootstrap ticket MUST NOT grant admin or operator access (must return 403)');
+
+  // 4. GET /install.ps1 with ticket injects token seamlessly
   const scriptRes = await request(`${SERVER_URL}/install.ps1?ticket=${bootData.ticket}`);
   assert.strictEqual(scriptRes.statusCode, 200, 'GET /install.ps1 must return 200 OK');
   assert(scriptRes.body.includes(bootData.ticket), 'Served install.ps1 must inject the capability ticket');
   assert(!scriptRes.body.includes('Read-Host'), 'Served install.ps1 must contain NO interactive Read-Host prompts');
 
-  // 4. Node authenticates via Pre-flight Handshake with single-use ticket
+  // 5. Node authenticates via Pre-flight Handshake with single-use ticket
   const bootNodeId = 'cvps_win_bootstrap_' + Math.random().toString(36).substring(2, 8);
   const bootAuthRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
     method: 'POST',
@@ -1826,6 +1841,7 @@ async function runTests() {
         machine_id: bootNodeId,
         token: bootData.ticket,
         os: 'Windows',
+        hostname: 'DESKTOP-PROV-TEST',
         agent_version: '2.2-ghost-native',
         profile: { bootstrap: 'zero_prompt_fastpath' }
       }
@@ -1838,7 +1854,18 @@ async function runTests() {
   assert(bootAuthData.result.node_token && bootAuthData.result.node_token.startsWith('cvps_node_'), 'Server must issue dedicated permanent node token');
   const issuedNodeToken = bootAuthData.result.node_token;
 
-  // 5. Capability must be single-use: replay with the consumed ticket must fail with 401
+  // 6. Confirmed machine online in fleet
+  const provFleetRes = await request(`${SERVER_URL}/api/v1/machines`, {
+    headers: { 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(provFleetRes.statusCode, 200, 'Fleet list must return 200');
+  const provMachines = JSON.parse(provFleetRes.body);
+  const provFoundMachine = provMachines.find(m => m.id === bootNodeId);
+  assert(provFoundMachine, 'Enrolled machine must appear in fleet registry');
+  assert.strictEqual(provFoundMachine.status, 'online', 'Enrolled machine status must be online');
+  assert.strictEqual(provFoundMachine.os, 'Windows', 'Enrolled machine OS must be normalized as Windows');
+
+  // 7. Capability must be single-use: replay with the consumed ticket must fail with 401
   const replayBootRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1853,7 +1880,28 @@ async function runTests() {
   });
   assert.strictEqual(replayBootRes.statusCode, 401, 'Replaying consumed bootstrap ticket must be rejected with 401');
 
-  // 6. Node can reconnect using its dedicated permanent node token (Path A)
+  // 8. Redemption Race Test: Concurrent Auth requests on fresh ticket
+  const raceBootRes = await request(`${SERVER_URL}/api/v1/enrollment/bootstrap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  const raceTicket = JSON.parse(raceBootRes.body).ticket;
+  const raceResults = await Promise.all([
+    request(`${SERVER_URL}/api/v1/relay/event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'Auth', payload: { machine_id: 'race_node_1', token: raceTicket, os: 'Windows' } })
+    }),
+    request(`${SERVER_URL}/api/v1/relay/event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'Auth', payload: { machine_id: 'race_node_2', token: raceTicket, os: 'Windows' } })
+    })
+  ]);
+  const statuses = raceResults.map(r => r.statusCode).sort();
+  assert.deepStrictEqual(statuses, [200, 401], 'Exactly one concurrent redemption must succeed (200) and the other must be rejected (401)');
+
+  // 9. Node can reconnect using its dedicated permanent node token (Path A)
   const reconnectRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1868,7 +1916,7 @@ async function runTests() {
   });
   assert.strictEqual(reconnectRes.statusCode, 200, 'Reconnecting with issued node_token must succeed with 200');
 
-  // 7. Verify zero prompts in raw install.ps1 and scripts/install-agent.ps1
+  // 10. Verify zero prompts in raw install.ps1 and scripts/install-agent.ps1
   const rootPs1 = fs.readFileSync(path.join(__dirname, '../install.ps1'), 'utf8');
   const scriptPs1 = fs.readFileSync(path.join(__dirname, '../scripts/install-agent.ps1'), 'utf8');
   assert(!rootPs1.includes('Read-Host'), 'install.ps1 must not contain Read-Host');

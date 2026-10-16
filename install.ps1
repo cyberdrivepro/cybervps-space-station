@@ -12,7 +12,7 @@ param (
     [Alias("EnrollmentToken")]
     [string]$Token = $(if ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" }),
     [Parameter(Position=2)]
-    [Alias("BootstrapTicket")]
+    [Alias("BootstrapTicket", "Capability", "OneClickTicket")]
     [string]$Ticket = ""
 )
 
@@ -67,6 +67,14 @@ Write-Host "================================================================" -F
 # ------------------------------------------------------------------------------
 # STEP 1: Credential Resolution (Zero-Prompt Pipeline)
 # ------------------------------------------------------------------------------
+# Auto-detect if user passed ticket/token as first positional argument instead of server URL
+if ($Server -and ($Server -like "cvps_*" -or ($Server.Length -ge 24 -and $Server -notlike "http*" -and $Server -notlike "*.*:*"))) {
+    if ([string]::IsNullOrWhiteSpace($Token) -and [string]::IsNullOrWhiteSpace($Ticket)) {
+        $Ticket = $Server
+        $Server = $(if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "https://cybervps-space-station.up.railway.app" })
+    }
+}
+
 if ($Ticket) {
     $Token = $Ticket.Trim().Trim('"', "'")
 } elseif ($Token) {

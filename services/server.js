@@ -585,7 +585,8 @@ function requireAdminAuth(req, res, options = {}) {
   const auth = verifyAdminAuthorization(req);
   if (!auth.authorized) {
     const statusCode = auth.status || 401;
-    logAudit('unauthorized_api_access', 'anonymous', null, `Access denied for ${req.method} ${req.url}: ${auth.reason || 'Missing credentials'}`, 'warning');
+    const sanitizedUrl = (req.url || '').replace(/([?&](?:ticket|token)=)[^&]+/gi, '$1***');
+    logAudit('unauthorized_api_access', 'anonymous', null, `Access denied for ${req.method} ${sanitizedUrl}: ${auth.reason || 'Missing credentials'}`, 'warning');
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       error: auth.reason || 'Unauthorized: Instance pairing key (X-CVPS-Pairing-Key) or session token required',
@@ -3517,7 +3518,7 @@ while True:
     return;
   }
 
-  if (pathname === '/api/v1/enrollment/bootstrap' && method === 'POST') {
+  if (pathname === '/api/v1/enrollment/bootstrap' && (method === 'POST' || method === 'GET')) {
     const auth = verifyAdminAuthorization(req);
     if (!auth.authorized) {
       res.writeHead(auth.status || 401, { 'Content-Type': 'application/json' });

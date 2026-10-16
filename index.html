@@ -1048,10 +1048,13 @@
 
             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; margin-bottom:0.25rem;">
               <span style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">Windows PowerShell (1-Click Zero-Prompt Provisioning):</span>
-              <button class="btn btn-sm btn-outline" onclick="mintOneClickWindowsInstaller()" style="font-size:0.7rem; padding:2px 8px; cursor:pointer;">⚡ Refresh One-Click Ticket</button>
+              <div style="display:flex; align-items:center; gap:0.5rem;">
+                <span id="win-ticket-badge" style="font-size:0.7rem; color:var(--text-muted); font-family:var(--font-mono);">⚡ Ready</span>
+                <button class="btn btn-sm btn-outline" onclick="refreshOneClickTicket()" style="font-size:0.7rem; padding:2px 8px; cursor:pointer;">⚡ Refresh One-Click Ticket</button>
+              </div>
             </div>
             <div class="copy-block">
-              <code id="cmd-win">& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1')))</code>
+              <code id="cmd-win">& ([scriptblock]::Create((Invoke-RestMethod 'https://cybervps-space-station.up.railway.app/install.ps1')))</code>
               <button class="btn btn-secondary" onclick="copyText('cmd-win')">Copy</button>
             </div>
           </div>
@@ -3703,8 +3706,7 @@
       }
       const winCmdEl = document.getElementById('cmd-win');
       if (winCmdEl) {
-        if (!winCmdEl.innerText.includes('ticket=')) {
-          winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1')))`;
+        if (!winCmdEl.innerText.includes('ticket=') && !winCmdEl.dataset.minting) {
           mintOneClickWindowsInstaller();
         }
       }
@@ -7566,29 +7568,75 @@
 
     async function mintOneClickWindowsInstaller() {
       const winCmdEl = document.getElementById('cmd-win');
-      if (!winCmdEl) return;
+      if (!winCmdEl) return null;
+      winCmdEl.dataset.minting = 'true';
+      const badge = document.getElementById('win-ticket-badge');
+      if (badge) badge.innerText = 'Minting Ticket...';
+
       const baseCmdUrl = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
         const res = await apiRequest('/api/v1/enrollment/bootstrap', { method: 'POST' });
-        if (res && res.success && res.ticket) {
-          winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1?ticket=${res.ticket}')))`;
-          return res;
+        const data = (res && res.data) ? res.data : res;
+        if (res && res.ok !== false && data && data.success && data.ticket) {
+          winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1?ticket=${data.ticket}')))`;
+          if (badge) {
+            badge.innerText = `● Ticket Active (${data.ticket.slice(0, 14)}...)`;
+            badge.style.color = 'var(--status-success)';
+          }
+          delete winCmdEl.dataset.minting;
+          return data;
+        } else {
+          const errMsg = (data && data.error) || (res && res.error) || 'Failed to mint 1-click ticket';
+          console.warn('[Bootstrap] Ticket minting failed:', errMsg);
+          if (badge) {
+            badge.innerText = '⚠ Authorization Required';
+            badge.style.color = 'var(--status-warning)';
+          }
+          delete winCmdEl.dataset.minting;
+          return null;
         }
-      } catch (_) {}
-      winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1')))`;
+      } catch (err) {
+        console.error('[Bootstrap] Ticket minting exception:', err);
+        if (badge) {
+          badge.innerText = '⚠ Error Minting Ticket';
+          badge.style.color = 'var(--status-danger)';
+        }
+        delete winCmdEl.dataset.minting;
+        return null;
+      }
+    }
+
+    async function refreshOneClickTicket() {
+      showToast('Generating fresh 1-click provisioning ticket...', 'info');
+      const winCmdEl = document.getElementById('cmd-win');
+      if (winCmdEl) delete winCmdEl.dataset.minting;
+      const data = await mintOneClickWindowsInstaller();
+      if (data && data.ticket) {
+        showToast('Fresh 1-click Windows ticket generated (Valid for 30m)!', 'success');
+      } else {
+        showToast('Could not mint ticket. Please verify pairing key in Settings.', 'error');
+      }
     }
 
     async function copyText(id) {
       const el = document.getElementById(id);
       if (!el) return;
-      if (id === 'cmd-win' && !(el.innerText || '').includes('ticket=')) {
-        try {
-          const res = await apiRequest('/api/v1/enrollment/bootstrap', { method: 'POST' });
-          if (res && res.success && res.ticket) {
-            const baseCmdUrl = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
-            el.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1?ticket=${res.ticket}')))`;
+      if (id === 'cmd-win') {
+        let text = (el.innerText || el.textContent || '').trim();
+        if (!text.includes('ticket=')) {
+          showToast('Generating secure 1-click Windows installer ticket...', 'info');
+          const data = await mintOneClickWindowsInstaller();
+          if (data && data.ticket) {
+            text = `& ([scriptblock]::Create((Invoke-RestMethod '${normalizeServerUrl(appConfig.serverUrl) || defaultRailway}/install.ps1?ticket=${data.ticket}')))`;
+            el.innerText = text;
+          } else {
+            showToast('1-Click Provisioning Error: Control Plane rejected ticket request. Please check pairing key.', 'error');
+            return; // STRICT ENFORCEMENT: Never copy an unauthenticated command that will fail!
           }
-        } catch (_) {}
+        }
+        navigator.clipboard.writeText(text);
+        showToast('1-Click Windows command copied to clipboard!', 'success');
+        return;
       }
       navigator.clipboard.writeText(el.innerText || el.textContent);
       showToast('Copied to clipboard!', 'success');
