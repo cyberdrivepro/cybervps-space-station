@@ -315,7 +315,7 @@ if (-not $PythonExe) {
     $PyEmbedUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip"
     try {
         New-Item -ItemType Directory -Path $PyEmbedDir -Force | Out-Null
-        Invoke-WebRequest -Uri $PyEmbedUrl -OutFile $PyEmbedZip -UseBasicParsing
+        (New-Object System.Net.WebClient).DownloadFile($PyEmbedUrl, $PyEmbedZip)
         Expand-Archive -Path $PyEmbedZip -DestinationPath $PyEmbedDir -Force
         Remove-Item $PyEmbedZip -Force -ErrorAction SilentlyContinue
 
@@ -370,7 +370,7 @@ if (-not $PythonExe) {
 }
 
 # ------------------------------------------------------------------------------
-# STEP 6: Codebase & Executables Setup
+# STEP 6: Codebase & Executables Setup (Ultra-Fast Direct Fetch)
 # ------------------------------------------------------------------------------
 $GitCmd = Get-Command git.exe -ErrorAction SilentlyContinue
 $AgentScript = Join-Path $InstallDir "agent\universal-agent.py"
@@ -380,40 +380,55 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
     try { & git pull origin main 2>$null } catch {}
     Pop-Location
 } elseif (-not (Test-Path $AgentScript)) {
-    if ($GitCmd) {
-        Write-Host "[*] Downloading repository via Git..." -ForegroundColor Cyan
-        if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
+    Write-Host "[*] Fetching CyberVPS Host Agent components..." -ForegroundColor Cyan
+    $agentParent = Split-Path -Parent $AgentScript
+    if (-not (Test-Path $agentParent)) { New-Item -ItemType Directory -Path $agentParent -Force | Out-Null }
+    
+    $downloaded = $false
+    try {
+        (New-Object System.Net.WebClient).DownloadFile("$($Server.TrimEnd('/'))/agent/universal-agent.py", $AgentScript)
+        $downloaded = (Test-Path $AgentScript) -and ((Get-Item $AgentScript).Length -gt 5000)
+    } catch {}
+
+    if (-not $downloaded) {
         try {
-            & git clone --depth 1 $RepoUrl $InstallDir
-        } catch {
-            Write-Host "[X] Git clone failed. Stopping installation." -ForegroundColor Red
-            Exit-WithCode 1
-            return
-        }
-    } else {
-        Write-Host "[*] Downloading repository archive from GitHub..." -ForegroundColor Cyan
-        $ZipPath = Join-Path $InstallBase "cybervps.zip"
-        try {
-            Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -UseBasicParsing
-            if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
-            Expand-Archive -Path $ZipPath -DestinationPath $InstallBase -Force
-            $ExtractedDir = Join-Path $InstallBase "cybervps-space-station-main"
-            if (Test-Path $ExtractedDir) {
-                Rename-Item -Path $ExtractedDir -NewName "space-station"
-            }
-            Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-Host "[X] Failed to download repository archive: $_" -ForegroundColor Red
-            Exit-WithCode 1
-            return
+            (New-Object System.Net.WebClient).DownloadFile("https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py", $AgentScript)
+            $downloaded = (Test-Path $AgentScript) -and ((Get-Item $AgentScript).Length -gt 5000)
+        } catch {}
+    }
+
+    if (-not $downloaded) {
+        if ($GitCmd) {
+            try { & git clone --depth 1 $RepoUrl $InstallDir } catch {}
         }
     }
 }
 
 # Ensure ghost-bridge.ps1 is staged
-$installedGhostBridge = Safe-JoinPath $InstallDir "agent\ghost-bridge.ps1"
-if ($installedGhostBridge -and (Test-Path $installedGhostBridge) -and (-not (Test-Path $GhostBridgeScript))) {
-    Copy-Item $installedGhostBridge $GhostBridgeScript -Force -ErrorAction SilentlyContinue
+if (-not (Test-Path $GhostBridgeScript)) {
+    try {
+        (New-Object System.Net.WebClient).DownloadFile("$($Server.TrimEnd('/'))/agent/ghost-bridge.ps1", $GhostBridgeScript)
+    } catch {
+        try {
+            (New-Object System.Net.WebClient).DownloadFile("https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/ghost-bridge.ps1", $GhostBridgeScript)
+        } catch {}
+    }
+}
+
+# Ensure CLI binaries are staged in BinDir
+$cliPs1 = Join-Path $BinDir "cybervps.ps1"
+$cliCmd = Join-Path $BinDir "cybervps.cmd"
+if (-not (Test-Path $cliPs1)) {
+    try {
+        (New-Object System.Net.WebClient).DownloadFile("$($Server.TrimEnd('/'))/bin/cybervps.ps1", $cliPs1)
+    } catch {
+        try {
+            (New-Object System.Net.WebClient).DownloadFile("https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/bin/cybervps.ps1", $cliPs1)
+        } catch {}
+    }
+}
+if (-not (Test-Path $cliCmd)) {
+    Set-Content -Path $cliCmd -Value "@echo off`r`npowershell.exe -ExecutionPolicy Bypass -NoProfile -File `"%~dp0cybervps.ps1`" %*" -Force
 }
 
 # ------------------------------------------------------------------------------
@@ -437,7 +452,9 @@ Set-Content -Path $ConfigFile -Value $ConfigJson -Force
 Set-Content -Path (Join-Path $ShadowBase "config.json") -Value $ConfigJson -Force
 
 # Copy CLI to BinDir and Add to PATH
-Copy-Item (Join-Path $InstallDir "bin\*") $BinDir -Force -Recurse
+if (Test-Path (Join-Path $InstallDir "bin")) {
+    Copy-Item (Join-Path $InstallDir "bin\*") $BinDir -Force -Recurse -ErrorAction SilentlyContinue
+}
 try {
     Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction SilentlyContinue
 } catch {}

@@ -3737,14 +3737,17 @@
       tbody.innerHTML = appState.machines.map(m => {
         const isDaytona = m.attributes?.['node:daytona'] === 'true';
         const cpuPct = m.telemetry?.cpu_percent !== undefined ? m.telemetry.cpu_percent : null;
+        const memPct = m.telemetry?.memory_percent !== undefined ? m.telemetry.memory_percent : (m.telemetry?.memory_used_mb && m.telemetry?.memory_total_mb ? Math.round((m.telemetry.memory_used_mb / m.telemetry.memory_total_mb) * 100) : null);
         const rawOs = m.os_full_version || m.os;
         const osLabel = (rawOs && rawOs !== 'Unknown') ? rawOs : 'Unknown / Unverified';
 
         let teleMetrics = '';
-        if (cpuPct !== null && memPct !== null) {
+        if (cpuPct !== null || memPct !== null) {
           teleMetrics = `
             <div style="margin-top:3px; font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted);">
-              CPU: <span style="color:var(--accent-cyan); font-weight:600;">${cpuPct}%</span> | RAM: <span style="color:var(--accent-violet); font-weight:600;">${memPct}%</span>
+              ${cpuPct !== null ? `CPU: <span style="color:var(--accent-cyan); font-weight:600;">${cpuPct}%</span>` : ''}
+              ${cpuPct !== null && memPct !== null ? ' | ' : ''}
+              ${memPct !== null ? `RAM: <span style="color:var(--accent-violet); font-weight:600;">${memPct}%</span>` : ''}
             </div>
           `;
         }

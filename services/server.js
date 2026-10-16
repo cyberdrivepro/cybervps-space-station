@@ -835,6 +835,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/agent/ghost-bridge.ps1') {
+    const p = path.join(__dirname, '../agent/ghost-bridge.ps1');
+    fs.readFile(p, 'utf8', (err, data) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(data || '# Error loading ghost-bridge.ps1');
+    });
+    return;
+  }
+
+  if (pathname === '/bin/cybervps.ps1') {
+    const p = path.join(__dirname, '../bin/cybervps.ps1');
+    fs.readFile(p, 'utf8', (err, data) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(data || '# Error loading cybervps.ps1');
+    });
+    return;
+  }
+
   if (pathname === '/scripts/agent-watchdog.sh') {
     const watchdogPath = path.join(__dirname, '../scripts/agent-watchdog.sh');
     fs.readFile(watchdogPath, 'utf8', (err, data) => {
