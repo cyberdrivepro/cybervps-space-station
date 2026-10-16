@@ -951,7 +951,34 @@ async function runTests() {
     body: JSON.stringify({ username: 'admin', password: 'wrong_password_999' })
   });
   assert.strictEqual(badLoginRes.statusCode, 401, 'Bad credentials must return 401 Unauthorized');
-  console.log('  ✅ Unauthenticated login attempt rejected with 401.');
+
+  // Hardcoded fallback rejection (admin / admin and admin / Cyberexpert2222@)
+  const fallbackAdminRes = await request(`${SERVER_URL}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'admin' })
+  });
+  assert.strictEqual(fallbackAdminRes.statusCode, 401, 'Hardcoded admin/admin credential fallback must be rejected');
+
+  const fallbackOldRes = await request(`${SERVER_URL}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'Cyberexpert2222@' })
+  });
+  assert.strictEqual(fallbackOldRes.statusCode, 401, 'Hardcoded Cyberexpert2222@ fallback must be rejected');
+  console.log('  ✅ Hardcoded login bypass vectors strictly eliminated: 401 returned.');
+
+  // Unauthenticated public access guard verification
+  const publicMachinesRes = await request(`${SERVER_URL}/api/v1/machines`, {
+    headers: { 'X-Simulate-Public': 'true' }
+  });
+  assert.strictEqual(publicMachinesRes.statusCode, 401, 'Unauthenticated public /api/v1/machines must return 401 Unauthorized');
+
+  const publicTokensRes = await request(`${SERVER_URL}/api/v1/auth/enrollment-tokens`, {
+    headers: { 'X-Simulate-Public': 'true' }
+  });
+  assert.strictEqual(publicTokensRes.statusCode, 401, 'Unauthenticated public /api/v1/auth/enrollment-tokens must return 401 Unauthorized');
+  console.log('  ✅ Centralized Admin Guard verified: Unauthenticated public fleet API calls rejected with 401.');
 
   // Valid login
   const loginRes = await request(`${SERVER_URL}/api/v1/auth/login`, {
@@ -963,6 +990,13 @@ async function runTests() {
   const loginData = JSON.parse(loginRes.body);
   assert(loginData.token && loginData.token.startsWith('cvps_sess_'), 'Must return valid session token');
   console.log(`  ✅ Admin authentication verified: Token issued [${loginData.token.slice(0, 16)}...]`);
+
+  // Verify access with authorized session token
+  const authMachinesRes = await request(`${SERVER_URL}/api/v1/machines`, {
+    headers: { 'Authorization': `Bearer ${loginData.token}` }
+  });
+  assert.strictEqual(authMachinesRes.statusCode, 200, 'Authenticated request with Bearer token must succeed with 200 OK');
+  console.log('  ✅ Bearer token authorization verified: Protected fleet inventory accessible to authorized session.');
 
   // Verify status
   const authStatusRes = await request(`${SERVER_URL}/api/v1/auth/status`, {

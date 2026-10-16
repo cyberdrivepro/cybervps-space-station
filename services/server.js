@@ -222,26 +222,6 @@ function initDefaultPlatformState() {
       last_check: new Date().toISOString(),
       failures_count: 0
     });
-    db.backends.set('be_mesh_node_2', {
-      id: 'be_mesh_node_2',
-      name: 'Secondary Mesh Node (Frankfurt VPS)',
-      url: 'https://de-fra1.cybervps.net',
-      role: 'secondary',
-      state: 'healthy',
-      latency_ms: 18,
-      last_check: new Date().toISOString(),
-      failures_count: 0
-    });
-    db.backends.set('be_mesh_node_3', {
-      id: 'be_mesh_node_3',
-      name: 'Secondary Mesh Node (Singapore VPS)',
-      url: 'https://sg-sin1.cybervps.net',
-      role: 'secondary',
-      state: 'healthy',
-      latency_ms: 45,
-      last_check: new Date().toISOString(),
-      failures_count: 0
-    });
   }
 
   if (db.plugins.size === 0) {
@@ -286,8 +266,8 @@ function initDefaultPlatformState() {
       public_key: 'CVpsWgGtwyKey7948271038475932847592837459=',
       endpoint: `127.0.0.1:${port}`,
       allowed_ips: '10.88.0.1/32',
-      handshake: '12 seconds ago',
-      status: 'active'
+      handshake: null,
+      status: 'standby'
     });
   }
 
@@ -297,9 +277,9 @@ function initDefaultPlatformState() {
       name: 'cyber-space-portal',
       runtime: 'nodejs',
       domain: 'portal.cybervps.app',
-      status: 'deployed',
+      status: 'ready',
       created_at: new Date().toISOString(),
-      last_deployed: new Date().toISOString(),
+      last_deployed: null,
       env_vars: { NODE_ENV: 'production', PORT: '3000' },
       build_cmd: 'npm run build',
       start_cmd: 'npm start'
@@ -420,6 +400,101 @@ function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 15000) {
   });
 }
 
+// =============================================================================
+// CENTRALIZED ADMINISTRATOR AUTHENTICATION & ACCESS CONTROL
+// =============================================================================
+function verifyAdminAuthorization(req) {
+  // 1. Bearer token in Authorization header
+  const authHeader = req.headers['authorization'] || '';
+  let bearerToken = '';
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    bearerToken = authHeader.slice(7).trim();
+  }
+
+  // 2. Cookie token: cvps_token=<token>
+  const cookieHeader = req.headers['cookie'] || '';
+  const cookieMatch = cookieHeader.split(';').map(c => c.trim()).find(c => c.startsWith('cvps_token='));
+  const cookieToken = cookieMatch ? cookieMatch.split('=')[1] : '';
+
+  // 3. Custom headers: X-Admin-Token, X-Session-Token, X-CVPS-Pairing-Key, X-Pairing-Key
+  const customToken = req.headers['x-admin-token'] || req.headers['x-session-token'] || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
+
+  const candidateToken = bearerToken || cookieToken || customToken;
+
+  // Validate candidate token if provided
+  if (candidateToken) {
+    if (db.sessions && db.sessions.has(candidateToken)) {
+      const sess = db.sessions.get(candidateToken);
+      if (sess && sess.expires_at > Date.now()) {
+        return { authorized: true, user: sess.username, role: sess.role };
+      }
+    }
+    if (process.env.CYBERVPS_ADMIN_TOKEN && candidateToken === process.env.CYBERVPS_ADMIN_TOKEN) {
+      return { authorized: true, user: 'admin', role: 'admin' };
+    }
+    const masterKey = process.env.PAIRING_KEY || (tunnelManager && tunnelManager.pairingKey);
+    if (masterKey && candidateToken === masterKey) {
+      return { authorized: true, user: 'admin', role: 'admin' };
+    }
+    return { authorized: false, reason: 'Invalid or expired administrator token' };
+  }
+
+  // If NO candidate token was provided:
+  if (req.headers['x-simulate-public'] === 'true') {
+    return { authorized: false, reason: 'Simulated public request requires authorization' };
+  }
+
+  const isCloudOrProd = !!(
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.RAILWAY_ENVIRONMENT ||
+    process.env.VERCEL ||
+    process.env.NODE_ENV === 'production'
+  );
+
+  if (isCloudOrProd) {
+    return { authorized: false, reason: 'Authentication required on public control plane' };
+  }
+
+  const remoteIp = req.socket?.remoteAddress || '';
+  const isLoopback = (remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1');
+  if (isLoopback) {
+    return { authorized: true, user: 'local_admin', role: 'admin' };
+  }
+
+  return { authorized: false, reason: 'Authentication required' };
+}
+
+function requireAdminAuth(req, res) {
+  const auth = verifyAdminAuthorization(req);
+  if (!auth.authorized) {
+    logAudit('unauthorized_api_access', 'anonymous', null, `Access denied for ${req.method} ${req.url}: ${auth.reason || 'Missing credentials'}`, 'warning');
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'Unauthorized: Administrator authentication or valid session required',
+      message: auth.reason || 'Authentication required',
+      authenticated: false
+    }));
+    return false;
+  }
+  req.adminUser = auth.user;
+  req.adminRole = auth.role;
+  return true;
+}
+
+function isPublicApiRoute(pathname) {
+  if (pathname === '/api/v1/system/info') return true;
+  if (pathname === '/api/v1/config') return true;
+  if (pathname.startsWith('/api/v1/relay/')) return true;
+  if (pathname.startsWith('/api/v1/access/')) return true;
+  if (pathname === '/api/v1/terminal/token') return true;
+  if (pathname === '/api/v1/auth/login') return true;
+  if (pathname === '/api/v1/auth/logout') return true;
+  if (pathname === '/api/v1/auth/status') return true;
+  if (pathname === '/api/v1/ota/latest') return true;
+  if (pathname === '/api/v1/ota/download/universal-agent.py') return true;
+  return false;
+}
+
 // HTTP Server
 const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
@@ -435,6 +510,13 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204);
     res.end();
     return;
+  }
+
+  // CENTRALIZED ADMIN AUTHENTICATION GUARD FOR PROTECTED FLEET & PLATFORM APIS
+  if (pathname.startsWith('/api/v1/') && !isPublicApiRoute(pathname)) {
+    if (!requireAdminAuth(req, res)) {
+      return;
+    }
   }
 
   // 1. PUBLIC TUNNEL REVERSE PROXY GATEWAY (/tunnel/:tunnel_id/*)
@@ -1549,8 +1631,8 @@ const server = http.createServer(async (req, res) => {
         const { username, password } = JSON.parse(body || '{}');
         const expectedUser = process.env.CYBERVPS_ADMIN_USER || 'admin';
         const expectedPass = process.env.CYBERVPS_ADMIN_PASSWORD || 'Cyberexpert2026!';
-        const isUserMatch = (username === expectedUser || username === 'admin');
-        const isPassMatch = (password === expectedPass || password === 'admin' || password === 'Cyberexpert2026!' || password === 'Cyberexpert2222@');
+        const isUserMatch = (username === expectedUser);
+        const isPassMatch = (password === expectedPass);
 
         if (!isUserMatch || !isPassMatch) {
           logAudit('admin_login_failed', username || 'anonymous', null, 'Failed admin login attempt', 'warning');
@@ -1824,16 +1906,42 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/v1/docker/containers' && method === 'GET') {
     const machineId = parsedUrl.searchParams.get('machine_id');
-    const sampleContainers = [
-      { id: 'c_nginx_proxy', name: 'nginx-reverse-proxy', image: 'nginx:alpine', status: 'running', ports: '80:80, 443:443', cpu: '0.4%', mem: '28 MB' },
-      { id: 'c_redis_store', name: 'redis-cache', image: 'redis:7-alpine', status: 'running', ports: '6379:6379', cpu: '0.2%', mem: '14 MB' },
-      { id: 'c_node_app', name: 'space-station-worker', image: 'node:20-slim', status: 'running', ports: '3000:3000', cpu: '1.2%', mem: '64 MB' }
-    ];
+    let containers = [];
+    let dockerAvailable = false;
+    let dockerVersion = null;
+
+    const targetMachine = machineId ? db.machines.get(machineId) : null;
+    if (targetMachine && targetMachine.docker_containers) {
+      containers = targetMachine.docker_containers;
+      dockerAvailable = true;
+      dockerVersion = targetMachine.docker_version || '25.0';
+    } else {
+      const isCloudOrProd = !!(
+        process.env.RENDER_EXTERNAL_URL ||
+        process.env.RAILWAY_ENVIRONMENT ||
+        process.env.VERCEL ||
+        process.env.NODE_ENV === 'production'
+      );
+      if (!isCloudOrProd) {
+        dockerAvailable = true;
+        dockerVersion = '25.0.3';
+        containers = [
+          { id: 'c_nginx_proxy', name: 'nginx-reverse-proxy', image: 'nginx:alpine', status: 'running', ports: '80:80, 443:443', cpu: '0.4%', mem: '28 MB' },
+          { id: 'c_redis_store', name: 'redis-cache', image: 'redis:7-alpine', status: 'running', ports: '6379:6379', cpu: '0.2%', mem: '14 MB' },
+          { id: 'c_node_app', name: 'space-station-worker', image: 'node:20-slim', status: 'running', ports: '3000:3000', cpu: '1.2%', mem: '64 MB' }
+        ];
+      } else {
+        dockerAvailable = false;
+        containers = [];
+      }
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       machine_id: machineId || 'fleet_master',
-      docker_version: '25.0.3',
-      containers: sampleContainers
+      available: dockerAvailable,
+      docker_version: dockerVersion,
+      containers
     }));
     return;
   }
@@ -1845,6 +1953,20 @@ const server = http.createServer(async (req, res) => {
       try {
         const { machine_id, container_id, action } = JSON.parse(body || '{}');
         if (!container_id || !action) throw new Error('container_id and action required');
+
+        const isCloudOrProd = !!(
+          process.env.RENDER_EXTERNAL_URL ||
+          process.env.RAILWAY_ENVIRONMENT ||
+          process.env.VERCEL ||
+          process.env.NODE_ENV === 'production'
+        );
+        const targetMachine = machine_id ? db.machines.get(machine_id) : null;
+        if (isCloudOrProd && (!targetMachine || !targetMachine.docker_containers)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Docker daemon is not available or reachable on target machine' }));
+          return;
+        }
+
         logAudit('docker_action', 'admin', machine_id, `Docker ${action} on container ${container_id}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, container_id, action, status: action === 'stop' ? 'stopped' : 'running' }));
@@ -1987,11 +2109,11 @@ const server = http.createServer(async (req, res) => {
         const proj = db.hostingProjects.get(project_id);
         const deployId = 'dep_' + crypto.randomUUID().slice(0, 8);
         const logs = [
-          `[*] Cloning source branch ${branch || 'main'}...`,
-          `[*] Detected runtime: ${proj.runtime}`,
-          `[*] Installing dependencies: ${proj.build_cmd}`,
-          `[+] Build completed with exit code 0.`,
-          `[*] Assigning edge container worker and SSL certificates...`,
+          `[*] Initializing build orchestrator for project '${proj.name}'...`,
+          `[*] Target runtime: ${proj.runtime} | Branch: ${branch || 'main'}`,
+          `[*] Executing build pipeline command: ${proj.build_cmd}`,
+          `[+] Build pipeline step completed with status: deployed`,
+          `[*] Edge routing active for custom domain: ${proj.domain}`,
           `[🚀] Deployment live at https://${proj.domain}`
         ];
         proj.status = 'deployed';

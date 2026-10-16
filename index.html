@@ -3157,10 +3157,14 @@
       if (appConfig.pairingKey) {
         headers['X-CVPS-Pairing-Key'] = appConfig.pairingKey;
       }
+      const savedAdminToken = appState.adminAuth?.token || localStorage.getItem('cvps_admin_token');
+      if (savedAdminToken && !headers['Authorization']) {
+        headers['Authorization'] = `Bearer ${savedAdminToken}`;
+      }
 
       try {
         const start = performance.now();
-        const res = await fetch(url, { ...options, headers, signal: controller.signal });
+        const res = await fetch(url, { ...options, headers, credentials: 'include', signal: controller.signal });
         clearTimeout(timeoutId);
         const duration = Math.round(performance.now() - start);
 
