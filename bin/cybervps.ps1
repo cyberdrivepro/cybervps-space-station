@@ -77,10 +77,24 @@ function Load-Config {
 }
 
 switch ($Command.ToLower()) {
-    "start" {
+    { $_ -in @("start", "ghost") } {
         $cfg = Load-Config
+        $isGhost = ($Command.ToLower() -eq "ghost" -or ($ArgsList -contains "--ghost"))
         $py = Find-Python
         if (-not $py) {
+            $ghostBridgePs1 = Join-Path $InstallDir "agent\ghost-bridge.ps1"
+            if (-not (Test-Path $ghostBridgePs1)) {
+                $ghostBridgePs1 = Join-Path $BaseDir "ghost-bridge.ps1"
+            }
+            if (Test-Path $ghostBridgePs1) {
+                Write-Host "[!] Python 3 not detected. Activating Zero-Dependency PowerShell Ghost Bridge..." -ForegroundColor Yellow
+                $ghostProc = Start-Process -FilePath powershell.exe -ArgumentList "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$ghostBridgePs1`" -Server `"$($cfg.server_url)`" -Token `"$($cfg.token)`" -MachineId `"$($cfg.machine_id)`"" -PassThru -WindowStyle Hidden
+                Set-Content -Path (Join-Path $RunDir "ghost-bridge.pid") -Value $ghostProc.Id -Force
+                Write-Host "[+] CyberVPS Zero-Dependency Ghost Bridge active in background (PID: $($ghostProc.Id))." -ForegroundColor Green
+                Write-Host "    Connected to: $($cfg.server_url)"
+                Write-Host "    Ghost Mode: 100% Invisible Background Operation"
+                return
+            }
             Write-Host "[X] Error: Python 3 runtime not found in PATH." -ForegroundColor Red
             exit 1
         }
@@ -94,12 +108,13 @@ switch ($Command.ToLower()) {
             }
             Remove-Item $AgentPidFile -Force -ErrorAction SilentlyContinue
         }
-        Write-Host "[*] Starting CyberVPS Host Agent in background..." -ForegroundColor Cyan
-        $proc = Start-Process -FilePath $py -ArgumentList "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`"" -PassThru -WindowStyle Hidden
+        Write-Host "[*] Starting CyberVPS Host Agent in background $(if ($isGhost) { '(Ghost Mode)' } else { '' })..." -ForegroundColor Cyan
+        $ghostFlag = if ($isGhost) { " --ghost" } else { "" }
+        $proc = Start-Process -FilePath $py -ArgumentList "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`"$ghostFlag" -PassThru -WindowStyle Hidden
         Set-Content -Path $AgentPidFile -Value $proc.Id -Force
         Start-Sleep -Seconds 1
         if (Is-PidRunning $proc.Id) {
-            Write-Host "[+] CyberVPS Host Agent started successfully (PID: $($proc.Id))." -ForegroundColor Green
+            Write-Host "[+] CyberVPS Host Agent started successfully (PID: $($proc.Id)) $(if ($isGhost) { '[Ghost Mode]' } else { '' })." -ForegroundColor Green
             Write-Host "    Connected to: $($cfg.server_url)"
             Write-Host "    View logs with: cybervps logs"
         } else {

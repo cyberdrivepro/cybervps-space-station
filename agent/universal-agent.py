@@ -559,7 +559,7 @@ class RelayWebSocket:
 
 
 class CyberVPSAgent:
-    def __init__(self, server_url, token="cvps_enroll_master_token", machine_id=None, pid_file=None):
+    def __init__(self, server_url, token="cvps_enroll_master_token", machine_id=None, pid_file=None, ghost_mode=False):
         raw = (server_url or "https://cybervps-space-station.up.railway.app").strip().rstrip("/")
         if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("ws://") or raw.startswith("wss://")):
             raw = "https://" + raw
@@ -567,6 +567,14 @@ class CyberVPSAgent:
         self.http_base = self.server_url.replace("ws://", "http://").replace("wss://", "https://")
         self.token = token
         self.machine_id = machine_id or self.generate_machine_id()
+        self.ghost_mode = bool(ghost_mode or os.environ.get("CYBERVPS_GHOST_MODE") == "1")
+        if self.ghost_mode and platform.system() == "Windows" and ctypes:
+            try:
+                hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 0)
+            except Exception:
+                pass
         self.pid_file = pid_file or os.environ.get("CYBERVPS_PID_FILE") or os.path.join(
             os.environ.get("CYBERVPS_RUN_DIR") or os.path.join(os.path.expanduser("~"), ".cybervps", "run"),
             "agent.pid"
@@ -1058,6 +1066,7 @@ class CyberVPSAgent:
             "daytona": daytona_info,
             "public_ip": public_ip,
             "local_ips": ip_endpoints,
+            "ghost_mode": getattr(self, "ghost_mode", False),
             "attributes": attributes,
             "neofetch": neofetch_summary
         }
@@ -1184,6 +1193,8 @@ class CyberVPSAgent:
             "rdp": True,
             "vnc": True,
             "interactive_gui": True,
+            "ghost_mode": getattr(self, "ghost_mode", False),
+            "zero_dependency_bootstrap": True,
             "supported_desktop_actions": [
                 "launch_interactive", "launch_gui", "desktop_launch", "enable_rdp", "toggle_unattended", "terminate_session", "service_action"
             ],
@@ -5000,7 +5011,8 @@ class CyberVPSAgent:
                                 "hostname": socket.gethostname(),
                                 "username": self.username,
                                 "os": platform.system(),
-                                "agent_version": PROTOCOL_VERSION
+                                "agent_version": PROTOCOL_VERSION,
+                                "ghost_mode": getattr(self, "ghost_mode", False)
                             }
                         })
                         last_hb = now
@@ -5223,6 +5235,24 @@ def handle_cli_subcommands(args):
         cmd = [sys.executable, script_path, server_url, token, mid]
         new_pid = spawn_daemon(cmd)
         print(f"[+] CyberVPS agent started successfully (PID: {new_pid}).")
+        sys.exit(0)
+
+    elif subcmd == "ghost":
+        active_pid = get_running_pid()
+        if active_pid:
+            print(f"[!] Agent is already running (PID: {active_pid}).")
+            sys.exit(0)
+        cmd = [sys.executable, script_path, server_url, token, mid, "--ghost"]
+        new_pid = spawn_daemon(cmd)
+        print("================================================================")
+        print("   🛰️  CyberVPS Universal Agent - GHOST MODE                    ")
+        print("================================================================")
+        print(f"  [+] Ghost Bridge active in background (PID: {new_pid}).")
+        print("  * 100% Invisible Background Operation (Zero Console Popups)")
+        print(f"  * Machine ID: {mid}")
+        print(f"  * Server:     {server_url}")
+        print(f"  * Log File:   {os.path.join(cvps_dir, 'agent.log')}")
+        print("================================================================")
         sys.exit(0)
 
     elif subcmd == "restart":
@@ -5469,9 +5499,13 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     i = 0
     pos_idx = 0
+    ghost_mode = False
     while i < len(args):
         a = args[i]
-        if a in ("--server", "-s") and i + 1 < len(args):
+        if a in ("--ghost",):
+            ghost_mode = True
+            i += 1
+        elif a in ("--server", "-s") and i + 1 < len(args):
             target = args[i + 1]
             i += 2
         elif a in ("--token", "-t") and i + 1 < len(args):
@@ -5492,6 +5526,8 @@ if __name__ == "__main__":
                             token = c_data["token"]
                         if c_data.get("machine_id"):
                             mid = c_data["machine_id"]
+                        if c_data.get("ghost_mode"):
+                            ghost_mode = True
                         if c_data.get("proxy"):
                             for k in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
                                 if not os.environ.get(k):
@@ -5537,7 +5573,7 @@ if __name__ == "__main__":
             i += 1
 
     try:
-        agent = CyberVPSAgent(target, token, mid)
+        agent = CyberVPSAgent(target, token, mid, ghost_mode=ghost_mode)
         try:
             home = os.path.expanduser("~")
             cvps_dir = os.path.join(home, ".cybervps")

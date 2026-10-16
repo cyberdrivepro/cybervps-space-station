@@ -128,7 +128,10 @@ async function main() {
   switch (command.toLowerCase()) {
     case 'start':
     case 'agent':
-      await handleStart();
+      await handleStart(false);
+      break;
+    case 'ghost':
+      await handleStart(true);
       break;
     case 'stop':
       await handleStop();
@@ -267,7 +270,7 @@ function findPythonRuntime() {
   }
 }
 
-async function handleStart() {
+async function handleStart(isGhost = false) {
   const config = loadConfig();
   let serverUrl = config.server_url;
   let token = config.token;
@@ -279,6 +282,8 @@ async function handleStart() {
     } else if ((args[i] === '--token' || args[i] === '-t') && args[i + 1]) {
       token = args[i + 1];
       i++;
+    } else if (args[i] === '--ghost') {
+      isGhost = true;
     } else if (args[i].startsWith('http://') || args[i].startsWith('https://')) {
       serverUrl = args[i];
     }
@@ -301,18 +306,55 @@ async function handleStart() {
     serverUrl = 'https://' + serverUrl;
   }
 
-  console.log(`[*] Launching CyberVPS Host Agent connecting to ${serverUrl}...`);
+  console.log(`[*] Launching CyberVPS Host Agent ${isGhost ? '(Ghost Mode) ' : ''}connecting to ${serverUrl}...`);
 
   const agentScript = path.join(APP_DIR, 'agent', 'universal-agent.py');
-  if (!fs.existsSync(agentScript)) {
-    console.error(`❌ Agent script not found at ${agentScript}`);
-    process.exit(1);
-  }
+  const ghostBridgePs1 = path.join(APP_DIR, 'agent', 'ghost-bridge.ps1');
+  const ghostBridgeSh = path.join(APP_DIR, 'agent', 'ghost-bridge.sh');
 
   const pyRuntime = findPythonRuntime();
   if (!pyRuntime) {
+    if (process.platform === 'win32' && fs.existsSync(ghostBridgePs1)) {
+      console.log('⚡ Zero-dependency fallback: Activating Windows Native PowerShell Ghost Bridge...');
+      const child = spawn('powershell.exe', [
+        '-WindowStyle', 'Hidden',
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', ghostBridgePs1,
+        '-Server', serverUrl,
+        '-Token', token
+      ], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
+      fs.writeFileSync(path.join(RUN_DIR, 'ghost-bridge.pid'), String(child.pid), 'utf8');
+      console.log(`✅ CyberVPS Ghost Bridge active in background (PID: ${child.pid}).`);
+      console.log(`   Connected to: ${serverUrl}`);
+      console.log(`   Ghost Mode: Active (Zero external dependencies)`);
+      return;
+    } else if (process.platform !== 'win32' && fs.existsSync(ghostBridgeSh)) {
+      console.log('⚡ Zero-dependency fallback: Activating Linux Zero-Dependency Ghost Bridge...');
+      const child = spawn('sh', [ghostBridgeSh, serverUrl, token], {
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.unref();
+      fs.writeFileSync(path.join(RUN_DIR, 'ghost-bridge.pid'), String(child.pid), 'utf8');
+      console.log(`✅ CyberVPS Ghost Bridge active in background (PID: ${child.pid}).`);
+      console.log(`   Connected to: ${serverUrl}`);
+      console.log(`   Ghost Mode: Active (Zero external dependencies)`);
+      return;
+    }
+
     console.error('❌ Error: Python 3 runtime is required to run the CyberVPS Host Agent.');
     console.error("👉 Please install Python 3 and ensure 'Add Python to PATH' is checked: https://www.python.org/downloads/");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(agentScript)) {
+    console.error(`❌ Agent script not found at ${agentScript}`);
     process.exit(1);
   }
 
@@ -326,8 +368,14 @@ async function handleStart() {
     CYBERVPS_CONFIG: CONFIG_FILE,
     CYBERVPS_LOG_FILE: AGENT_LOG_FILE
   };
+  if (isGhost) {
+    agentEnv.CYBERVPS_GHOST_MODE = '1';
+  }
 
   const pyArgs = [...pyRuntime.argsPrefix, '-u', agentScript, '--server', serverUrl, '--token', token, '--config', CONFIG_FILE];
+  if (isGhost) {
+    pyArgs.push('--ghost');
+  }
 
   const child = spawn(execBinary, pyArgs, {
     detached: true,
@@ -340,7 +388,7 @@ async function handleStart() {
 
   fs.writeFileSync(AGENT_PID_FILE, String(childPid), 'utf8');
 
-  console.log(`✅ CyberVPS Host Agent active in background (PID: ${childPid}).`);
+  console.log(`✅ CyberVPS Host Agent active in background (PID: ${childPid})${isGhost ? ' [Ghost Mode]' : ''}.`);
   console.log(`   Target Backend: ${serverUrl}`);
   console.log(`   Log output:     ${AGENT_LOG_FILE}`);
 

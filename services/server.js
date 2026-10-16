@@ -3535,8 +3535,13 @@ function handleAgentMessage(ws, msg) {
       capabilities: capabilities || {},
       profile: payload.profile || {},
       tags: ['universal-bridge', (os || 'linux').toLowerCase()],
+      ghost_mode: Boolean(payload.ghost_mode || payload.profile?.ghost_mode || capabilities?.ghost_mode || (Array.isArray(capabilities) && capabilities.includes('ghost_mode'))),
       revocation_code: payload.revocation_code || ('cvps_rev_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16))
     };
+
+    if (machineInfo.ghost_mode && !machineInfo.tags.includes('ghost-mode')) {
+      machineInfo.tags.push('ghost-mode');
+    }
 
     db.machines.set(machine_id, machineInfo);
     db.deviceRevocationCodes.set(machine_id, machineInfo.revocation_code);
@@ -3588,14 +3593,22 @@ function handleAgentMessage(ws, msg) {
         disk_total_bytes: disk_total_bytes || (10 * 1024 * 1024 * 1024),
         capabilities: payload.capabilities || telemetry?.capabilities || {},
         profile: telemetry?.profile || payload.profile || {},
-        tags: ['universal-bridge', ((payload.os || telemetry?.os || 'linux')).toLowerCase()]
+        tags: ['universal-bridge', ((payload.os || telemetry?.os || 'linux')).toLowerCase()],
+        ghost_mode: Boolean(payload.ghost_mode || telemetry?.ghost_mode || payload.profile?.ghost_mode)
       };
+      if (machineInfo.ghost_mode && !machineInfo.tags.includes('ghost-mode')) {
+        machineInfo.tags.push('ghost-mode');
+      }
       db.machines.set(machine_id, machineInfo);
       logAudit('agent_auto_enrolled', 'agent', machine_id, `Auto-enrolled from Heartbeat [${machineInfo.hostname}] -> Virtual IP: ${virtualIp}`);
       broadcastTelemetry(machineInfo);
     }
     const m = db.machines.get(machine_id);
     m.last_seen = new Date().toISOString();
+    if (payload.ghost_mode !== undefined) {
+      m.ghost_mode = Boolean(payload.ghost_mode);
+      if (m.ghost_mode && !m.tags.includes('ghost-mode')) m.tags.push('ghost-mode');
+    }
     if (uptime_seconds !== undefined) m.uptime_seconds = uptime_seconds;
     if (cpu_usage !== undefined) m.cpu_usage = cpu_usage;
     if (memory_used_bytes !== undefined) m.memory_used_bytes = memory_used_bytes;
