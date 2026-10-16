@@ -596,6 +596,17 @@ function requireAdminAuth(req, res, options = {}) {
   return true;
 }
 
+function normalizePlatformOs(rawOs) {
+  if (!rawOs || typeof rawOs !== 'string') return 'Unknown';
+  const str = rawOs.trim().toLowerCase();
+  if (str.includes('win') || str === 'nt') return 'Windows';
+  if (str.includes('linux') || str.includes('ubuntu') || str.includes('debian') || str.includes('centos') || str.includes('alpine') || str.includes('rhel') || str.includes('fedora') || str.includes('arch')) return 'Linux';
+  if (str.includes('darwin') || str.includes('mac') || str.includes('osx') || str.includes('apple')) return 'Darwin';
+  if (str.includes('bsd') || str.includes('freebsd') || str.includes('openbsd')) return 'BSD';
+  if (str.includes('android')) return 'Android';
+  return rawOs.trim();
+}
+
 function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/system/info') return true;
   if (pathname === '/api/v1/config') return true;
@@ -2793,14 +2804,14 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({
         machine_id: machineId,
         hostname: m.hostname || machineId,
-        os_type: m.os || 'Linux',
+        os_type: m.os || 'Unknown',
         status: isOffline ? 'offline' : 'unreachable',
         unattended_access: true,
         service_mode: isOffline ? 'offline' : 'unresponsive',
         headless: true,
         rdp: {
           supported: (m.os === 'Windows'),
-          edition: m.os === 'Windows' ? 'Windows Host' : 'Linux',
+          edition: m.os === 'Windows' ? 'Windows Host' : (m.os === 'Linux' ? 'Linux' : (m.os || 'Unknown')),
           enabled: false,
           port: 3389,
           reason: isOffline ? 'Machine is currently offline' : err.message
@@ -3855,7 +3866,7 @@ while True:
             id: machine_id,
             hostname: hostname || machine_id,
             friendly_name: profile?.device_name || hostname || machine_id,
-            os: os || profile?.platform || 'Linux',
+            os: normalizePlatformOs(os || profile?.platform || profile?.os),
             arch: arch || 'x86_64',
             agent_version: agent_version || '1.0.0',
             status: 'online',
@@ -3870,7 +3881,10 @@ while True:
         machine.last_seen = new Date().toISOString();
         machine.status = 'online';
         if (hostname) machine.hostname = hostname;
-        if (os) machine.os = os;
+        if (os) {
+          const normOs = normalizePlatformOs(os);
+          if (normOs !== 'Unknown' || !machine.os || machine.os === 'Unknown') machine.os = normOs;
+        }
         if (arch) machine.arch = arch;
         if (hardware_uuid) machine.hardware_uuid = hardware_uuid;
 
@@ -4793,7 +4807,8 @@ function handleAgentMessage(ws, msg) {
 
     // Auto-allocate Virtual IP for Mode B
     const virtualIp = vpnPool.allocate(machine_id);
-    const detectedUsername = username || capabilities?.username || capabilities?.user || payload.profile?.username || (capabilities?.is_root ? 'root' : (os === 'Windows' ? 'expert' : 'user'));
+    const normOs = normalizePlatformOs(os || payload.os || payload.profile?.os || payload.profile?.platform || payload.platform);
+    const detectedUsername = username || capabilities?.username || capabilities?.user || payload.profile?.username || (capabilities?.is_root ? 'root' : (normOs === 'Windows' ? 'expert' : 'user'));
     const hwUuid = hardware_uuid || payload.smbios_uuid || payload.profile?.hardware_uuid || null;
     const hwSerial = hardware_serial || payload.serial_number || payload.profile?.hardware_serial || null;
 
@@ -4802,7 +4817,7 @@ function handleAgentMessage(ws, msg) {
       hostname: hostname || machine_id,
       friendly_name: hostname || machine_id,
       username: detectedUsername,
-      os: os || 'Linux',
+      os: normOs,
       os_version: payload.profile?.os_full || payload.os_version || 'standard',
       arch: arch || 'x86_64',
       agent_version: agent_version || '1.0.0',
@@ -4820,7 +4835,7 @@ function handleAgentMessage(ws, msg) {
       disk_total_bytes: 10 * 1024 * 1024 * 1024,
       capabilities: capabilities || {},
       profile: payload.profile || {},
-      tags: ['universal-bridge', (os || 'linux').toLowerCase()],
+      tags: ['universal-bridge', normOs.toLowerCase()],
       ghost_mode: Boolean(payload.ghost_mode || payload.profile?.ghost_mode || capabilities?.ghost_mode || (Array.isArray(capabilities) && capabilities.includes('ghost_mode'))),
       revocation_code: payload.revocation_code || ('cvps_rev_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16))
     };
@@ -4839,7 +4854,7 @@ function handleAgentMessage(ws, msg) {
         device_name: hostname || machine_id,
         hardware_uuid: hwUuid,
         hardware_serial: hwSerial,
-        recovery_mode: os === 'Windows' ? 'usb_unattended' : 'vps_cloudinit',
+        recovery_mode: normOs === 'Windows' ? 'usb_unattended' : 'vps_cloudinit',
         installation_generation: 1,
         status: 'ready',
         auto_approve: true,
@@ -4879,13 +4894,14 @@ function handleAgentMessage(ws, msg) {
     }
     if (!db.machines.has(machine_id)) {
       const virtualIp = vpnPool.allocate(machine_id);
-      const detectedUsername = payload.username || telemetry?.username || telemetry?.profile?.username || (payload.os === 'Windows' ? 'expert' : 'root');
+      const reportedOs = normalizePlatformOs(payload.os || telemetry?.os || (payload.platform && payload.platform.includes('win') ? 'Windows' : ''));
+      const detectedUsername = payload.username || telemetry?.username || telemetry?.profile?.username || (reportedOs === 'Windows' ? 'expert' : 'root');
       const machineInfo = {
         id: machine_id,
         hostname: payload.hostname || telemetry?.hostname || machine_id,
         friendly_name: payload.hostname || telemetry?.hostname || machine_id,
         username: detectedUsername,
-        os: payload.os || telemetry?.os || (payload.platform && payload.platform.includes('win') ? 'Windows' : 'Linux'),
+        os: reportedOs,
         os_version: telemetry?.profile?.os_full || payload.os_version || 'standard',
         arch: payload.arch || 'x86_64',
         agent_version: payload.agent_version || '1.0.0',
@@ -4901,7 +4917,7 @@ function handleAgentMessage(ws, msg) {
         disk_total_bytes: disk_total_bytes || (10 * 1024 * 1024 * 1024),
         capabilities: payload.capabilities || telemetry?.capabilities || {},
         profile: telemetry?.profile || payload.profile || {},
-        tags: ['universal-bridge', ((payload.os || telemetry?.os || 'linux')).toLowerCase()],
+        tags: ['universal-bridge', reportedOs.toLowerCase()],
         ghost_mode: Boolean(payload.ghost_mode || telemetry?.ghost_mode || payload.profile?.ghost_mode)
       };
       if (machineInfo.ghost_mode && !machineInfo.tags.includes('ghost-mode')) {
@@ -4913,6 +4929,14 @@ function handleAgentMessage(ws, msg) {
     }
     const m = db.machines.get(machine_id);
     m.last_seen = new Date().toISOString();
+    m.status = 'online';
+    if (payload.os || telemetry?.os) {
+      const candidateOs = normalizePlatformOs(payload.os || telemetry?.os);
+      if (candidateOs !== 'Unknown' && (m.os === 'Unknown' || !m.os)) {
+        m.os = candidateOs;
+        if (!m.tags.includes(candidateOs.toLowerCase())) m.tags.push(candidateOs.toLowerCase());
+      }
+    }
     if (payload.ghost_mode !== undefined) {
       m.ghost_mode = Boolean(payload.ghost_mode);
       if (m.ghost_mode && !m.tags.includes('ghost-mode')) m.tags.push('ghost-mode');
@@ -4973,12 +4997,13 @@ function handleAgentMessage(ws, msg) {
     }
     if (!db.machines.has(machine_id)) {
       const virtualIp = vpnPool.allocate(machine_id);
+      const reportedOs = normalizePlatformOs(profile?.os || profile?.platform);
       const machineInfo = {
         id: machine_id,
         hostname: profile?.hostname || machine_id,
         friendly_name: profile?.hostname || machine_id,
-        username: profile?.username || 'root',
-        os: profile?.os || 'Linux',
+        username: profile?.username || (reportedOs === 'Windows' ? 'expert' : 'root'),
+        os: reportedOs,
         os_version: profile?.os_full || 'standard',
         arch: profile?.arch || 'x86_64',
         agent_version: '1.0.0',
@@ -4988,7 +5013,7 @@ function handleAgentMessage(ws, msg) {
         last_seen: new Date().toISOString(),
         capabilities: {},
         profile: profile || {},
-        tags: ['universal-bridge', (profile?.os || 'linux').toLowerCase()]
+        tags: ['universal-bridge', reportedOs.toLowerCase()]
       };
       db.machines.set(machine_id, machineInfo);
       broadcastTelemetry(machineInfo);

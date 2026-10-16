@@ -6,7 +6,7 @@
 # ==============================================================================
 
 SERVER="${1:-${CYBERVPS_SERVER:-https://cybervps-space-station.up.railway.app}}"
-TOKEN="${2:-${CYBERVPS_TOKEN:-cvps_enroll_master_token}}"
+TOKEN="${2:-${CYBERVPS_TOKEN:-${ENROLLMENT_TOKEN:-}}}"
 MACHINE_ID="${3:-${CYBERVPS_MACHINE_ID:-}}"
 
 PRIMARY_DIR="${HOME}/.cybervps"

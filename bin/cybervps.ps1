@@ -15,8 +15,10 @@ $BaseDir = Join-Path $HOME ".cybervps"
 $ProgramDataBase = if ($env:ProgramData) { Join-Path $env:ProgramData "CyberVPS" } else { "C:\ProgramData\CyberVPS" }
 if ((Test-Path (Join-Path $ProgramDataBase "run\agent.pid")) -or ((-not (Test-Path (Join-Path $BaseDir "config.json"))) -and (Test-Path (Join-Path $ProgramDataBase "config.json")))) {
     $ActiveBase = $ProgramDataBase
+    $InstallScope = "Machine-Wide (ProgramData)"
 } else {
     $ActiveBase = $BaseDir
+    $InstallScope = "User-Profile ($HOME\.cybervps)"
 }
 
 $InstallDir = Join-Path $ActiveBase "space-station"
@@ -25,6 +27,8 @@ $LogsDir = Join-Path $ActiveBase "logs"
 $ConfigFile = Join-Path $ActiveBase "config.json"
 $AgentPidFile = Join-Path $RunDir "agent.pid"
 $AgentLogFile = Join-Path $LogsDir "agent.log"
+$BootstrapLogFile = Join-Path $LogsDir "startup-bootstrap.log"
+
 $AgentScript = Join-Path $InstallDir "agent\universal-agent.py"
 if (-not (Test-Path $AgentScript)) {
     $AgentScript = Join-Path $ActiveBase "universal-agent.py"
@@ -33,34 +37,89 @@ if (-not (Test-Path $AgentScript)) {
     $AgentScript = Join-Path $BaseDir "universal-agent.py"
 }
 
-function Find-Python {
+function Find-PythonRuntime {
+    $pyExe = $null
+    $pywExe = $null
+    $versionStr = $null
+
+    # 1. Check 'where.exe python' skipping WindowsApps stubs
     try {
         $raw = where.exe python 2>$null
         if ($raw) {
             foreach ($line in ($raw -split "`r?`n")) {
                 $trimmed = $line.Trim()
                 if ($trimmed -and ($trimmed -notlike "*WindowsApps*") -and (Test-Path $trimmed)) {
-                    return $trimmed
+                    $item = Get-Item $trimmed -ErrorAction SilentlyContinue
+                    if ($item -and $item.Length -gt 0) {
+                        $pyExe = $trimmed
+                        break
+                    }
                 }
             }
         }
     } catch {}
-    try {
-        $pyVer = & py -3 --version 2>&1
-        if ($pyVer -like "*Python 3*") { return "py" }
-    } catch {}
-    $candidates = @(
-        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
-        "C:\Python3*\python.exe",
-        "C:\Program Files\Python3*\python.exe",
-        "$BaseDir\python\python.exe",
-        "$ProgramDataBase\python\python.exe"
-    )
-    foreach ($pat in $candidates) {
-        $found = Get-Item $pat -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found -and (Test-Path $found.FullName)) { return $found.FullName }
+
+    # 2. Check Python Launcher 'py -3' to resolve exact executable path
+    if (-not $pyExe) {
+        try {
+            $resolvedFromPy = & py -3 -c "import sys; print(sys.executable)" 2>$null
+            if ($resolvedFromPy -and (Test-Path $resolvedFromPy.Trim())) {
+                $pyExe = $resolvedFromPy.Trim()
+            }
+        } catch {}
     }
-    return $null
+
+    # 3. Known installation path candidates
+    if (-not $pyExe) {
+        $candidates = @(
+            "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+            "$env:LOCALAPPDATA\Python\pythoncore-3*\python.exe",
+            "$env:LOCALAPPDATA\Python\bin\python.exe",
+            "C:\Python3*\python.exe",
+            "C:\Program Files\Python3*\python.exe",
+            "$BaseDir\python\python.exe",
+            "$ProgramDataBase\python\python.exe"
+        )
+        foreach ($pat in $candidates) {
+            $found = Get-Item $pat -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found -and (Test-Path $found.FullName) -and ($found.Length -gt 0)) {
+                $pyExe = $found.FullName
+                break
+            }
+        }
+    }
+
+    if ($pyExe) {
+        # Discover companion pythonw.exe for 100% windowless execution
+        $parentDir = Split-Path -Parent $pyExe
+        $candW = Join-Path $parentDir "pythonw.exe"
+        if (Test-Path $candW) {
+            $pywExe = $candW
+        } else {
+            $pywExe = $pyExe
+        }
+
+        try {
+            $verOutput = & $pyExe -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')" 2>$null
+            $versionStr = "Python " + $verOutput.Trim()
+        } catch {
+            $versionStr = "Python 3 (Detected)"
+        }
+
+        return @{
+            Python = $pyExe
+            PythonW = $pywExe
+            Version = $versionStr
+            Valid = $true
+        }
+    }
+
+    return @{
+        Python = $null
+        PythonW = $null
+        Version = "Not Found"
+        Valid = $false
+    }
 }
 
 function Is-PidRunning([int]$pidToCheck) {
@@ -74,17 +133,22 @@ function Is-PidRunning([int]$pidToCheck) {
 }
 
 function Load-Config {
+    $cfgPathUsed = $null
     foreach ($cand in @($ConfigFile, (Join-Path $ProgramDataBase "config.json"), (Join-Path $BaseDir "config.json"))) {
         if (Test-Path $cand) {
             try {
-                return Get-Content $cand -Raw | ConvertFrom-Json
+                $parsed = Get-Content $cand -Raw | ConvertFrom-Json
+                $script:LoadedConfigPath = $cand
+                return $parsed
             } catch {}
         }
     }
-    return @{
-        server_url = "https://cybervps-space-station.up.railway.app"
-        token = "cvps_enroll_master_token"
-        machine_id = "cvps_$env:COMPUTERNAME"
+    $defaultTok = if ($env:CYBERVPS_AGENT_TOKEN) { $env:CYBERVPS_AGENT_TOKEN } elseif ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" }
+    $script:LoadedConfigPath = "Default (In-Memory)"
+    return [PSCustomObject]@{
+        server_url = if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "https://cybervps-space-station.up.railway.app" }
+        token = $defaultTok
+        machine_id = if ($env:CYBERVPS_MACHINE_ID) { $env:CYBERVPS_MACHINE_ID } else { "cvps_$env:COMPUTERNAME" }
         hostname = $env:COMPUTERNAME
     }
 }
@@ -128,12 +192,13 @@ switch ($Command.ToLower()) {
     { $_ -in @("start", "ghost") } {
         $cfg = Load-Config
         $isGhost = ($Command.ToLower() -eq "ghost" -or ($ArgsList -contains "--ghost"))
-        $py = Find-Python
-        if (-not $py) {
+
+        # 1. Resolve Python Runtime
+        $pyInfo = Find-PythonRuntime
+        if (-not $pyInfo.Valid) {
+            # Check Zero-Dependency PowerShell Ghost Bridge fallback
             $ghostBridgePs1 = Join-Path $InstallDir "agent\ghost-bridge.ps1"
-            if (-not (Test-Path $ghostBridgePs1)) {
-                $ghostBridgePs1 = Join-Path $BaseDir "ghost-bridge.ps1"
-            }
+            if (-not (Test-Path $ghostBridgePs1)) { $ghostBridgePs1 = Join-Path $BaseDir "ghost-bridge.ps1" }
             if (Test-Path $ghostBridgePs1) {
                 Write-Host "[!] Python 3 not detected. Activating Zero-Dependency PowerShell Ghost Bridge..." -ForegroundColor Yellow
                 $ghostProc = Start-Process -FilePath powershell.exe -ArgumentList "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$ghostBridgePs1`" -Server `"$($cfg.server_url)`" -Token `"$($cfg.token)`" -MachineId `"$($cfg.machine_id)`"" -PassThru -WindowStyle Hidden
@@ -143,30 +208,96 @@ switch ($Command.ToLower()) {
                 Write-Host "    Ghost Mode: 100% Invisible Background Operation"
                 return
             }
-            Write-Host "[X] Error: Python 3 runtime not found in PATH." -ForegroundColor Red
+            Write-Host "[X] [PYTHON_RUNTIME_NOT_FOUND] Error: Python 3 runtime not found in PATH or standard directories." -ForegroundColor Red
             exit 1
         }
-        if (Test-Path $AgentPidFile) {
-            $existingPid = [int](Get-Content $AgentPidFile -Raw).Trim()
-            if (Is-PidRunning $existingPid) {
-                Write-Host "[!] CyberVPS Host Agent is already running (PID: $existingPid)." -ForegroundColor Yellow
-                Write-Host "    Target: $($cfg.server_url)"
-                Write-Host "    Run 'cybervps status' to inspect or 'cybervps stop' to terminate."
-                return
+
+        # 2. Validate Agent Script Existence
+        if (-not (Test-Path $AgentScript)) {
+            Write-Host "[X] [AGENT_SCRIPT_MISSING] Error: Agent script universal-agent.py not found at $AgentScript" -ForegroundColor Red
+            exit 1
+        }
+
+        # 3. Pre-flight Syntax Compilation Validation
+        try {
+            $compileRes = & $pyInfo.Python -m py_compile "$AgentScript" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[X] [AGENT_SYNTAX_ERROR] Python syntax error in agent script: $compileRes" -ForegroundColor Red
+                exit 1
             }
+        } catch {
+            Write-Host "[!] Warning: Could not pre-compile agent script. Proceeding..." -ForegroundColor Yellow
+        }
+
+        # 4. Validate Configuration & Token Credential
+        if (-not $cfg.token -or $cfg.token -eq "cvps_enroll_master_token") {
+            Write-Host "[!] [MISSING_ENROLLMENT_CREDENTIAL] No valid enrollment token configured." -ForegroundColor Yellow
+            Write-Host "    An enrollment token from your Space Station dashboard or administrator is required." -ForegroundColor White
+            Write-Host "    Set token in $ConfigFile or via environment: `$env:CYBERVPS_TOKEN = 'your_token'" -ForegroundColor Cyan
+        }
+
+        # 5. Prevent Duplicate Instances
+        if (Test-Path $AgentPidFile) {
+            try {
+                $existingPid = [int](Get-Content $AgentPidFile -Raw).Trim()
+                if (Is-PidRunning $existingPid) {
+                    Write-Host "[!] [DUPLICATE_INSTANCE] CyberVPS Host Agent is already running (PID: $existingPid)." -ForegroundColor Yellow
+                    Write-Host "    Target: $($cfg.server_url)"
+                    Write-Host "    Run 'cybervps status' to inspect or 'cybervps stop' to terminate."
+                    return
+                }
+            } catch {}
             Remove-Item $AgentPidFile -Force -ErrorAction SilentlyContinue
         }
+
+        # 6. Ensure Directories Exist
+        foreach ($d in @($RunDir, $LogsDir)) {
+            if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+        }
+
+        # 7. Start Agent with Race-Safe Bootstrap Logging
         Write-Host "[*] Starting CyberVPS Host Agent in background $(if ($isGhost) { '(Ghost Mode)' } else { '' })..." -ForegroundColor Cyan
         $ghostFlag = if ($isGhost) { " --ghost" } else { "" }
-        $proc = Start-Process -FilePath $py -ArgumentList "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`"$ghostFlag" -PassThru -WindowStyle Hidden
+        $launchExe = $pyInfo.PythonW
+
+        # Prepare correlation and clean bootstrap log
+        $attemptId = "start_" + [Guid]::NewGuid().ToString("N").Substring(0, 8)
+        $initLine = "[$([DateTime]::UtcNow.ToString('o'))] [$attemptId] Spawning CyberVPS agent: $launchExe `"$AgentScript`""
+        Set-Content -Path $BootstrapLogFile -Value $initLine -Force
+
+        $agentArgs = "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`"$ghostFlag"
+        $proc = Start-Process -FilePath $launchExe -ArgumentList $agentArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $BootstrapLogFile -RedirectStandardError $BootstrapLogFile
         Set-Content -Path $AgentPidFile -Value $proc.Id -Force
-        Start-Sleep -Seconds 1
-        if (Is-PidRunning $proc.Id) {
+
+        # Poll readiness for up to 1.5 seconds
+        $startedOk = $false
+        for ($i = 0; $i -lt 15; $i++) {
+            Start-Sleep -Milliseconds 100
+            if ($proc.HasExited) { break }
+            if (Is-PidRunning $proc.Id) {
+                $startedOk = $true
+                break
+            }
+        }
+
+        if ($startedOk -and (-not $proc.HasExited)) {
             Write-Host "[+] CyberVPS Host Agent started successfully (PID: $($proc.Id)) $(if ($isGhost) { '[Ghost Mode]' } else { '' })." -ForegroundColor Green
             Write-Host "    Connected to: $($cfg.server_url)"
             Write-Host "    View logs with: cybervps logs"
         } else {
-            Write-Host "[X] Agent process exited immediately. Inspect logs at: $AgentLogFile" -ForegroundColor Red
+            $exitCode = if ($proc.HasExited) { $proc.ExitCode } else { "Unknown" }
+            Write-Host "[X] [PROCESS_EXITED_EARLY] Agent process exited immediately (Exit code: $exitCode)." -ForegroundColor Red
+            if (Test-Path $BootstrapLogFile) {
+                $recentErrors = Get-Content $BootstrapLogFile -Tail 10 -ErrorAction SilentlyContinue
+                if ($recentErrors) {
+                    Write-Host "    Startup Output:" -ForegroundColor Yellow
+                    foreach ($line in $recentErrors) {
+                        Write-Host "      $line" -ForegroundColor Gray
+                    }
+                }
+            }
+            Write-Host "    Inspect full application logs at: $AgentLogFile" -ForegroundColor Cyan
+            exit 1
         }
     }
 
@@ -176,12 +307,25 @@ switch ($Command.ToLower()) {
             Write-Host "[*] CyberVPS Host Agent is not running (PID file not found)." -ForegroundColor Yellow
             return
         }
-        $pidToKill = [int](Get-Content $AgentPidFile -Raw).Trim()
-        if (Is-PidRunning $pidToKill) {
+        $pidToKill = 0
+        try { $pidToKill = [int](Get-Content $AgentPidFile -Raw).Trim() } catch {}
+        if ($pidToKill -gt 0 -and (Is-PidRunning $pidToKill)) {
             Write-Host "[*] Stopping CyberVPS Agent (PID: $pidToKill)..." -ForegroundColor Cyan
             Stop-Process -Id $pidToKill -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 500
-            Write-Host "[+] CyberVPS Agent stopped by authorized administrator." -ForegroundColor Green
+            # Poll for confirmed termination up to 3 seconds
+            $stopped = $false
+            for ($k = 0; $k -lt 30; $k++) {
+                if (-not (Is-PidRunning $pidToKill)) {
+                    $stopped = $true
+                    break
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            if ($stopped) {
+                Write-Host "[+] CyberVPS Agent stopped." -ForegroundColor Green
+            } else {
+                Write-Host "[!] Warning: Agent process $pidToKill may still be terminating." -ForegroundColor Yellow
+            }
         } else {
             Write-Host "[*] Agent PID $pidToKill was not active." -ForegroundColor Yellow
         }
@@ -191,7 +335,7 @@ switch ($Command.ToLower()) {
     "restart" {
         Assert-IsAdmin "restart"
         & $PSCommandPath stop
-        Start-Sleep -Seconds 1
+        Start-Sleep -Milliseconds 800
         & $PSCommandPath start
     }
 
@@ -200,8 +344,10 @@ switch ($Command.ToLower()) {
         $isRunning = $false
         $activePid = 0
         if (Test-Path $AgentPidFile) {
-            $activePid = [int](Get-Content $AgentPidFile -Raw).Trim()
-            $isRunning = (Is-PidRunning $activePid)
+            try {
+                $activePid = [int](Get-Content $AgentPidFile -Raw).Trim()
+                $isRunning = (Is-PidRunning $activePid)
+            } catch {}
         }
 
         Write-Host "================================================================" -ForegroundColor Cyan
@@ -216,13 +362,21 @@ switch ($Command.ToLower()) {
         Write-Host "  Server Target   : $($cfg.server_url)" -ForegroundColor White
         Write-Host "  Machine ID      : $($cfg.machine_id)" -ForegroundColor White
 
-        # Test backend reachability
+        # Test backend reachability and enrollment state
         try {
             $healthRes = Invoke-RestMethod -Uri "$($cfg.server_url.TrimEnd('/'))/health" -TimeoutSec 3 -ErrorAction Stop
             Write-Host "  Server Health   : ONLINE ($($healthRes.status))" -ForegroundColor Green
         } catch {
             Write-Host "  Server Health   : UNREACHABLE ($($_.Exception.Message))" -ForegroundColor Yellow
         }
+
+        # Check if machine ID is registered on the control plane
+        try {
+            $machinesRes = Invoke-RestMethod -Uri "$($cfg.server_url.TrimEnd('/'))/api/v1/system/info" -TimeoutSec 3 -ErrorAction Stop
+            $cpStatus = if ($machinesRes.status) { $machinesRes.status } else { "OK" }
+            Write-Host "  Control Plane   : Connected ($cpStatus)" -ForegroundColor Green
+        } catch {}
+
         Write-Host "  Log File        : $AgentLogFile" -ForegroundColor Gray
         Write-Host "  Dashboard       : https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Cyan
         Write-Host "================================================================" -ForegroundColor Cyan
@@ -239,47 +393,133 @@ switch ($Command.ToLower()) {
 
     "doctor" {
         Write-Host "================================================================" -ForegroundColor Cyan
-        Write-Host "   CYBERVPS SPACE STATION - SYSTEM DOCTOR" -ForegroundColor Cyan
+        Write-Host "   CYBERVPS SPACE STATION - WINDOWS SYSTEM DOCTOR" -ForegroundColor Cyan
         Write-Host "================================================================" -ForegroundColor Cyan
-        $py = Find-Python
-        if ($py) {
-            $ver = & $py --version 2>&1
-            Write-Host "  [OK] Python Runtime : $ver ($py)" -ForegroundColor Green
+
+        # 1. Python Runtime
+        $pyInfo = Find-PythonRuntime
+        if ($pyInfo.Valid) {
+            Write-Host "  [PASS] Python Runtime     : $($pyInfo.Version) ($($pyInfo.Python))" -ForegroundColor Green
+            if ($pyInfo.PythonW -and (Test-Path $pyInfo.PythonW)) {
+                Write-Host "  [PASS] Windowless Runtime : $($pyInfo.PythonW) (Zero Popups)" -ForegroundColor Green
+            } else {
+                Write-Host "  [WARN] Windowless Runtime : pythonw.exe not found alongside python.exe" -ForegroundColor Yellow
+            }
         } else {
-            Write-Host "  [X]  Python Runtime : NOT FOUND" -ForegroundColor Red
+            Write-Host "  [FAIL] Python Runtime     : NOT FOUND in PATH or standard installation directories" -ForegroundColor Red
         }
-        $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-        if ($nodeCmd) {
-            $nver = & node -v
-            Write-Host "  [OK] Node.js Runtime: $nver (Optional CLI engine)" -ForegroundColor Green
+
+        # 2. Agent Script & Compilation
+        if (Test-Path $AgentScript) {
+            $scriptItem = Get-Item $AgentScript
+            $sizeKb = [Math]::Round($scriptItem.Length / 1024)
+            if ($pyInfo.Valid) {
+                try {
+                    $comp = & $pyInfo.Python -m py_compile "$AgentScript" 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "  [PASS] Agent Script       : $AgentScript (${sizeKb}KB, Valid Bytecode)" -ForegroundColor Green
+                    } else {
+                        Write-Host "  [FAIL] Agent Script       : Syntax error during py_compile ($comp)" -ForegroundColor Red
+                    }
+                } catch {
+                    Write-Host "  [WARN] Agent Script       : $AgentScript (${sizeKb}KB, Syntax check skipped)" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "  [PASS] Agent Script       : $AgentScript (${sizeKb}KB)" -ForegroundColor Green
+            }
         } else {
-            Write-Host "  [-]  Node.js Runtime: Not installed (Optional, pure Python mode active)" -ForegroundColor Gray
+            Write-Host "  [FAIL] Agent Script       : MISSING (Expected at $AgentScript)" -ForegroundColor Red
         }
+
+        # 3. Active Configuration
         $cfg = Load-Config
+        Write-Host "  [INFO] Config Source      : $script:LoadedConfigPath" -ForegroundColor Gray
+        Write-Host "  [INFO] Installation Scope : $InstallScope" -ForegroundColor Gray
+        if ($cfg.server_url) {
+            Write-Host "  [PASS] Server Target      : $($cfg.server_url)" -ForegroundColor Green
+        } else {
+            Write-Host "  [FAIL] Server Target      : Missing server_url" -ForegroundColor Red
+        }
+
+        if ($cfg.machine_id) {
+            Write-Host "  [PASS] Machine Identity   : $($cfg.machine_id)" -ForegroundColor Green
+        } else {
+            Write-Host "  [WARN] Machine Identity   : Missing machine_id" -ForegroundColor Yellow
+        }
+
+        # Redacted Token Security Check
+        $tok = $cfg.token
+        if (-not $tok) {
+            Write-Host "  [FAIL] Enrollment Token   : MISSING (Agent will not authenticate)" -ForegroundColor Red
+        } elseif ($tok -eq "cvps_enroll_master_token" -or $tok -eq "dummy_token") {
+            Write-Host "  [FAIL] Enrollment Token   : OBSOLETE / PLACEHOLDER (Rejected by backend)" -ForegroundColor Red
+        } else {
+            $tokLen = $tok.Length
+            $redacted = if ($tokLen -gt 10) { $tok.Substring(0, 6) + "..." + $tok.Substring($tokLen - 4) } else { "********" }
+            Write-Host "  [PASS] Enrollment Token   : Configured ($redacted, $tokLen chars)" -ForegroundColor Green
+        }
+
+        # 4. Agent Process & Mutex State
+        $isRunning = $false
+        $activePid = 0
+        if (Test-Path $AgentPidFile) {
+            try {
+                $activePid = [int](Get-Content $AgentPidFile -Raw).Trim()
+                $isRunning = (Is-PidRunning $activePid)
+            } catch {}
+        }
+        if ($isRunning) {
+            $procName = (Get-Process -Id $activePid -ErrorAction SilentlyContinue).ProcessName
+            Write-Host "  [PASS] Agent Process      : Running (PID $activePid, $procName)" -ForegroundColor Green
+        } else {
+            Write-Host "  [INFO] Agent Process      : Inactive (Offline)" -ForegroundColor Gray
+        }
+
+        # 5. Last Startup Bootstrap Status
+        if (Test-Path $BootstrapLogFile) {
+            $bootLines = Get-Content $BootstrapLogFile -Tail 2 -ErrorAction SilentlyContinue
+            if ($bootLines) {
+                Write-Host "  [INFO] Last Startup Log   : $($bootLines[-1])" -ForegroundColor Gray
+            }
+        }
+
+        # 6. Backend Network Connectivity
         try {
             $t0 = [DateTime]::UtcNow
             $res = Invoke-RestMethod -Uri "$($cfg.server_url.TrimEnd('/'))/health" -TimeoutSec 5 -ErrorAction Stop
             $elapsed = [Math]::Round(([DateTime]::UtcNow - $t0).TotalMilliseconds)
-            Write-Host "  [OK] Backend Network: Reached in ${elapsed}ms ($($cfg.server_url))" -ForegroundColor Green
+            Write-Host "  [PASS] Backend Network    : Reached in ${elapsed}ms ($($cfg.server_url))" -ForegroundColor Green
         } catch {
-            Write-Host "  [!]  Backend Network: Failed to reach $($cfg.server_url)" -ForegroundColor Yellow
+            Write-Host "  [FAIL] Backend Network    : Failed to reach $($cfg.server_url) ($($_.Exception.Message))" -ForegroundColor Red
         }
+
+        # 7. Autostart Registry Run Key
+        try {
+            $regVal = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPSAgent" -ErrorAction SilentlyContinue).CyberVPSAgent
+            if ($regVal) {
+                $hasPythonw = $regVal -like "*pythonw.exe*"
+                if ($hasPythonw) {
+                    Write-Host "  [PASS] Autostart (RunKey) : Configured with pythonw.exe (Zero Popups)" -ForegroundColor Green
+                } else {
+                    Write-Host "  [WARN] Autostart (RunKey) : Configured with console python.exe (May flash window)" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "  [INFO] Autostart (RunKey) : Not registered in HKCU Run" -ForegroundColor Gray
+            }
+        } catch {}
+
         Write-Host "================================================================" -ForegroundColor Cyan
     }
 
     "version" {
-        Write-Host "CyberVPS Space Station v1.0.0 (win32-x64, powershell)"
+        Write-Host "CyberVPS Space Station v2.1.1 (win32-x64, powershell 5.1+)"
     }
 
     { $_ -in "bridge", "tunnel", "sftp", "ssh" } {
         $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
         $cliJs = Join-Path $InstallDir "bin\cybervps"
-        if (-not (Test-Path $cliJs)) {
-            $cliJs = Join-Path $BaseDir "space-station\bin\cybervps"
-        }
-        if (-not (Test-Path $cliJs)) {
-            $cliJs = Join-Path (Split-Path -Parent $PSScriptRoot) "bin\cybervps"
-        }
+        if (-not (Test-Path $cliJs)) { $cliJs = Join-Path $BaseDir "space-station\bin\cybervps" }
+        if (-not (Test-Path $cliJs)) { $cliJs = Join-Path (Split-Path -Parent $PSScriptRoot) "bin\cybervps" }
         if ($nodeCmd -and (Test-Path $cliJs)) {
             & node $cliJs $Command.ToLower() @ArgsList
         } else {

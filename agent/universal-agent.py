@@ -64,6 +64,19 @@ try:
 except ImportError:
     psutil = None
 
+def get_silent_python_exe():
+    """Returns pythonw.exe path on Windows if available to guarantee zero console popups."""
+    exe = sys.executable
+    if platform.system() == "Windows":
+        if exe.lower().endswith("python.exe"):
+            cand = exe[:-10] + "pythonw.exe"
+            if os.path.exists(cand):
+                return cand
+        cand = os.path.join(os.path.dirname(exe), "pythonw.exe")
+        if os.path.exists(cand):
+            return cand
+    return exe
+
 # Ensure unbuffered stdio for background logs & safe headless fallback
 log_file_env = os.environ.get("CYBERVPS_LOG_FILE")
 if log_file_env:
@@ -530,7 +543,14 @@ class RelayWebSocket:
                             }))
                         else:
                             err_msg = p_ack.get("error", "Authentication rejected by server")
-                            print(f"[!] Authentication rejected by control plane: {err_msg}")
+                            auth_err_str = f"[!] Authentication rejected by control plane: {err_msg}"
+                            print(auth_err_str)
+                            if hasattr(self.agent, "log_file") and self.agent.log_file:
+                                try:
+                                    with open(self.agent.log_file, "a", encoding="utf-8") as _alf:
+                                        _alf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {auth_err_str}\n")
+                                except Exception:
+                                    pass
                             self.authenticated = False
                             self.agent.ws_connected = False
                             break
@@ -776,7 +796,9 @@ class CyberVPSAgent:
                         0,
                         winreg.KEY_READ | winreg.KEY_SET_VALUE
                     )
-                    expected_val = f'"{sys.executable}" "{primary_script}" start'
+                    silent_py = get_silent_python_exe()
+                    log_file = os.path.join(primary_dir, "agent.log")
+                    expected_val = f'"{silent_py}" "{primary_script}" --config "{cfg_file}" --log-file "{log_file}"'
                     try:
                         curr_val, _ = winreg.QueryValueEx(reg_key, "CyberVPSAgent")
                     except Exception:
@@ -5925,8 +5947,26 @@ class CyberVPSAgent:
                 mutex_name = f"Local\\CyberVPS_Agent_Mutex_{safe_mid}"
                 h_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
                 if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-                    print(f"[!] Another CyberVPS agent instance is already active for [{self.machine_id}]. Exiting silently.", flush=True)
-                    sys.exit(0)
+                    # Allow 1.2s grace period if previous instance is terminating during restart
+                    acquired = False
+                    for _ in range(12):
+                        time.sleep(0.1)
+                        if h_mutex:
+                            ctypes.windll.kernel32.CloseHandle(h_mutex)
+                        h_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
+                        if ctypes.windll.kernel32.GetLastError() != 183:
+                            acquired = True
+                            break
+                    if not acquired:
+                        msg = f"[!] [DUPLICATE_INSTANCE] Another CyberVPS agent instance is already active for [{self.machine_id}]. Exiting cleanly."
+                        print(msg, flush=True)
+                        if getattr(self, "log_file", None):
+                            try:
+                                with open(self.log_file, "a", encoding="utf-8") as _lf:
+                                    _lf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {msg}\n")
+                            except Exception:
+                                pass
+                        sys.exit(0)
                 self._singleton_mutex = h_mutex
             except SystemExit:
                 raise
@@ -6426,7 +6466,10 @@ def handle_cli_subcommands(args):
                     0,
                     winreg.KEY_READ | winreg.KEY_SET_VALUE
                 )
-                cmd_line = f'"{sys.executable}" "{primary_agent}" start'
+                silent_py = get_silent_python_exe()
+                cfg_file = os.path.join(cvps_dir, "config.json")
+                log_file = os.path.join(cvps_dir, "agent.log")
+                cmd_line = f'"{silent_py}" "{primary_agent}" --config "{cfg_file}" --log-file "{log_file}"'
                 winreg.SetValueEx(reg_key, "CyberVPSAgent", 0, winreg.REG_SZ, cmd_line)
                 winreg.CloseKey(reg_key)
                 print("  * Windows Autostart Persistence: ACTIVE (Run Key verified)")
@@ -6437,7 +6480,8 @@ def handle_cli_subcommands(args):
         active_pid = get_running_pid()
         if not active_pid:
             print("  * Agent process is inactive. Launching agent daemon...")
-            cmd = [sys.executable, primary_agent, server_url, token, mid]
+            silent_py = get_silent_python_exe()
+            cmd = [silent_py, primary_agent, server_url, token, mid]
             new_pid = spawn_daemon(cmd)
             print(f"  [+] CyberVPS Agent healed and running (PID: {new_pid}).")
         else:

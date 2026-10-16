@@ -14,6 +14,7 @@ import platform
 import subprocess
 import urllib.request
 import urllib.error
+import py_compile
 
 VERSION = "1.0.0"
 BASE_DIR = os.path.join(os.path.expanduser("~"), ".cybervps")
@@ -90,7 +91,7 @@ def assert_is_admin(action):
 def load_config():
     default_cfg = {
         "server_url": os.environ.get("CYBERVPS_SERVER", "https://cybervps-space-station.up.railway.app"),
-        "token": os.environ.get("CYBERVPS_TOKEN", "cvps_enroll_master_token"),
+        "token": os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or os.environ.get("ENROLLMENT_TOKEN") or "",
         "machine_id": f"cvps_{socket.gethostname()}",
         "hostname": socket.gethostname()
     }
@@ -196,7 +197,21 @@ def cmd_start():
     cfg = load_config()
     script = get_agent_script()
     if not os.path.exists(script):
-        print(f"[X] Error: Agent script not found at {script}")
+        print(f"[X] [AGENT_SCRIPT_MISSING] Error: Agent script not found at {script}")
+        sys.exit(1)
+
+    # Validate Python script syntax before launch
+    try:
+        py_compile.compile(script, doraise=True)
+    except Exception as e:
+        print(f"[X] [AGENT_SYNTAX_ERROR] Agent script syntax error: {e}")
+        sys.exit(1)
+
+    # Validate enrollment token presence
+    token = cfg.get("token") or ""
+    if not token or token == "cvps_enroll_master_token":
+        print("[!] [MISSING_ENROLLMENT_CREDENTIAL] No valid enrollment token configured.")
+        print("    Please set your enrollment token in config.json or environment: CYBERVPS_TOKEN=<token>")
         sys.exit(1)
 
     # If systemd is available and root, prefer systemctl
@@ -213,7 +228,7 @@ def cmd_start():
             with open(AGENT_PID_FILE, "r") as f:
                 existing = int(f.read().strip())
             if is_pid_running(existing):
-                print(f"[!] CyberVPS Host Agent is already running (PID: {existing}).")
+                print(f"[!] [DUPLICATE_INSTANCE] CyberVPS Host Agent is already running (PID: {existing}).")
                 print(f"    Target: {cfg.get('server_url')}")
                 print("    Run 'cybervps status' to inspect or 'cybervps stop' to terminate.")
                 return
@@ -221,12 +236,19 @@ def cmd_start():
             pass
 
     print("[*] Starting CyberVPS Host Agent in background...")
-    cmd = [sys.executable, "-u", script, "--config", CONFIG_FILE, "--log-dir", LOG_DIR]
+    py_bin = sys.executable
+    if platform.system() == "Windows" and py_bin.lower().endswith("python.exe"):
+        py_w = py_bin[:-10] + "pythonw.exe"
+        if not os.path.exists(py_w):
+            py_w = os.path.join(os.path.dirname(py_bin), "pythonw.exe")
+        if os.path.exists(py_w):
+            py_bin = py_w
+
+    cmd = [py_bin, "-u", script, "--config", CONFIG_FILE, "--log-dir", LOG_DIR]
     log_fp = open(AGENT_LOG_FILE, "a", encoding="utf-8")
     if platform.system() == "Windows":
-        DETACHED_PROCESS = 0x00000008
         CREATE_NO_WINDOW = 0x08000000
-        p = subprocess.Popen(cmd, stdout=log_fp, stderr=log_fp, stdin=subprocess.DEVNULL, creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW)
+        p = subprocess.Popen(cmd, stdout=log_fp, stderr=log_fp, stdin=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW | 0x00000200)
     else:
         p = subprocess.Popen(cmd, stdout=log_fp, stderr=log_fp, stdin=subprocess.DEVNULL, start_new_session=True)
 
@@ -239,7 +261,9 @@ def cmd_start():
         print(f"    Connected to: {cfg.get('server_url')}")
         print("    View logs with: cybervps logs")
     else:
-        print(f"[X] Agent process exited immediately. Inspect logs at: {AGENT_LOG_FILE}")
+        exit_code = p.poll()
+        print(f"[X] [PROCESS_EXITED_EARLY] Agent process exited immediately (exit code: {exit_code}). Inspect logs at: {AGENT_LOG_FILE}")
+        sys.exit(1)
 
 
 def cmd_stop():
@@ -264,9 +288,13 @@ def cmd_stop():
                 subprocess.run(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
                 os.kill(pid, 15)
-                time.sleep(0.5)
-                if is_pid_running(pid):
-                    os.kill(pid, 9)
+            # Poll for termination up to 3 seconds
+            for _ in range(30):
+                if not is_pid_running(pid):
+                    break
+                time.sleep(0.1)
+            if is_pid_running(pid) and platform.system() != "Windows":
+                os.kill(pid, 9)
             print("[+] CyberVPS Agent stopped by authorized administrator.")
         else:
             print(f"[*] Agent PID {pid} was not active.")

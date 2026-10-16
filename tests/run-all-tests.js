@@ -1691,6 +1691,101 @@ async function runTests() {
   assert.strictEqual(validAdminRes.statusCode, 200, 'Valid admin session must return 200');
   console.log('  ✅ Strict Role Separation verified: Admin (200) vs Operator/Pairing (403) vs Enrollment Token (403) vs Obsolete Master (401).');
 
+  // TEST 40: Cross-Platform Fleet Verification: Explicit OS Normalization & Windows/Linux Fleet Independence
+  console.log('\n[TEST 40] Testing Cross-Platform Fleet Verification: OS Normalization & Separation...');
+
+  // 1. Enroll Windows Node with explicit OS
+  const winEnrollRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: 'vps_win_production_node_1',
+        token: 'test_enroll_token_999',
+        os: 'Windows',
+        hostname: 'WIN-DESKTOP-FLEET-01',
+        agent_version: '2.1.1'
+      }
+    })
+  });
+  assert.strictEqual(winEnrollRes.statusCode, 200, 'Windows enrollment must succeed');
+
+  // 2. Enroll Linux Node with explicit OS
+  const linuxEnrollRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: 'vps_linux_ubuntu_srv_02',
+        token: 'test_enroll_token_999',
+        os: 'Linux',
+        hostname: 'ubuntu-vps-prod',
+        agent_version: '2.1.1'
+      }
+    })
+  });
+  assert.strictEqual(linuxEnrollRes.statusCode, 200, 'Linux enrollment must succeed');
+
+  // 3. Enroll Node with missing/falsy OS - must NOT become Linux by default
+  const unkEnrollRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: 'vps_unknown_appliance_03',
+        token: 'test_enroll_token_999',
+        os: '',
+        hostname: 'embedded-device',
+        agent_version: '2.1.1'
+      }
+    })
+  });
+  assert.strictEqual(unkEnrollRes.statusCode, 200, 'Unknown OS enrollment must succeed');
+
+  // 4. Inspect fleet inventory
+  const fleetRes = await request(`${SERVER_URL}/api/v1/machines`, {
+    headers: { 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(fleetRes.statusCode, 200, 'Fleet inventory must return 200');
+  const fleetMachines = JSON.parse(fleetRes.body);
+
+  const winNode = fleetMachines.find(m => m.id === 'vps_win_production_node_1');
+  assert(winNode, 'Windows node must exist in fleet');
+  assert.strictEqual(winNode.os, 'Windows', 'Windows node OS must be normalized as Windows');
+
+  const linuxNode = fleetMachines.find(m => m.id === 'vps_linux_ubuntu_srv_02');
+  assert(linuxNode, 'Linux node must exist in fleet');
+  assert.strictEqual(linuxNode.os, 'Linux', 'Linux node OS must be normalized as Linux');
+
+  const unkNode = fleetMachines.find(m => m.id === 'vps_unknown_appliance_03');
+  assert(unkNode, 'Unverified node must exist in fleet');
+  assert.strictEqual(unkNode.os, 'Unknown', 'Missing OS must normalize to Unknown, never default to Linux');
+
+  // 5. Subsequent heartbeat on verified Windows node with empty OS must not overwrite OS
+  await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Heartbeat',
+      payload: {
+        machine_id: 'vps_win_production_node_1',
+        token: 'test_enroll_token_999',
+        os: '',
+        uptime_seconds: 120
+      }
+    })
+  });
+  const fleetRes2 = await request(`${SERVER_URL}/api/v1/machines`, {
+    headers: { 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  const winNode2 = JSON.parse(fleetRes2.body).find(m => m.id === 'vps_win_production_node_1');
+  assert.strictEqual(winNode2.os, 'Windows', 'Verified Windows OS must be preserved across heartbeats');
+
+  console.log('  ✅ Cross-Platform Fleet verified: Windows, Linux, and Unknown OS normalized & isolated without mislabeling.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -1698,7 +1793,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 39 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA & STREAMING TESTS PASSED!');
+  console.log('🎉 ALL 40 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA & STREAMING TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

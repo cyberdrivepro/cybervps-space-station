@@ -3729,8 +3729,8 @@
       tbody.innerHTML = appState.machines.map(m => {
         const isDaytona = m.attributes?.['node:daytona'] === 'true';
         const cpuPct = m.telemetry?.cpu_percent !== undefined ? m.telemetry.cpu_percent : null;
-        const memPct = m.telemetry?.memory_percent !== undefined ? m.telemetry.memory_percent : null;
-        const osLabel = m.os_full_version || m.os || 'Linux';
+        const rawOs = m.os_full_version || m.os;
+        const osLabel = (rawOs && rawOs !== 'Unknown') ? rawOs : 'Unknown / Unverified';
 
         let teleMetrics = '';
         if (cpuPct !== null && memPct !== null) {
@@ -6253,6 +6253,7 @@
         `;
         badgeEl.innerText = p.os_full_version || p.os || 'Ubuntu Linux';
       } else {
+        const isKnownLinux = (p.os || '').toLowerCase().includes('linux');
         svgLogo = `
           <svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="var(--status-warning)" stroke-width="2">
             <ellipse cx="12" cy="13" rx="6" ry="8"/>
@@ -6262,7 +6263,7 @@
             <polygon points="12,7 10.5,9 13.5,9" fill="#f59e0b"/>
           </svg>
         `;
-        badgeEl.innerText = p.os_full_version || p.os || 'Linux System';
+        badgeEl.innerText = p.os_full_version || (p.os && p.os !== 'Unknown' ? p.os : (isKnownLinux ? 'Linux System' : 'Unknown / Unverified'));
       }
 
       logoContainer.innerHTML = svgLogo + `<div style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono); margin-top:0.5rem;" id="neofetch-os-badge">${escapeHtml(badgeEl.innerText)}</div>`;
