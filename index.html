@@ -1046,7 +1046,10 @@
               <button class="btn btn-secondary" onclick="copyText('cmd-linux')">Copy</button>
             </div>
 
-            <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary); margin-top:1rem; margin-bottom:0.25rem;">Windows PowerShell (10 / 11, PowerShell 5.1 & 7+):</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; margin-bottom:0.25rem;">
+              <span style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">Windows PowerShell (1-Click Zero-Prompt Provisioning):</span>
+              <button class="btn btn-sm btn-outline" onclick="mintOneClickWindowsInstaller()" style="font-size:0.7rem; padding:2px 8px; cursor:pointer;">⚡ Refresh One-Click Ticket</button>
+            </div>
             <div class="copy-block">
               <code id="cmd-win">& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1')))</code>
               <button class="btn btn-secondary" onclick="copyText('cmd-win')">Copy</button>
@@ -3700,7 +3703,10 @@
       }
       const winCmdEl = document.getElementById('cmd-win');
       if (winCmdEl) {
-        winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1')))`;
+        if (!winCmdEl.innerText.includes('ticket=')) {
+          winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1')))`;
+          mintOneClickWindowsInstaller();
+        }
       }
 
       // Overview Audit Table (Recent 5)
@@ -7558,9 +7564,32 @@
       }, 3500);
     }
 
-    function copyText(id) {
+    async function mintOneClickWindowsInstaller() {
+      const winCmdEl = document.getElementById('cmd-win');
+      if (!winCmdEl) return;
+      const baseCmdUrl = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await apiRequest('/api/v1/enrollment/bootstrap', { method: 'POST' });
+        if (res && res.success && res.ticket) {
+          winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1?ticket=${res.ticket}')))`;
+          return res;
+        }
+      } catch (_) {}
+      winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1')))`;
+    }
+
+    async function copyText(id) {
       const el = document.getElementById(id);
       if (!el) return;
+      if (id === 'cmd-win' && !(el.innerText || '').includes('ticket=')) {
+        try {
+          const res = await apiRequest('/api/v1/enrollment/bootstrap', { method: 'POST' });
+          if (res && res.success && res.ticket) {
+            const baseCmdUrl = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+            el.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1?ticket=${res.ticket}')))`;
+          }
+        } catch (_) {}
+      }
       navigator.clipboard.writeText(el.innerText || el.textContent);
       showToast('Copied to clipboard!', 'success');
     }

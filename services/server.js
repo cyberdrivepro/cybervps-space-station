@@ -98,6 +98,7 @@ const db = {
   appInventories: new Map(), // machine_id -> { apps, timestamp, os_type, total, running, stopped }
   recoveryProfiles: new Map(), // machine_id -> RecoveryProfile { machine_id, device_name, hardware_uuid, hardware_serial, recovery_mode, installation_generation, status, auto_approve, history }
   recoveryTickets: new Map(), // ticket -> RecoveryTicket { ticket, machine_id, hardware_uuid, created_at, expires_at, used, issued_by }
+  bootstrapCapabilities: new Map(), // ticket -> { ticket, created_at, expires_at, used, consumed_by, consumed_at, issued_by }
   revokedDevices: new Set() // machine_id -> permanently revoked devices
 };
 
@@ -108,7 +109,13 @@ function getMasterEnrollmentToken() {
 function isValidEnrollmentToken(token) {
   if (!token) return false;
   const master = getMasterEnrollmentToken();
-  return token === master || (db.enrollmentTokens && db.enrollmentTokens.has(token));
+  if (token === master) return true;
+  if (db.enrollmentTokens && db.enrollmentTokens.has(token)) return true;
+  if (db.bootstrapCapabilities && db.bootstrapCapabilities.has(token)) {
+    const cap = db.bootstrapCapabilities.get(token);
+    if (cap && !cap.used && Date.now() <= cap.expires_at) return true;
+  }
+  return false;
 }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
@@ -187,6 +194,11 @@ function loadPersistentState() {
       if (Array.isArray(data.enrollmentTokens)) {
         for (const et of data.enrollmentTokens) db.enrollmentTokens.add(et);
       }
+      if (Array.isArray(data.bootstrapCapabilities)) {
+        for (const bc of data.bootstrapCapabilities) {
+          if (bc && bc.expires_at > Date.now()) db.bootstrapCapabilities.set(bc.ticket, bc);
+        }
+      }
       console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels, ${db.backends.size} backends, ${db.recoveryProfiles.size} recovery profiles`);
     }
   } catch (err) {
@@ -219,7 +231,8 @@ function savePersistentState() {
         recoveryTickets: Array.from(db.recoveryTickets.values()).filter(rt => rt.expires_at > Date.now()),
         revokedDevices: Array.from(db.revokedDevices),
         sessions: Array.from(db.sessions.entries()).filter(([_, s]) => s && s.expires_at > Date.now()),
-        enrollmentTokens: Array.from(db.enrollmentTokens)
+        enrollmentTokens: Array.from(db.enrollmentTokens),
+        bootstrapCapabilities: Array.from(db.bootstrapCapabilities.values()).filter(bc => bc && bc.expires_at > Date.now())
       };
       fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
@@ -722,19 +735,36 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/install.ps1') {
-    const scriptPath = path.join(__dirname, '../scripts/install-agent.ps1');
+    const canonicalPath = path.join(__dirname, '../install.ps1');
+    const fallbackPath = path.join(__dirname, '../scripts/install-agent.ps1');
+    const scriptPath = fs.existsSync(canonicalPath) ? canonicalPath : fallbackPath;
     fs.readFile(scriptPath, 'utf8', (err, data) => {
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      if (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('# Error loading install.ps1');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       const hostProto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
       const targetHost = (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost')
         ? tunnelManager.publicUrl
         : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
-      let customized = (data || '').replace('[string]$ServerUrl = "http://localhost:8080"', `[string]$ServerUrl = "${targetHost}"`);
+      
+      let customized = (data || '');
+      customized = customized.replace(
+        /\[string\]\$Server\s*=\s*\$\(if \(\$env:CYBERVPS_SERVER\) \{ \$env:CYBERVPS_SERVER \} else \{ "[^"]*" \}\)/,
+        `[string]$Server = $(if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "${targetHost}" })`
+      );
+      customized = customized.replace('[string]$ServerUrl = "http://localhost:8080"', `[string]$ServerUrl = "${targetHost}"`);
+
+      const queryTicket = parsedUrl.searchParams.get('ticket');
       const queryToken = parsedUrl.searchParams.get('token');
-      if (queryToken && isValidEnrollmentToken(queryToken)) {
+      const capability = queryTicket || queryToken;
+
+      if (capability && isValidEnrollmentToken(capability)) {
         customized = customized.replace(
-          /(\[string\]\$Token\s*=\s*)[^\r\n,)]+/,
-          `$1"${queryToken}"`
+          /(\[string\]\$Token\s*=\s*\$\(if \(\$env:CYBERVPS_TOKEN\) \{ \$env:CYBERVPS_TOKEN \} elseif \(\$env:ENROLLMENT_TOKEN\) \{ \$env:ENROLLMENT_TOKEN \} else \{ )"[^"]*"( \}\))/,
+          `$1"${capability}"$2`
         );
       }
       res.end(customized);
@@ -817,7 +847,8 @@ const server = http.createServer(async (req, res) => {
 
         const resResult = handleAgentMessage(null, msg);
         if (resResult && !resResult.success) {
-          const statusCode = resResult.error && resResult.error.toLowerCase().includes('token') ? 401 : 400;
+          const isAuthErr = msg.type === 'Auth' || (resResult.error && /token|auth|credential|capability|bootstrap/i.test(resResult.error));
+          const statusCode = isAuthErr ? 401 : 400;
           res.writeHead(statusCode, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: resResult.error }));
           return;
@@ -3486,6 +3517,49 @@ while True:
     return;
   }
 
+  if (pathname === '/api/v1/enrollment/bootstrap' && method === 'POST') {
+    const auth = verifyAdminAuthorization(req);
+    if (!auth.authorized) {
+      res.writeHead(auth.status || 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: auth.reason || 'Unauthorized: Administrator or pairing privileges required' }));
+      return;
+    }
+
+    const ticket = 'cvps_boot_' + crypto.randomBytes(16).toString('hex');
+    const ttlSeconds = 1800; // 30 minutes
+    const expiresAt = Date.now() + (ttlSeconds * 1000);
+
+    db.bootstrapCapabilities.set(ticket, {
+      ticket,
+      created_at: Date.now(),
+      expires_at: expiresAt,
+      used: false,
+      consumed_by: null,
+      consumed_at: null,
+      issued_by: auth.user || 'dashboard'
+    });
+    savePersistentState();
+
+    const hostProto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
+    const targetHost = (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost')
+      ? tunnelManager.publicUrl
+      : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
+
+    const oneLiner = `& ([scriptblock]::Create((Invoke-RestMethod '${targetHost}/install.ps1?ticket=${ticket}')))`;
+    logAudit('bootstrap_ticket_issued', auth.user || 'dashboard', null, `Issued 1-click bootstrap ticket (Expires in ${ttlSeconds}s)`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      ticket,
+      expires_in: ttlSeconds,
+      expires_at: new Date(expiresAt).toISOString(),
+      command: oneLiner,
+      url: `${targetHost}/install.ps1?ticket=${ticket}`
+    }));
+    return;
+  }
+
   // 4. MODE A: UNIVERSAL TCP PORT BRIDGE API (PC <---> Remote VPS Port Mapping)
   if (pathname === '/api/v1/bridge/mappings' && method === 'GET') {
     const list = Array.from(db.bridgeMappings.values());
@@ -4838,7 +4912,24 @@ function handleAgentMessage(ws, msg) {
       return { success: false, error: 'Missing machine_id' };
     }
 
-    if (!isValidEnrollmentToken(token)) {
+    let nodeToken = null;
+    if (db.bootstrapCapabilities && db.bootstrapCapabilities.has(token)) {
+      const cap = db.bootstrapCapabilities.get(token);
+      if (cap.used) {
+        if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Bootstrap enrollment token capability already consumed' } }));
+        return { success: false, error: 'Bootstrap enrollment token capability already consumed' };
+      }
+      if (Date.now() > cap.expires_at) {
+        if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Bootstrap enrollment token capability has expired' } }));
+        return { success: false, error: 'Bootstrap enrollment token capability has expired' };
+      }
+      cap.used = true;
+      cap.consumed_by = machine_id;
+      cap.consumed_at = Date.now();
+      nodeToken = 'cvps_node_' + crypto.randomBytes(16).toString('hex');
+      db.enrollmentTokens.add(nodeToken);
+      savePersistentState();
+    } else if (!isValidEnrollmentToken(token)) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Invalid token' } }));
       return { success: false, error: 'Invalid enrollment token' };
     }
@@ -4916,13 +5007,14 @@ function handleAgentMessage(ws, msg) {
           machine_id,
           success: true,
           virtual_ip: virtualIp,
+          node_token: nodeToken || token,
           revocation_code: machineInfo.revocation_code,
           heartbeat_interval_secs: 2,
           backends: Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }))
         }
       }));
     }
-    return { success: true, result: { machine_id, virtual_ip: virtualIp, revocation_code: machineInfo.revocation_code, status: 'online' } };
+    return { success: true, result: { machine_id, virtual_ip: virtualIp, node_token: nodeToken || token, revocation_code: machineInfo.revocation_code, status: 'online' } };
   }
 
   else if (type === 'Heartbeat' || type === 'TelemetryHeartbeat') {

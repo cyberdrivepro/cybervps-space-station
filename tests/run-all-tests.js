@@ -7,6 +7,8 @@
 
 const http = require('http');
 const net = require('net');
+const fs = require('fs');
+const path = require('path');
 const { WebSocket, WebSocketServer } = require('ws');
 const assert = require('assert');
 const { spawn, execSync } = require('child_process');
@@ -1786,6 +1788,96 @@ async function runTests() {
 
   console.log('  ✅ Cross-Platform Fleet verified: Windows, Linux, and Unknown OS normalized & isolated without mislabeling.');
 
+  // TEST 41: Ultra-Fast Zero-Prompt Windows Provisioning & Bootstrap Capabilities
+  console.log('\n[TEST 41] Testing Ultra-Fast Zero-Prompt Windows Provisioning & Bootstrap Capabilities...');
+
+  // 1. Unauthenticated bootstrap capability request must fail (401)
+  const unauthBootRes = await request(`${SERVER_URL}/api/v1/enrollment/bootstrap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Simulate-Public': 'true' }
+  });
+  assert.strictEqual(unauthBootRes.statusCode, 401, 'Unauthenticated bootstrap request must be rejected with 401');
+
+  // 2. Authenticated operator request mints single-use bootstrap capability
+  const authBootRes = await request(`${SERVER_URL}/api/v1/enrollment/bootstrap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CVPS-Pairing-Key': 'test_pair_key_123' }
+  });
+  assert.strictEqual(authBootRes.statusCode, 200, 'Authenticated operator must mint bootstrap ticket with 200');
+  const bootData = JSON.parse(authBootRes.body);
+  assert(bootData.ticket && bootData.ticket.startsWith('cvps_boot_'), 'Ticket must start with cvps_boot_');
+  assert(bootData.command && bootData.command.includes(bootData.ticket), 'Command must embed the single-use ticket');
+  assert(bootData.expires_in >= 1800, 'Ticket must have active expiry window');
+
+  // 3. GET /install.ps1 with ticket injects token seamlessly
+  const scriptRes = await request(`${SERVER_URL}/install.ps1?ticket=${bootData.ticket}`);
+  assert.strictEqual(scriptRes.statusCode, 200, 'GET /install.ps1 must return 200 OK');
+  assert(scriptRes.body.includes(bootData.ticket), 'Served install.ps1 must inject the capability ticket');
+  assert(!scriptRes.body.includes('Read-Host'), 'Served install.ps1 must contain NO interactive Read-Host prompts');
+
+  // 4. Node authenticates via Pre-flight Handshake with single-use ticket
+  const bootNodeId = 'cvps_win_bootstrap_' + Math.random().toString(36).substring(2, 8);
+  const bootAuthRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: bootNodeId,
+        token: bootData.ticket,
+        os: 'Windows',
+        agent_version: '2.2-ghost-native',
+        profile: { bootstrap: 'zero_prompt_fastpath' }
+      }
+    })
+  });
+  assert.strictEqual(bootAuthRes.statusCode, 200, 'Node Auth with valid bootstrap ticket must succeed with 200');
+  const bootAuthData = JSON.parse(bootAuthRes.body);
+  assert(bootAuthData.ok, 'Auth response must be ok');
+  assert(bootAuthData.result.virtual_ip, 'Must allocate virtual IP');
+  assert(bootAuthData.result.node_token && bootAuthData.result.node_token.startsWith('cvps_node_'), 'Server must issue dedicated permanent node token');
+  const issuedNodeToken = bootAuthData.result.node_token;
+
+  // 5. Capability must be single-use: replay with the consumed ticket must fail with 401
+  const replayBootRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: 'cvps_win_imposter',
+        token: bootData.ticket,
+        os: 'Windows'
+      }
+    })
+  });
+  assert.strictEqual(replayBootRes.statusCode, 401, 'Replaying consumed bootstrap ticket must be rejected with 401');
+
+  // 6. Node can reconnect using its dedicated permanent node token (Path A)
+  const reconnectRes = await request(`${SERVER_URL}/api/v1/relay/event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: bootNodeId,
+        token: issuedNodeToken,
+        os: 'Windows'
+      }
+    })
+  });
+  assert.strictEqual(reconnectRes.statusCode, 200, 'Reconnecting with issued node_token must succeed with 200');
+
+  // 7. Verify zero prompts in raw install.ps1 and scripts/install-agent.ps1
+  const rootPs1 = fs.readFileSync(path.join(__dirname, '../install.ps1'), 'utf8');
+  const scriptPs1 = fs.readFileSync(path.join(__dirname, '../scripts/install-agent.ps1'), 'utf8');
+  assert(!rootPs1.includes('Read-Host'), 'install.ps1 must not contain Read-Host');
+  assert(!scriptPs1.includes('Read-Host'), 'scripts/install-agent.ps1 must not contain Read-Host');
+  assert(!rootPs1.toLowerCase().includes('pause'), 'install.ps1 must not contain pause');
+  assert(!scriptPs1.toLowerCase().includes('pause'), 'scripts/install-agent.ps1 must not contain pause');
+
+  console.log('  ✅ Ultra-Fast Zero-Prompt Provisioning verified: 1-click bootstrap tickets, single-use enforcement, node_token issuance & zero Read-Host prompts.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -1793,7 +1885,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 40 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA & STREAMING TESTS PASSED!');
+  console.log('🎉 ALL 41 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA & STREAMING TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }
