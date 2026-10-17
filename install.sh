@@ -108,12 +108,28 @@ fetch_file() {
   fi
 }
 
-echo "[*] T+0ms Fast Handshake: Registering node [${MACHINE_ID}] with Control Plane..."
+echo "[*] Transmitting initial registration handshake to Control Plane (${SERVER_URL})..."
 
 # Instant Fast-Auth (T+0ms)
 FAST_AUTH="{\"type\":\"Auth\",\"payload\":{\"machine_id\":\"${MACHINE_ID}\",\"token\":\"${TOKEN}\",\"agent_version\":\"2.2-ghost-linux\",\"hostname\":\"${HOSTNAME}\",\"username\":\"${USER_NAME}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\",\"capabilities\":[\"ghost_mode\",\"sh_native\",\"background_provisioning\",\"remote_reboot\",\"zero_dependency_bootstrap\"],\"profile\":{\"ghost_mode\":true,\"bootstrap\":\"zero_dependency_linux\"}}}"
-http_post_json "${SERVER_URL}/api/v1/relay/event" "${FAST_AUTH}" >/dev/null 2>&1 || true
-echo "  [+] Node connected ONLINE in <100ms!"
+
+HANDSHAKE_ACK=0
+if [ "$DOWNLOAD_TOOL" = "curl" ]; then
+  H_CODE="$(curl -4 --connect-timeout 2 --max-time 4 -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -H "X-Machine-ID: ${MACHINE_ID}" -H "X-Enrollment-Token: ${TOKEN}" -d "${FAST_AUTH}" "${SERVER_URL}/api/v1/relay/event" 2>/dev/null || curl --connect-timeout 2 --max-time 4 -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -H "X-Machine-ID: ${MACHINE_ID}" -H "X-Enrollment-Token: ${TOKEN}" -d "${FAST_AUTH}" "${SERVER_URL}/api/v1/relay/event" 2>/dev/null || echo "000")"
+  if [ "$H_CODE" = "200" ] || [ "$H_CODE" = "201" ]; then
+    HANDSHAKE_ACK=1
+  fi
+elif [ "$DOWNLOAD_TOOL" = "wget" ]; then
+  if http_post_json "${SERVER_URL}/api/v1/relay/event" "${FAST_AUTH}" >/dev/null 2>&1; then
+    HANDSHAKE_ACK=1
+  fi
+fi
+
+if [ "$HANDSHAKE_ACK" -eq 1 ]; then
+  echo "  [+] Registration handshake acknowledged by control plane."
+else
+  echo "  [*] Handshake dispatched; daemon will complete full enrollment upon startup."
+fi
 
 # Stage ghost-bridge.sh
 GHOST_BRIDGE_SH="${INSTALL_BASE}/ghost-bridge.sh"
@@ -434,15 +450,32 @@ for i in $(seq 1 10); do
 done
 echo ""
 
+IS_RUNNING=0
+if [ -n "${AGENT_PID}" ] && kill -0 "${AGENT_PID}" 2>/dev/null; then
+  IS_RUNNING=1
+elif [ -f "${RUN_DIR}/agent.pid" ]; then
+  CHK_PID="$(cat "${RUN_DIR}/agent.pid" 2>/dev/null | tr -d ' \n\r')"
+  if [ -n "${CHK_PID}" ] && kill -0 "${CHK_PID}" 2>/dev/null; then
+    IS_RUNNING=1
+    AGENT_PID="${CHK_PID}"
+  fi
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet cybervps-agent.service 2>/dev/null; then
+  IS_RUNNING=1
+fi
+
 if [ "$ENROLLED" -eq 1 ]; then
   echo "  ✅ Fleet enrollment verified: Machine [${MACHINE_ID}] is ONLINE!"
   BACKEND_STATUS="Connected & Verified ✅"
+elif [ "$IS_RUNNING" -eq 1 ]; then
+  echo "  ℹ️  Agent background service is ACTIVE (PID: ${AGENT_PID:-running}). Initial heartbeat sync in progress."
+  echo "  👉 Inspect live logs with: cybervps logs"
+  echo "  👉 Check node status with: cybervps status"
+  BACKEND_STATUS="Syncing First Heartbeat ⏳"
 else
-  echo "  ⚠️ Fleet enrollment NOT verified within 20s."
-  echo "  👉 Recent agent logs:"
-  tail -n 15 "${LOG_DIR}/agent.log" 2>/dev/null || true
-  echo "  👉 To inspect logs manually: tail -f ~/.cybervps/logs/agent.log"
+  echo "  ⚠️ Agent process stopped unexpectedly. Recent agent logs:"
+  tail -n 20 "${LOG_DIR}/agent.log" 2>/dev/null || true
   echo "  👉 To restart agent: cybervps restart"
+  echo "  👉 To run diagnostics: cybervps doctor"
   BACKEND_STATUS="Enrollment Pending / Check Logs ⚠️"
 fi
 

@@ -30,6 +30,9 @@ import re
 import getpass
 import py_compile
 import datetime
+import hmac
+import hashlib
+import binascii
 
 # Guard against None stdio streams on Windows (e.g. under pythonw or windowless subsystems)
 if sys.stdout is None:
@@ -559,8 +562,11 @@ class RelayWebSocket:
                                         _alf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {auth_err_str}\n")
                                 except Exception:
                                     pass
-                            if hasattr(self.agent, "try_self_heal_token") and self.agent.try_self_heal_token():
-                                print(f"[*] Self-healing triggered: derived authenticated HMAC node token. Reconnecting...")
+                            try:
+                                if hasattr(self.agent, "try_self_heal_token") and self.agent.try_self_heal_token():
+                                    print(f"[*] Self-healing triggered: derived authenticated HMAC node token. Reconnecting...")
+                            except Exception:
+                                pass
                             self.authenticated = False
                             self.agent.ws_connected = False
                             break
@@ -1273,16 +1279,26 @@ class CyberVPSAgent:
                     pass
 
     def try_self_heal_token(self):
-        pairing_secret = os.environ.get("CVPS_PAIRING_KEY") or os.environ.get("PAIRING_KEY") or "cybervps_pair_station_2026"
-        sig = hmac.new(pairing_secret.encode("utf-8"), f"node:{self.machine_id}".encode("utf-8"), hashlib.sha256).hexdigest()[:24]
-        canonical_token = f"cvps_node_{self.machine_id}_{sig}"
-        if self.token != canonical_token:
-            self.persist_token(canonical_token)
-            return True
-        elif self.token != pairing_secret:
-            self.persist_token(pairing_secret)
-            return True
-        return False
+        try:
+            pairing_secret = (
+                os.environ.get("CVPS_PAIRING_KEY")
+                or os.environ.get("PAIRING_KEY")
+                or os.environ.get("BOOTSTRAP_SECRET")
+                or "cybervps_pair_station_2026"
+            )
+            mid = self.machine_id or "node"
+            sig = hmac.new(pairing_secret.encode("utf-8"), f"node:{mid}".encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+            canonical_token = f"cvps_node_{mid}_{sig}"
+            if self.token != canonical_token:
+                self.persist_token(canonical_token)
+                return True
+            elif self.token != pairing_secret:
+                self.persist_token(pairing_secret)
+                return True
+            return False
+        except Exception as e:
+            # Prevent secondary self-heal errors from crashing caller thread
+            return False
 
     # =========================================================================
     # Universal Device Intelligence (Neofetch & Tailscale-Style Discovery)
@@ -5972,8 +5988,11 @@ class CyberVPSAgent:
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 print(f"[!] HTTP Relay event unauthorized (401). Invalid token.")
-                if hasattr(self, "try_self_heal_token") and self.try_self_heal_token():
-                    print("[*] Self-healed node credential after 401.")
+                try:
+                    if hasattr(self, "try_self_heal_token") and self.try_self_heal_token():
+                        print("[*] Self-healed node credential after 401.")
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -5995,8 +6014,11 @@ class CyberVPSAgent:
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 print(f"[!] HTTP Command Poll unauthorized (401). Check enrollment token.")
-                if hasattr(self, "try_self_heal_token") and self.try_self_heal_token():
-                    print("[*] Self-healed node credential after 401.")
+                try:
+                    if hasattr(self, "try_self_heal_token") and self.try_self_heal_token():
+                        print("[*] Self-healed node credential after 401.")
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -6368,8 +6390,14 @@ class CyberVPSAgent:
         self.ws_relay.start()
         print("[*] WebSocket relay thread active.", flush=True)
 
-        self.send_agent_event(auth_payload)
-        self.send_discovery_report()
+        try:
+            self.send_agent_event(auth_payload)
+        except Exception as e:
+            print(f"[!] Initial auth event notice: {e}")
+        try:
+            self.send_discovery_report()
+        except Exception as e:
+            print(f"[!] Initial discovery report notice: {e}")
 
         last_hb = 0
         last_disc = 0
@@ -6441,7 +6469,15 @@ def handle_cli_subcommands(args):
     if not args:
         return False
     subcmd = args[0].lower().strip()
-    if subcmd not in ["status", "restart", "stop", "start", "reboot", "rebuild", "repair", "heal", "uninstall", "help", "--help", "-h"]:
+    valid_subcmds = [
+        "status", "restart", "stop", "start", "reboot", "rebuild",
+        "repair", "heal", "uninstall", "help", "--help", "-h",
+        "doctor", "check", "logs", "log", "version", "-v", "--version"
+    ]
+    if subcmd not in valid_subcmds:
+        if not subcmd.startswith(("http://", "https://", "-")):
+            print(f"Unknown command: '{args[0]}'. Run 'cybervps help' for available commands.")
+            sys.exit(1)
         return False
 
     for stream in (sys.stdout, sys.stderr):
@@ -6542,13 +6578,22 @@ def handle_cli_subcommands(args):
         sys.exit(5)
 
     def get_running_pid():
-        candidate_pids = [pid_file, os.path.join(programdata_dir, "run", "agent.pid"), os.path.join(programdata_dir, "agent.pid"), os.path.join(cvps_dir, "agent.pid")]
+        candidate_pids = [
+            pid_file,
+            os.path.join(cvps_dir, "run", "agent.pid"),
+            os.path.join(cvps_dir, "agent.pid"),
+            os.path.join(programdata_dir, "run", "agent.pid"),
+            os.path.join(programdata_dir, "agent.pid")
+        ]
         for pf in candidate_pids:
             if not os.path.exists(pf):
                 continue
             try:
                 with open(pf, "r") as f:
-                    p = int(f.read().strip())
+                    content = f.read().strip()
+                    if not content or not content.isdigit():
+                        continue
+                    p = int(content)
                 if platform.system() == "Windows":
                     import ctypes
                     PROCESS_QUERY_INFORMATION = 0x0400
@@ -6571,6 +6616,9 @@ def handle_cli_subcommands(args):
         print("  restart     Restart the local agent service cleanly")
         print("  start       Start the agent service in background")
         print("  stop        Stop the running agent service")
+        print("  logs        Tail recent agent log messages")
+        print("  doctor      Run diagnostic environment and connectivity checks")
+        print("  version     Show installed CyberVPS agent version")
         print("  heal        Perform full self-healing check, verify shadow copy & repair")
         print("  uninstall   Cleanly uninstall CyberVPS agent and remove autostart entries")
         print("  reboot      Gracefully initiate host machine reboot")
@@ -6716,6 +6764,24 @@ def handle_cli_subcommands(args):
 
     elif subcmd == "restart":
         check_admin_authorization("restart")
+        # 1. Prefer systemd system service if running as root
+        if platform.system() != "Windows" and os.geteuid() == 0 and os.path.exists("/etc/systemd/system/cybervps-agent.service"):
+            try:
+                subprocess.run(["systemctl", "restart", "cybervps-agent.service"], check=True)
+                print("[+] CyberVPS agent restarted successfully via systemd service.")
+                sys.exit(0)
+            except Exception:
+                pass
+        # 2. Prefer systemd user service if user mode active
+        user_svc = os.path.expanduser("~/.config/systemd/user/cybervps-agent.service")
+        if platform.system() != "Windows" and os.path.exists(user_svc):
+            try:
+                subprocess.run(["systemctl", "--user", "restart", "cybervps-agent.service"], check=True)
+                print("[+] CyberVPS agent restarted successfully via user systemd service.")
+                sys.exit(0)
+            except Exception:
+                pass
+        # 3. Background daemon restart fallback
         active_pid = get_running_pid()
         if active_pid:
             try:
@@ -6723,12 +6789,69 @@ def handle_cli_subcommands(args):
                     subprocess.run(["taskkill", "/F", "/PID", str(active_pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 else:
                     os.kill(active_pid, signal.SIGTERM)
-                    time.sleep(0.5)
+                    for _ in range(25):
+                        time.sleep(0.1)
+                        try:
+                            os.kill(active_pid, 0)
+                        except OSError:
+                            break
+                    try:
+                        os.kill(active_pid, signal.SIGKILL)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         cmd = [sys.executable, script_path, server_url, token, mid]
         new_pid = spawn_daemon(cmd)
         print(f"[+] CyberVPS agent restarted successfully (PID: {new_pid}).")
+        sys.exit(0)
+
+    elif subcmd in ["logs", "log"]:
+        candidate_logs = [
+            os.path.join(cvps_dir, "logs", "agent.log"),
+            os.path.join(cvps_dir, "agent.log"),
+            os.path.join(programdata_dir, "logs", "agent.log")
+        ]
+        found_log = None
+        for l in candidate_logs:
+            if os.path.exists(l):
+                found_log = l
+                break
+        if not found_log:
+            print(f"[*] No agent log file found. Checked: {candidate_logs}")
+            sys.exit(0)
+        try:
+            with open(found_log, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+                for line in lines[-50:]:
+                    print(line, end="")
+        except Exception as e:
+            print(f"[!] Could not read log file: {e}")
+        sys.exit(0)
+
+    elif subcmd in ["doctor", "check"]:
+        print("================================================================")
+        print("   CYBERVPS SPACE STATION - SYSTEM DOCTOR")
+        print("================================================================")
+        print(f"  Python Runtime   : {sys.executable} ({platform.python_version()})")
+        print(f"  Operating System : {platform.system()} {platform.release()} ({platform.machine()})")
+        print(f"  Server Target    : {server_url}")
+        print(f"  Machine ID       : {mid or 'Auto-Generated / Persistent'}")
+        active_pid = get_running_pid()
+        print(f"  Agent Process    : {'RUNNING (PID: ' + str(active_pid) + ')' if active_pid else 'STOPPED'}")
+        print(f"  Script Location  : {script_path} ({'VALID' if os.path.exists(script_path) else 'MISSING'})")
+        # Quick backend reachability check
+        try:
+            req = urllib.request.Request(f"{server_url.rstrip('/')}/health", headers={"User-Agent": "CyberVPS-Doctor/1.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                print(f"  Backend Reachable: HTTP {resp.status} (OK)")
+        except Exception as e:
+            print(f"  Backend Reachable: UNREACHABLE ({e})")
+        print("================================================================")
+        sys.exit(0)
+
+    elif subcmd in ["version", "-v", "--version"]:
+        print(f"CyberVPS Universal Agent v{PROTOCOL_VERSION} ({platform.system().lower()}-{platform.machine().lower()})")
         sys.exit(0)
 
     elif subcmd in ["heal", "repair"]:

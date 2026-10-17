@@ -115,7 +115,15 @@ EOF
 # CLI Wrapper Setup
 cat << 'EOF' > "$CVPS_DIR/cybervps"
 #!/usr/bin/env bash
-python3 "$HOME/.cybervps/universal-agent.py" "$@"
+PY_BIN="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python3)"
+if [ -f "$HOME/.cybervps/space-station/bin/cybervps.py" ]; then
+  exec "$PY_BIN" "$HOME/.cybervps/space-station/bin/cybervps.py" "$@"
+elif [ -f "$HOME/.cybervps/universal-agent.py" ]; then
+  exec "$PY_BIN" "$HOME/.cybervps/universal-agent.py" "$@"
+else
+  echo "[!] Error: CyberVPS agent script not found in $HOME/.cybervps." >&2
+  exit 1
+fi
 EOF
 chmod +x "$CVPS_DIR/cybervps"
 if [ "$(id -u)" -eq 0 ]; then
