@@ -385,10 +385,33 @@ class RelayWebSocket:
         self.running = True
         self._lock = threading.Lock()
         self._backoff = 2.0
+        self.last_activity = time.time()
+        self.last_pong = time.time()
 
     def start(self):
         t = threading.Thread(target=self._run_loop, daemon=True)
         t.start()
+        hb = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        hb.start()
+
+    def _heartbeat_loop(self):
+        while self.running and self.agent.running:
+            time.sleep(15)
+            with self._lock:
+                sock = self.sock
+                is_conn = self.connected
+            if sock and is_conn:
+                try:
+                    self._send_frame(sock, 0x9, b"heartbeat")
+                except Exception:
+                    with self._lock:
+                        if self.sock:
+                            try: self.sock.close()
+                            except Exception: pass
+                        self.sock = None
+                        self.connected = False
+                        self.authenticated = False
+                        self.agent.ws_connected = False
 
     def _run_loop(self):
         while self.running and self.agent.running:
@@ -413,8 +436,9 @@ class RelayWebSocket:
                     self.connected = False
                     self.authenticated = False
                     self.agent.ws_connected = False
-            time.sleep(self._backoff)
-            self._backoff = min(self._backoff * 1.5, 10.0)
+            sleep_duration = min(self._backoff + random.uniform(0.5, 2.0), 15.0)
+            time.sleep(sleep_duration)
+            self._backoff = min(self._backoff * 1.5, 12.0)
 
     def _connect_and_read(self):
         raw = self.target_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -426,12 +450,23 @@ class RelayWebSocket:
             path += "?" + parsed.query
 
         raw_s = _safe_create_connection((host, port), timeout=8.0)
+        try:
+            raw_s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            if hasattr(socket, "TCP_KEEPIDLE"):
+                raw_s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 20)
+            if hasattr(socket, "TCP_KEEPINTVL"):
+                raw_s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            if hasattr(socket, "TCP_KEEPCNT"):
+                raw_s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        except Exception:
+            pass
+
         if parsed.scheme == "wss":
             ctx = ssl.create_default_context()
             s = ctx.wrap_socket(raw_s, server_hostname=host)
         else:
             s = raw_s
-        s.settimeout(None)
+        s.settimeout(25.0)
 
         sec_key = base64.b64encode(os.urandom(16)).decode("utf-8")
         req = (
@@ -523,8 +558,13 @@ class RelayWebSocket:
             if opcode == 0x8:
                 break
             elif opcode == 0x9:
+                self.last_activity = time.time()
                 self._send_frame(s, 0xA, payload)
+            elif opcode == 0xA:
+                self.last_activity = time.time()
+                self.last_pong = time.time()
             elif opcode == 0x1:
+                self.last_activity = time.time()
                 try:
                     text_data = payload.decode("utf-8")
                     msg = json.loads(text_data)
@@ -577,11 +617,20 @@ class RelayWebSocket:
 
     def _recv_exact(self, sock, num_bytes):
         buf = bytearray()
-        while len(buf) < num_bytes:
-            chunk = sock.recv(num_bytes - len(buf))
-            if not chunk:
+        while len(buf) < num_bytes and self.running and self.agent.running:
+            try:
+                chunk = sock.recv(num_bytes - len(buf))
+                if not chunk:
+                    return bytes(buf)
+                buf.extend(chunk)
+            except (socket.timeout, TimeoutError):
+                if not self.running or not self.agent.running:
+                    return bytes(buf)
+                if time.time() - getattr(self, "last_activity", time.time()) > 60.0:
+                    return bytes(buf)
+                continue
+            except Exception:
                 return bytes(buf)
-            buf.extend(chunk)
         return bytes(buf)
 
     def send_text(self, text_str):
@@ -1614,6 +1663,44 @@ class CyberVPSAgent:
                 "file_manager_privilege": "root" if is_root else "standard"
             }
 
+    def detect_provider_environment(self):
+        try:
+            if os.environ.get("REPL_ID") or os.environ.get("REPLIT_DEV_DOMAIN") or os.environ.get("REPL_SLUG"):
+                return {
+                    "provider": "replit",
+                    "repl_id": os.environ.get("REPL_ID", ""),
+                    "repl_slug": os.environ.get("REPL_SLUG", ""),
+                    "is_container_sandbox": True,
+                    "idle_pause_susceptible": True
+                }
+            hostname = socket.gethostname()
+            if any(k.startswith("PREPARE_") for k in os.environ) or os.path.exists("/prepare") or "alloc-" in hostname:
+                return {
+                    "provider": "prepare.sh",
+                    "workspace": hostname,
+                    "is_container_sandbox": True,
+                    "idle_pause_susceptible": True
+                }
+            if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
+                return {
+                    "provider": "docker_container",
+                    "is_container_sandbox": True,
+                    "idle_pause_susceptible": False
+                }
+            if os.environ.get("CODESPACES"):
+                return {"provider": "github_codespaces", "is_container_sandbox": True, "idle_pause_susceptible": True}
+            if os.environ.get("GITPOD_WORKSPACE_ID"):
+                return {"provider": "gitpod", "is_container_sandbox": True, "idle_pause_susceptible": True}
+            if os.environ.get("RAILWAY_ENVIRONMENT"):
+                return {"provider": "railway", "is_container_sandbox": True, "idle_pause_susceptible": False}
+        except Exception:
+            pass
+        return {
+            "provider": "standard_host",
+            "is_container_sandbox": False,
+            "idle_pause_susceptible": False
+        }
+
     def get_capabilities(self):
         priv = self.get_privilege_info()
         has_systemd = os.path.exists("/run/systemd/system")
@@ -1655,6 +1742,11 @@ class CyberVPSAgent:
             "rdp": True,
             "vnc": True,
             "interactive_gui": True,
+            "active_ws_heartbeat": True,
+            "replit_lab": True,
+            "provider_aware": True,
+            "decoupled_desktop": True,
+            "provider_environment": self.detect_provider_environment(),
             "ghost_mode": getattr(self, "ghost_mode", False),
             "zero_dependency_bootstrap": True,
             "supported_desktop_actions": [
@@ -6114,6 +6206,132 @@ class CyberVPSAgent:
             self.close_tunnel_stream(payload.get("stream_id"))
         elif c_type in ["ScanBackendInventory", "GetBackendInventory", "ScanInventory"]:
             threading.Thread(target=self.handle_scan_backend_inventory, args=(payload,), daemon=True).start()
+        elif c_type in ["ReplitDoctor", "ReplitStatus", "ReplitDesktop", "ReplitSshx"]:
+            threading.Thread(target=self.handle_replit_rpc, args=(c_type, payload), daemon=True).start()
+
+    def handle_replit_rpc(self, c_type, payload):
+        req_id = payload.get("request_id")
+        action = payload.get("action", "").lower()
+        try:
+            home = os.path.expanduser("~")
+            lab_dir = os.path.join(home, ".cybervps", "replit")
+            status_file = os.path.join(home, ".cybervps", "run", "lab-status.json")
+
+            if c_type == "ReplitDoctor":
+                total_mem_mb = 0
+                if os.path.exists("/proc/meminfo"):
+                    try:
+                        with open("/proc/meminfo") as f:
+                            for line in f:
+                                if "MemTotal" in line:
+                                    total_mem_mb = int(line.split()[1]) // 1024
+                                    break
+                    except Exception:
+                        pass
+                kvm_ok = os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.R_OK | os.W_OK)
+                docker_ok = False
+                if shutil.which("docker"):
+                    try:
+                        res = subprocess.run(["docker", "ps"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
+                        docker_ok = (res.returncode == 0)
+                    except Exception:
+                        pass
+                result = {
+                    "provider": self.detect_provider_environment(),
+                    "total_mem_mb": total_mem_mb,
+                    "kvm_hardware_acceleration": kvm_ok,
+                    "kvm_mode": "hardware_kvm" if kvm_ok else "emulated_only",
+                    "docker_available": docker_ok,
+                    "nix_available": bool(shutil.which("nix-env")),
+                    "tigervnc_available": bool(shutil.which("vncserver") or shutil.which("Xvnc")),
+                    "openbox_available": bool(shutil.which("openbox")),
+                    "websockify_available": bool(shutil.which("websockify")),
+                    "python3_available": bool(shutil.which("python3"))
+                }
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "result": result}
+                })
+
+            elif c_type == "ReplitStatus":
+                desktop_running = False
+                websockify_running = False
+                if platform.system() != "Windows":
+                    try:
+                        res = subprocess.run(["pgrep", "-f", "Xvnc.*:1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
+                        desktop_running = (res.returncode == 0)
+                        res2 = subprocess.run(["pgrep", "-f", "websockify"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
+                        websockify_running = (res2.returncode == 0)
+                    except Exception:
+                        pass
+                sshx_url = ""
+                sshx_log = os.path.join(home, ".cybervps", "logs", "sshx.log")
+                if os.path.exists(sshx_log):
+                    try:
+                        with open(sshx_log, "r", encoding="utf-8", errors="ignore") as f:
+                            for m in re.finditer(r"https://sshx\.io/s/[^\s]+", f.read()):
+                                sshx_url = m.group(0)
+                    except Exception:
+                        pass
+                result = {
+                    "desktop_active": desktop_running,
+                    "websockify_active": websockify_running,
+                    "vnc_display": ":1",
+                    "vnc_port": 5901,
+                    "web_port": int(os.environ.get("PORT", 8080)),
+                    "sshx_url": sshx_url
+                }
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "result": result}
+                })
+
+            elif c_type == "ReplitDesktop":
+                sub_action = payload.get("sub_action", action or "start")
+                start_script = os.path.join(lab_dir, "start-desktop.sh")
+                if sub_action in ["start", "restart"]:
+                    if os.path.exists(start_script):
+                        subprocess.Popen(["bash", start_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    msg = f"Desktop service {sub_action} dispatched."
+                elif sub_action == "stop":
+                    subprocess.run(["pkill", "-f", "Xvnc.*:1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
+                    subprocess.run(["pkill", "-f", "websockify"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
+                    msg = "Desktop and websockify stopped."
+                else:
+                    msg = f"Unknown desktop action: {sub_action}"
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "result": {"message": msg, "action": sub_action}}
+                })
+
+            elif c_type == "ReplitSshx":
+                sub_action = payload.get("sub_action", action or "status")
+                sshx_log = os.path.join(home, ".cybervps", "logs", "sshx.log")
+                os.makedirs(os.path.dirname(sshx_log), exist_ok=True)
+                if sub_action == "start":
+                    if not shutil.which("sshx"):
+                        subprocess.run("curl -sSf https://sshx.io/get | sh", shell=True, timeout=15)
+                    subprocess.Popen(f"nohup sshx run > '{sshx_log}' 2>&1 &", shell=True)
+                    time.sleep(2)
+                elif sub_action == "stop":
+                    subprocess.run(["pkill", "-f", "sshx run"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
+                sshx_url = ""
+                if os.path.exists(sshx_log):
+                    try:
+                        with open(sshx_log, "r", encoding="utf-8", errors="ignore") as f:
+                            for m in re.finditer(r"https://sshx\.io/s/[^\s]+", f.read()):
+                                sshx_url = m.group(0)
+                    except Exception:
+                        pass
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "result": {"sshx_url": sshx_url, "status": "running" if sshx_url else "stopped"}}
+                })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
 
     def handle_scan_backend_inventory(self, payload):
         req_id = payload.get("request_id")
@@ -6304,6 +6522,11 @@ class CyberVPSAgent:
                 return False
 
     def run(self):
+        if hasattr(signal, "SIGHUP"):
+            try:
+                signal.signal(signal.SIGHUP, signal.SIG_IGN)
+            except Exception:
+                pass
         if sys.platform == "win32" and ctypes:
             try:
                 safe_mid = re.sub(r'[^a-zA-Z0-9_]', '_', str(self.machine_id))

@@ -429,6 +429,168 @@ def cmd_doctor():
     print("================================================================")
 
 
+def cmd_replit(args):
+    sub = args[0].lower() if args else "status"
+    sub_args = args[1:]
+    replit_dir = os.path.join(BASE_DIR, "replit")
+    lab_cfg_file = os.path.join(replit_dir, "replit-lab.json")
+    status_file = os.path.join(RUN_DIR, "lab-status.json")
+
+    if sub in ["doctor", "check"]:
+        print("================================================================")
+        print("   CYBERVPS SPACE STATION — REPLIT VPS LAB DOCTOR")
+        print("================================================================")
+        mem_mb = 0
+        if os.path.exists("/proc/meminfo"):
+            try:
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if "MemTotal" in line:
+                            mem_mb = int(line.split()[1]) // 1024
+                            break
+            except Exception:
+                pass
+        print(f"  Physical Memory      : {mem_mb} MB (Genuine /proc/meminfo)")
+        try:
+            st = os.statvfs(os.path.expanduser("~"))
+            free_gb = round((st.f_bavail * st.f_frsize) / (1024 ** 3), 2)
+            total_gb = round((st.f_blocks * st.f_frsize) / (1024 ** 3), 2)
+            print(f"  Available Storage    : {free_gb} GB free of {total_gb} GB (~/)")
+        except Exception:
+            print("  Available Storage    : Unknown")
+        kvm_accessible = os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.R_OK | os.W_OK)
+        if kvm_accessible:
+            print("  KVM Virtualization   : ✅ HARDWARE ACCELERATED (/dev/kvm active)")
+        else:
+            print("  KVM Virtualization   : ⚠️ HARDWARE UNAVAILABLE (Software QEMU / PRoot fallback)")
+        docker_ok = False
+        try:
+            r = subprocess.run(["docker", "ps"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
+            docker_ok = (r.returncode == 0)
+        except Exception:
+            pass
+        print(f"  Docker Daemon        : {'✅ RUNNING' if docker_ok else 'ℹ️ UNAVAILABLE (Unprivileged sandbox)'}")
+        for bin_name in ["nix-env", "vncserver", "Xvnc", "openbox", "websockify", "sshx", "chromium", "firefox"]:
+            found = False
+            if platform.system() != "Windows":
+                try:
+                    found = (subprocess.run(["which", bin_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0)
+                except Exception:
+                    pass
+            print(f"  Component [{bin_name:<10}]: {'FOUND ✅' if found else 'MISSING ⚠️'}")
+        print("================================================================")
+
+    elif sub in ["status", "stat"]:
+        print("================================================================")
+        print("   CYBERVPS SPACE STATION — REPLIT VPS LAB STATUS")
+        print("================================================================")
+        desktop_ok = False
+        websockify_ok = False
+        if platform.system() != "Windows":
+            try:
+                r1 = subprocess.run(["pgrep", "-f", "Xvnc.*:1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                desktop_ok = (r1.returncode == 0)
+                r2 = subprocess.run(["pgrep", "-f", "websockify"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                websockify_ok = (r2.returncode == 0)
+            except Exception:
+                pass
+        web_port = os.environ.get("PORT", "8080")
+        print(f"  Desktop Server (:1)  : {'ONLINE ✅' if desktop_ok else 'STOPPED ❌'}")
+        print(f"  Websockify (:{web_port}) : {'ONLINE ✅' if websockify_ok else 'STOPPED ❌'}")
+        print(f"  noVNC URL Endpoint   : http://localhost:{web_port}/vnc.html")
+        sshx_log = os.path.join(LOG_DIR, "sshx.log")
+        sshx_link = "Not started"
+        if os.path.exists(sshx_log):
+            try:
+                with open(sshx_log, "r", encoding="utf-8", errors="ignore") as f:
+                    import re
+                    matches = re.findall(r"https://sshx\.io/s/[^\s]+", f.read())
+                    if matches:
+                        sshx_link = matches[-1]
+            except Exception:
+                pass
+        print(f"  sshx Web Terminal    : {sshx_link}")
+        print("================================================================")
+
+    elif sub == "setup":
+        script = os.path.join(INSTALL_DIR, "installers", "replit-vps", "install.sh")
+        if not os.path.exists(script):
+            script = os.path.join(BASE_DIR, "space-station", "installers", "replit-vps", "install.sh")
+        if os.path.exists(script):
+            subprocess.run(["bash", script])
+        else:
+            print(f"[!] Replit installer script not found at: {script}")
+            sys.exit(1)
+
+    elif sub == "desktop":
+        action = sub_args[0].lower() if sub_args else "status"
+        if action in ["start", "restart"]:
+            script = os.path.join(replit_dir, "start-desktop.sh")
+            if os.path.exists(script):
+                subprocess.run(["bash", script])
+            else:
+                print(f"[!] Desktop launcher script not found at {script}. Run 'cybervps replit setup' first.")
+        elif action == "stop":
+            subprocess.run(["pkill", "-f", "Xvnc.*:1"])
+            subprocess.run(["pkill", "-f", "websockify"])
+            print("[+] Desktop and websockify stopped.")
+        else:
+            cmd_replit(["status"])
+
+    elif sub == "vnc":
+        web_port = os.environ.get("PORT", "8080")
+        print("================================================================")
+        print("   CYBERVPS REPLIT LAB — noVNC CONNECTION DETAILS")
+        print("================================================================")
+        print(f"  Browser URL : http://localhost:{web_port}/vnc.html")
+        print("  Raw RFB     : 127.0.0.1:5901 (Display :1)")
+        print("  Credentials : None / Anonymous local access")
+        print("================================================================")
+
+    elif sub == "browser":
+        target = sub_args[0] if sub_args else f"http://localhost:{os.environ.get('PORT', '8080')}/vnc.html"
+        script = os.path.join(replit_dir, "start-browser.sh")
+        if os.path.exists(script):
+            subprocess.run(["bash", script, target])
+        else:
+            print(f"[!] Browser launcher not found at {script}. Launching via DISPLAY=:1...")
+            subprocess.Popen(f"DISPLAY=:1 chromium --no-sandbox '{target}' >/dev/null 2>&1 &", shell=True)
+
+    elif sub in ["docker", "kvm", "lxd"]:
+        cmd_replit(["doctor"])
+
+    elif sub == "logs":
+        for log_name in ["supervisor.log", "desktop.log", "websockify.log", "agent.log"]:
+            lp = os.path.join(LOG_DIR, log_name)
+            if os.path.exists(lp):
+                print(f"--- Log: {log_name} (Last 10 lines) ---")
+                try:
+                    with open(lp, "r", encoding="utf-8", errors="replace") as f:
+                        for l in f.readlines()[-10:]:
+                            print(l, end="")
+                except Exception:
+                    pass
+                print("")
+
+    elif sub == "config":
+        if os.path.exists(lab_cfg_file):
+            with open(lab_cfg_file, "r", encoding="utf-8") as f:
+                print(f.read())
+        else:
+            print("[!] No Replit lab configuration found. Run 'cybervps replit setup'.")
+
+    elif sub == "uninstall":
+        subprocess.run(["pkill", "-f", "supervise.sh"])
+        subprocess.run(["pkill", "-f", "Xvnc.*:1"])
+        subprocess.run(["pkill", "-f", "websockify"])
+        print("[+] Replit VPS Lab services stopped.")
+
+    else:
+        print(f"Unknown replit command: '{sub}'.")
+        print("Available: doctor, setup, status, desktop, vnc, browser, docker, kvm, lxd, logs, config, uninstall")
+        sys.exit(1)
+
+
 def main():
     argv = sys.argv[1:]
     command = None
@@ -472,6 +634,8 @@ def main():
         print(f"CyberVPS Space Station v{VERSION} ({platform.system().lower()}-{platform.machine().lower()})")
     elif command in ["doctor", "check"]:
         cmd_doctor()
+    elif command in ["replit", "lab"]:
+        cmd_replit(cmd_args)
     elif command in ["help", "--help", "-h"]:
         print(f"""
 🛰️  CYBERVPS SPACE STATION CLI v{VERSION}
@@ -485,6 +649,7 @@ Commands:
   restart         Restart background Host Agent
   logs            Tail recent agent log messages
   doctor          Run diagnostic health checks on host environment
+  replit <action> Manage Replit VPS Lab (doctor, status, desktop, vnc, logs)
   version         Show installed CyberVPS CLI version
 ================================================================
 """)

@@ -792,6 +792,16 @@ function getMachineStatus(m) {
   const diff = Date.now() - lastSeenMs;
   if (diff < 40000) return 'online';
   if (diff < 90000) return 'reconnecting';
+
+  // Check if node is hosted on an auto-suspending container sandbox (Prepare.sh, Replit)
+  const isSandbox = m.provider === 'replit' || m.provider === 'prepare.sh' ||
+    (m.profile && (m.profile.provider === 'replit' || m.profile.provider === 'prepare.sh' || (m.profile.provider_environment && m.profile.provider_environment.is_container_sandbox))) ||
+    (m.capabilities && (m.capabilities.provider_aware || (m.capabilities.provider_environment && m.capabilities.provider_environment.is_container_sandbox)));
+
+  if (isSandbox && diff >= 90000 && diff < 1800000) {
+    return 'provider_paused';
+  }
+
   return 'offline';
 }
 
@@ -1027,6 +1037,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/fleet/ota-update/status') return true;
   if (pathname === '/api/v1/topology/graph') return true;
   if (pathname === '/api/v1/machines/name') return true;
+  if (pathname.startsWith('/api/v1/replit/')) return true;
   return false;
 }
 
@@ -1182,6 +1193,147 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+      return;
+    }
+  }
+
+  // REPLIT VPS LAB MANAGEMENT & TELEMETRY ROUTER
+  if (pathname.startsWith('/api/v1/replit/')) {
+    const subRoute = pathname.slice('/api/v1/replit/'.length);
+
+    if (subRoute === 'detect') {
+      const q = Object.fromEntries(parsedUrl.searchParams.entries());
+      const filterMachine = q.machine_id;
+      const results = [];
+      for (const [mId, m] of db.machines.entries()) {
+        if (filterMachine && mId !== filterMachine) continue;
+        const prov = (m.profile && m.profile.provider_environment) || (m.capabilities && m.capabilities.provider_environment) || m.provider || 'standard_host';
+        const isReplit = typeof prov === 'object' ? prov.provider === 'replit' : prov === 'replit';
+        const isPrepare = typeof prov === 'object' ? prov.provider === 'prepare.sh' : prov === 'prepare.sh';
+        results.push({
+          machine_id: mId,
+          name: m.friendly_name || m.hostname || mId,
+          status: getMachineStatus(m),
+          provider: typeof prov === 'object' ? prov.provider : prov,
+          is_replit: isReplit,
+          is_prepare: isPrepare,
+          is_container_sandbox: typeof prov === 'object' ? prov.is_container_sandbox : (isReplit || isPrepare),
+          idle_pause_susceptible: typeof prov === 'object' ? prov.idle_pause_susceptible : (isReplit || isPrepare)
+        });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        detected_environments: results,
+        local_host_detected: Boolean(process.env.REPL_ID || process.env.REPLIT_DEV_DOMAIN)
+      }));
+      return;
+    }
+
+    if (subRoute === 'status') {
+      const q = Object.fromEntries(parsedUrl.searchParams.entries());
+      const targetMachineId = q.machine_id || (db.machines.size > 0 ? Array.from(db.machines.keys())[0] : null);
+      if (!targetMachineId) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No machines registered in fleet' }));
+        return;
+      }
+      const m = db.machines.get(targetMachineId);
+      const isOnline = db.connectedAgents.has(targetMachineId) && db.connectedAgents.get(targetMachineId).readyState === WebSocket.OPEN;
+      if (!isOnline) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          machine_id: targetMachineId,
+          status: getMachineStatus(m),
+          desktop_active: false,
+          websockify_active: false,
+          vnc_display: ':1',
+          web_port: 8080,
+          sshx_url: '',
+          note: 'Host agent offline; reporting baseline state.'
+        }));
+        return;
+      }
+      try {
+        const resp = await sendAgentRequest(targetMachineId, 'ReplitStatus', {}, 8000);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, machine_id: targetMachineId, ...resp }));
+      } catch (err) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          machine_id: targetMachineId,
+          status: getMachineStatus(m),
+          desktop_active: false,
+          websockify_active: false,
+          error: err.message
+        }));
+      }
+      return;
+    }
+
+    if (subRoute === 'doctor' || subRoute === 'health') {
+      const q = Object.fromEntries(parsedUrl.searchParams.entries());
+      const targetMachineId = q.machine_id || (db.machines.size > 0 ? Array.from(db.machines.keys())[0] : null);
+      if (!targetMachineId) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          control_plane: 'healthy',
+          kvm_mode: 'unsupported_in_control_plane',
+          docker: false
+        }));
+        return;
+      }
+      const isOnline = db.connectedAgents.has(targetMachineId) && db.connectedAgents.get(targetMachineId).readyState === WebSocket.OPEN;
+      if (!isOnline) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: false,
+          machine_id: targetMachineId,
+          status: 'offline',
+          error: `Node '${targetMachineId}' is offline`
+        }));
+        return;
+      }
+      try {
+        const resp = await sendAgentRequest(targetMachineId, 'ReplitDoctor', {}, 10000);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, machine_id: targetMachineId, ...resp }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+      return;
+    }
+
+    if (subRoute === 'desktop' || subRoute === 'sshx' || subRoute === 'setup') {
+      let bodyStr = '';
+      req.on('data', c => { bodyStr += c; });
+      req.on('end', async () => {
+        try {
+          const body = JSON.parse(bodyStr || '{}');
+          const targetMachineId = body.machine_id || (db.machines.size > 0 ? Array.from(db.machines.keys())[0] : null);
+          if (!targetMachineId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'machine_id required' }));
+            return;
+          }
+          const isOnline = db.connectedAgents.has(targetMachineId) && db.connectedAgents.get(targetMachineId).readyState === WebSocket.OPEN;
+          if (!isOnline) {
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Node '${targetMachineId}' is not connected to relay` }));
+            return;
+          }
+          let rpcType = 'ReplitDesktop';
+          if (subRoute === 'sshx') rpcType = 'ReplitSshx';
+          const rpcRes = await sendAgentRequest(targetMachineId, rpcType, body, 15000);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, machine_id: targetMachineId, result: rpcRes }));
+        } catch (e) {
+          sendHttpError(res, e);
         }
       });
       return;
@@ -5772,6 +5924,12 @@ server.on('upgrade', (request, socket, head) => {
 
 wssRelay.on('connection', (ws, request) => {
   let machineId = null;
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('ping', () => {
+    ws.isAlive = true;
+    try { ws.pong(); } catch (_) {}
+  });
 
   ws.on('message', (data) => {
     try {
@@ -5835,6 +5993,22 @@ wssRelay.on('connection', (ws, request) => {
     }
   });
 });
+
+// Active 20-second WebSocket ping interval to prevent reverse proxy idle drops (Railway, Cloudflare)
+const relayPingInterval = setInterval(() => {
+  for (const [mId, ws] of db.connectedAgents.entries()) {
+    if (ws.readyState === WebSocket.OPEN) {
+      if (ws.isAlive === false) {
+        console.log(`[!] Node [${mId}] failed WebSocket keepalive check. Terminating dropped connection.`);
+        try { ws.terminate(); } catch (_) {}
+        continue;
+      }
+      ws.isAlive = false;
+      try { ws.ping(); } catch (_) {}
+    }
+  }
+}, 20000);
+if (relayPingInterval.unref) relayPingInterval.unref();
 
 wssTerminal.on('connection', (ws, request) => {
   const parsed = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
