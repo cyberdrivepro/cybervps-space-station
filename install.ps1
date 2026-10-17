@@ -75,6 +75,7 @@ if ($Server -and ($Server -like "cvps_*" -or ($Server.Length -ge 24 -and $Server
     }
 }
 
+$embeddedTicket = $Ticket
 if ($Ticket) {
     $Token = $Ticket.Trim().Trim('"', "'")
 } elseif ($Token) {
@@ -95,19 +96,23 @@ foreach ($cfgPath in $cfgCandidates) {
         try {
             $parsed = Get-Content $cfgPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
             if ($parsed) {
-                if (-not $existingToken -and $parsed.token -and $parsed.token.Trim().Length -ge 8) {
-                    $existingToken = $parsed.token.Trim()
+                $cTok = if ($parsed.token) { $parsed.token.Trim() } else { "" }
+                $cMid = if ($parsed.machine_id) { $parsed.machine_id.Trim() } else { "" }
+                if ($cTok -and $cTok.Length -ge 8 -and $cTok -ne "dummy_token" -and $cTok -notlike "*dummy*") {
+                    if (-not $existingToken) { $existingToken = $cTok }
                 }
-                if (-not $existingMachineId -and $parsed.machine_id -and $parsed.machine_id.Trim().Length -ge 4) {
-                    $existingMachineId = $parsed.machine_id.Trim()
+                if ($cMid -and $cMid.Length -ge 4 -and $cMid -ne "test_machine" -and $cMid -notlike "*test*") {
+                    if (-not $existingMachineId) { $existingMachineId = $cMid }
                 }
             }
         } catch {}
     }
 }
 
+$usedPathA = $false
 if ([string]::IsNullOrWhiteSpace($Token) -and -not [string]::IsNullOrWhiteSpace($existingToken)) {
     $Token = $existingToken
+    $usedPathA = $true
     Write-Host "  [*] Path A: Reusing verified credentials from existing installation." -ForegroundColor Cyan
 }
 
@@ -140,19 +145,19 @@ foreach ($dir in @($InstallBase, $ShadowBase, $BinDir, $LogsDir, $RunDir)) {
 }
 
 $MachineId = ""
-if ($existingMachineId) {
+if ($existingMachineId -and $existingMachineId -ne "test_machine" -and $existingMachineId -notlike "*test*") {
     $MachineId = $existingMachineId
 }
 if (($MachineId.Length -lt 4) -and (Test-Path $MachineIdFile)) {
     try {
         $clean = ((Get-Content $MachineIdFile -Raw) -replace '[^a-zA-Z0-9_\-]', '').Trim()
-        if ($clean.Length -ge 4) { $MachineId = $clean }
+        if ($clean.Length -ge 4 -and $clean -ne "test_machine" -and $clean -notlike "*test*") { $MachineId = $clean }
     } catch {}
 }
 if (($MachineId.Length -lt 4) -and (Test-Path (Join-Path $ShadowBase "machine_id"))) {
     try {
         $clean = ((Get-Content (Join-Path $ShadowBase "machine_id") -Raw) -replace '[^a-zA-Z0-9_\-]', '').Trim()
-        if ($clean.Length -ge 4) { $MachineId = $clean }
+        if ($clean.Length -ge 4 -and $clean -ne "test_machine" -and $clean -notlike "*test*") { $MachineId = $clean }
     } catch {}
 }
 if ($MachineId.Length -lt 4) {
@@ -239,12 +244,59 @@ try {
     }
 
     if ($is401) {
-        Write-Host ""
-        Write-Host "[X] [ENROLLMENT_REJECTED] The Control Plane ($Server) rejected the enrollment credential (HTTP 401 Unauthorized)." -ForegroundColor Red
-        Write-Host "    The capability or token is invalid, expired, or already consumed." -ForegroundColor Yellow
-        Write-Host "    Please generate a fresh 1-click command from your CyberVPS dashboard." -ForegroundColor Yellow
-        Exit-WithCode 1
-        return
+        if ($usedPathA) {
+            Write-Host "  [!] Existing local credentials (node: $MachineId) are stale or rejected by server." -ForegroundColor Yellow
+            Write-Host "  [*] Purging invalid cached credentials and re-registering with fresh hardware identity..." -ForegroundColor Cyan
+            
+            foreach ($f in @($ConfigFile, (Join-Path $ShadowBase "config.json"), $MachineIdFile, (Join-Path $ShadowBase "machine_id"), "C:\ProgramData\CyberVPS\config.json", "C:\ProgramData\CyberVPS\machine_id")) {
+                if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+            }
+            
+            $uuidRaw = ""
+            try { $uuidRaw = (Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue).UUID } catch {}
+            if (-not $uuidRaw) { $uuidRaw = [Guid]::NewGuid().ToString("N").Substring(0, 8) }
+            $cleanHost = ($env:COMPUTERNAME -replace '[^a-zA-Z0-9_]', '').ToLower()
+            $shortUuid = ($uuidRaw -replace '[^a-zA-Z0-9]', '').Substring(0, [Math]::Min(8, $uuidRaw.Length)).ToLower()
+            $MachineId = "cvps_${cleanHost}_${shortUuid}"
+            
+            if ($embeddedTicket -and $embeddedTicket -ne $existingToken) {
+                $Token = $embeddedTicket
+                $fastAuthPayload = @{
+                    type = "Auth"
+                    payload = @{
+                        machine_id = $MachineId
+                        token = $Token
+                        agent_version = "2.2-ghost-native"
+                        hostname = $env:COMPUTERNAME
+                        username = $env:USERNAME
+                        os = "Windows"
+                        os_version = $osInfo
+                        arch = $env:PROCESSOR_ARCHITECTURE
+                        capabilities = @("powershell_native", "ghost_mode", "background_provisioning", "remote_reboot", "file_manager", "process_manager", "zero_dependency_bootstrap")
+                        profile = @{ ghost_mode = $true; bootstrap = "zero_prompt_fastpath"; runtime = "PowerShell_5_Core" }
+                    }
+                } | ConvertTo-Json -Depth 4 -Compress
+                try {
+                    $retryResp = Invoke-RestMethod -Uri "$($Server.TrimEnd('/'))/api/v1/relay/event" -Method Post -Body $fastAuthPayload -ContentType "application/json" -TimeoutSec 8 -ErrorAction Stop
+                    if ($retryResp -and $retryResp.ok) {
+                        $PreflightOk = $true
+                        if ($retryResp.result -and $retryResp.result.virtual_ip) { $PreflightVip = $retryResp.result.virtual_ip }
+                        if ($retryResp.result -and $retryResp.result.node_token) { $Token = $retryResp.result.node_token }
+                        Write-Host "  [+] Node enrollment authenticated (Virtual IP: $PreflightVip)" -ForegroundColor Green
+                        $is401 = $false
+                    }
+                } catch {}
+            }
+        }
+
+        if ($is401) {
+            Write-Host ""
+            Write-Host "[X] [ENROLLMENT_REJECTED] The Control Plane ($Server) rejected the enrollment credential (HTTP 401 Unauthorized)." -ForegroundColor Red
+            Write-Host "    The capability or token is invalid, expired, or already consumed." -ForegroundColor Yellow
+            Write-Host "    Please generate a fresh 1-click command from your CyberVPS dashboard." -ForegroundColor Yellow
+            Exit-WithCode 1
+            return
+        }
     }
 
     Write-Host "  [!] Pre-flight notice: Server returned $($_.Exception.Message). Continuing setup..." -ForegroundColor Gray

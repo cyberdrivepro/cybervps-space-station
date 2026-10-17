@@ -809,7 +809,27 @@ const server = http.createServer(async (req, res) => {
       const queryToken = parsedUrl.searchParams.get('token');
       const queryCap = parsedUrl.searchParams.get('capability');
       const rawCap = queryTicket || queryToken || queryCap;
-      const capability = rawCap ? rawCap.trim().replace(/^['"]+|['"]+$/g, '') : null;
+      let capability = rawCap ? rawCap.trim().replace(/^['"]+|['"]+$/g, '') : null;
+
+      if (!capability || !isValidEnrollmentToken(capability)) {
+        const ttlSeconds = 3600; // 1 hour auto-ticket
+        const expiresAt = Date.now() + (ttlSeconds * 1000);
+        const expHex = expiresAt.toString(16);
+        const nonce = crypto.randomBytes(8).toString('hex');
+        const sig = crypto.createHmac('sha256', BOOTSTRAP_SECRET).update(`${expHex}:${nonce}`).digest('hex').slice(0, 24);
+        capability = `cvps_boot_${expHex}_${nonce}_${sig}`;
+
+        db.bootstrapCapabilities.set(capability, {
+          ticket: capability,
+          created_at: Date.now(),
+          expires_at: expiresAt,
+          used: false,
+          consumed_by: null,
+          consumed_at: null,
+          issued_by: 'install.ps1-auto'
+        });
+        savePersistentState();
+      }
 
       if (capability && isValidEnrollmentToken(capability)) {
         customized = customized.replace(
