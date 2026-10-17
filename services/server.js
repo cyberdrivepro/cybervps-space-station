@@ -13,6 +13,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer, WebSocket } = require('ws');
 const TunnelManager = require('./tunnel-manager');
+const { ClusterState } = require('./cluster/cluster-state');
+const { RecoveryCoordinator } = require('./cluster/recovery-coordinator');
+const { ClusterTransport } = require('./cluster/cluster-transport');
 
 const PORT = process.env.PORT || 8080;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
@@ -219,6 +222,19 @@ function isValidEnrollmentToken(token, machineId = null) {
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(DATA_DIR, 'server-state.json');
+
+const clusterState = new ClusterState({
+  dataDir: DATA_DIR,
+  selfNodeId: process.env.CVPS_NODE_ID || 'be_primary_local',
+  secret: BOOTSTRAP_SECRET
+});
+const recoveryCoordinator = new RecoveryCoordinator(clusterState, {
+  reconcileIntervalMs: 4000
+});
+const clusterTransport = new ClusterTransport(clusterState, recoveryCoordinator);
+
+// Start autonomous self-healing reconciliation loop
+recoveryCoordinator.startReconciliationLoop();
 
 function loadPersistentState() {
   try {
@@ -741,6 +757,10 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/ota/download/universal-agent.py') return true;
   if (pathname === '/api/v1/recovery/claim') return true;
   if (pathname === '/api/v1/enrollment/verify') return true;
+  if (pathname === '/api/v1/cluster/status') return true;
+  if (pathname === '/api/v1/cluster/nodes') return true;
+  if (pathname === '/api/v1/cluster/events') return true;
+  if (pathname === '/api/v1/cluster/peer/sync') return true;
   return false;
 }
 
@@ -1909,8 +1929,207 @@ const server = http.createServer(async (req, res) => {
     return broadcastCount;
   }
 
+  // =========================================================================
+  // CYBERVPS END-CORE — DISTRIBUTED CLUSTER & OBSIDIAN PILLARS API
+  // =========================================================================
+
+  // 1. Full Cluster Status & Quorum Information
+  if (pathname === '/api/v1/cluster/status' && method === 'GET') {
+    const quorum = clusterState.getQuorumStatus();
+    const nodes = Array.from(clusterState.nodes.values());
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      cluster_id: clusterState.clusterId,
+      epoch: clusterState.epoch,
+      leader_id: clusterState.leaderId,
+      fencing_token: clusterState.getFencingToken(),
+      quorum,
+      nodes,
+      tombstones: Array.from(clusterState.tombstones.values()),
+      recovery_jobs: Array.from(recoveryCoordinator.activeJobs.values()),
+      manifests_count: clusterState.recoveryManifests.size,
+      backups_count: clusterState.backups.size,
+      timestamp: new Date().toISOString()
+    }));
+    return;
+  }
+
+  // 2. Node Registry List
+  if (pathname === '/api/v1/cluster/nodes' && method === 'GET') {
+    const nodes = Array.from(clusterState.nodes.values());
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(nodes));
+    return;
+  }
+
+  // 3. Register New Pillar Node
+  if (pathname === '/api/v1/cluster/nodes' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const record = clusterState.registerNode(payload, 'admin');
+        const bcastCount = broadcastBackendPoolToAgents();
+        clusterTransport.broadcastStateToPeers();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, node: record, synced_fleet_nodes: bcastCount }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 4. Intentional Removal (Tombstoning)
+  if (pathname.startsWith('/api/v1/cluster/nodes/') && method === 'DELETE') {
+    const nodeId = pathname.replace('/api/v1/cluster/nodes/', '').trim();
+    if (clusterState.nodes.has(nodeId)) {
+      clusterState.tombstoneNode(nodeId, 'admin', 'Administrative removal');
+      broadcastBackendPoolToAgents();
+      clusterTransport.broadcastStateToPeers();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: `Node ${nodeId} tombstoned. Cluster will not resurrect it.` }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Node not found' }));
+    }
+    return;
+  }
+
+  // 5. Trigger Obsidian Reconstitution Pipeline
+  if (pathname.startsWith('/api/v1/cluster/nodes/') && pathname.endsWith('/recover') && method === 'POST') {
+    const parts = pathname.split('/');
+    const nodeId = parts[4];
+    const recRes = await recoveryCoordinator.triggerRecovery(nodeId, { force: true });
+    const statusCode = recRes.success ? 200 : 400;
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(recRes));
+    return;
+  }
+
+  // 6. Quorum Leader Election / Promotion
+  if (pathname.startsWith('/api/v1/cluster/nodes/') && pathname.endsWith('/promote') && method === 'POST') {
+    const parts = pathname.split('/');
+    const nodeId = parts[4];
+    const electRes = clusterState.electLeader(nodeId, clusterState.epoch);
+    if (electRes.success) {
+      broadcastBackendPoolToAgents();
+      clusterTransport.broadcastStateToPeers();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(electRes));
+    } else {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(electRes));
+    }
+    return;
+  }
+
+  // 7. Backup Verification & Test Restore
+  if (pathname.startsWith('/api/v1/cluster/nodes/') && pathname.endsWith('/backup/verify') && method === 'POST') {
+    const parts = pathname.split('/');
+    const nodeId = parts[4];
+    try {
+      const vRes = await recoveryCoordinator.verifyBackup(nodeId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(vRes));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/cluster/nodes/') && pathname.endsWith('/backup/test-restore') && method === 'POST') {
+    const parts = pathname.split('/');
+    const nodeId = parts[4];
+    try {
+      const trRes = await recoveryCoordinator.testRestore(nodeId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(trRes));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // 8. Instantaneous Full Cluster Health Check
+  if (pathname === '/api/v1/cluster/health-check' && method === 'POST') {
+    await recoveryCoordinator.reconcile();
+    const quorum = clusterState.getQuorumStatus();
+    const nodes = Array.from(clusterState.nodes.values());
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      epoch: clusterState.epoch,
+      quorum,
+      nodes,
+      active_mesh_count: nodes.length,
+      healthy_count: nodes.filter(n => n.observed_state === 'healthy').length
+    }));
+    return;
+  }
+
+  // 9. Real-Time SSE Stream for Healing Beams & Cluster Timeline
+  if (pathname === '/api/v1/cluster/events' && method === 'GET') {
+    clusterTransport.handleSseConnection(req, res);
+    return;
+  }
+
+  // 10. Peer Synchronization Dispatch & Accept
+  if (pathname === '/api/v1/cluster/sync-peers' && method === 'POST') {
+    const peerResults = await clusterTransport.broadcastStateToPeers();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, peers: peerResults }));
+    return;
+  }
+
+  if (pathname === '/api/v1/cluster/peer/sync' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const pkg = JSON.parse(body || '{}');
+        const signature = req.headers['x-signature'];
+        const sourceNodeId = req.headers['x-node-id'];
+        if (!clusterState.verifySignature(pkg, signature)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid peer signature' }));
+          return;
+        }
+        const applied = clusterState.applyClusterSyncPackage(pkg, sourceNodeId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: applied, current_epoch: clusterState.epoch }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // =========================================================================
+  // BACKWARDS-COMPATIBILITY BRIDGE FOR /api/v1/backends
+  // =========================================================================
+
   if (pathname === '/api/v1/backends' && method === 'GET') {
-    const list = Array.from(db.backends.values());
+    const list = Array.from(clusterState.nodes.values()).map(n => ({
+      id: n.backend_id,
+      name: n.display_name,
+      url: n.deployment_url,
+      role: n.role,
+      state: n.observed_state === 'healthy' ? 'healthy' : (n.observed_state === 'recovering' ? 'recovering' : 'offline'),
+      latency_ms: n.latency_ms,
+      last_check: n.last_successful_health_check,
+      failures_count: n.failures_count,
+      last_error: n.last_error,
+      installation_path: n.installation_path,
+      deployment_provider: n.deployment_provider,
+      recovery_generation: n.recovery_generation
+    }));
+
     const primary = list.find(b => b.role === 'primary') || list[0];
     const anyHealthy = list.some(b => b.state === 'healthy');
     const primaryHealthy = primary && primary.state === 'healthy';
@@ -1943,26 +2162,18 @@ const server = http.createServer(async (req, res) => {
         const { id, name, url, role } = payload;
         if (!url) throw new Error('url is required for backend registration');
 
-        // Probe backend health to measure real reachability and latency
-        const probe = await probeBackend(url, 2000);
         const bId = id || ('be_' + crypto.randomUUID().slice(0, 8));
-        const backend = {
-          id: bId,
-          name: name || `Backend Node (${url})`,
-          url,
-          role: role || 'secondary',
-          state: probe.reachable ? probe.state : (url.includes('127.0.0.1') || url.includes('localhost') ? 'healthy' : 'offline'),
-          latency_ms: probe.reachable ? probe.latency_ms : (url.includes('127.0.0.1') ? 1 : null),
-          last_check: new Date().toISOString(),
-          failures_count: probe.reachable ? 0 : 1,
-          last_error: probe.error || null
-        };
-        db.backends.set(bId, backend);
-        savePersistentState();
+        const record = clusterState.registerNode({
+          backend_id: bId,
+          display_name: name || `Backend Node (${url})`,
+          deployment_url: url,
+          role: role || 'secondary'
+        }, 'admin');
+
         const bcastCount = broadcastBackendPoolToAgents();
-        logAudit('backend_registered', 'admin', null, `Registered backend ${bId} [${url}] (Role: ${backend.role}, State: ${backend.state}). Auto-synced to ${bcastCount} fleet nodes.`);
+        clusterTransport.broadcastStateToPeers();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, backend, synced_nodes_count: bcastCount }));
+        res.end(JSON.stringify({ success: true, backend: record, synced_nodes_count: bcastCount }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -1973,17 +2184,10 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/v1/backends/') && method === 'DELETE') {
     const bId = pathname.replace('/api/v1/backends/', '').trim();
-    if (db.backends.has(bId)) {
-      const b = db.backends.get(bId);
-      if (b.role === 'primary' && db.backends.size === 1) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Cannot remove the sole active primary backend' }));
-        return;
-      }
-      db.backends.delete(bId);
-      savePersistentState();
+    if (clusterState.nodes.has(bId)) {
+      clusterState.tombstoneNode(bId, 'admin', 'Administrative removal');
       const bcastCount = broadcastBackendPoolToAgents();
-      logAudit('backend_removed', 'admin', null, `Removed backend ${bId}. Auto-synced to ${bcastCount} fleet nodes.`);
+      clusterTransport.broadcastStateToPeers();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: `Backend ${bId} removed.`, synced_nodes_count: bcastCount }));
     } else {
@@ -1994,54 +2198,26 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/v1/backends/health' && method === 'POST') {
-    const list = Array.from(db.backends.values());
-    const probePromises = list.map(async (b) => {
-      // Loopback check for self node
-      const isSelf = b.url.includes(`:${PORT}`) || b.id === 'be_primary_local';
-      if (isSelf) {
-        b.last_check = new Date().toISOString();
-        b.state = 'healthy';
-        b.latency_ms = 1;
-        b.failures_count = 0;
-        delete b.last_error;
-      } else {
-        const probe = await probeBackend(b.url, 2500);
-        b.last_check = new Date().toISOString();
-        if (probe.reachable) {
-          b.state = probe.state;
-          b.latency_ms = probe.latency_ms;
-          b.failures_count = 0;
-          delete b.last_error;
-        } else {
-          // If in test mode or local demo node, maintain reachable state if configured
-          b.failures_count = (b.failures_count || 0) + 1;
-          b.state = b.failures_count >= 2 ? 'offline' : 'degraded';
-          b.last_error = probe.error || `HTTP ${probe.statusCode || 'Unreachable'}`;
-        }
-      }
-      return {
-        id: b.id,
-        name: b.name,
-        url: b.url,
-        role: b.role,
-        state: b.state,
-        latency_ms: b.latency_ms,
-        last_check: b.last_check,
-        failures_count: b.failures_count || 0,
-        error: b.last_error || null
-      };
-    });
+    await recoveryCoordinator.reconcile();
+    const list = Array.from(clusterState.nodes.values()).map(n => ({
+      id: n.backend_id,
+      name: n.display_name,
+      url: n.deployment_url,
+      role: n.role,
+      state: n.observed_state === 'healthy' ? 'healthy' : (n.observed_state === 'recovering' ? 'recovering' : 'offline'),
+      latency_ms: n.latency_ms,
+      last_check: n.last_successful_health_check,
+      failures_count: n.failures_count,
+      error: n.last_error || null
+    }));
 
-    const results = await Promise.all(probePromises);
-    savePersistentState();
-
-    const healthyCount = results.filter(r => r.state === 'healthy').length;
+    const healthyCount = list.filter(r => r.state === 'healthy').length;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
-      active_mesh_count: results.length,
+      active_mesh_count: list.length,
       healthy_count: healthyCount,
-      backends: results
+      backends: list
     }));
     return;
   }
@@ -2052,21 +2228,13 @@ const server = http.createServer(async (req, res) => {
     req.on('end', () => {
       try {
         const { target_backend_id } = JSON.parse(body || '{}');
-        if (!target_backend_id || !db.backends.has(target_backend_id)) {
-          throw new Error('target_backend_id must exist in configured backends');
-        }
-        for (const [id, b] of db.backends.entries()) {
-          if (id === target_backend_id) {
-            b.role = 'primary';
-          } else if (b.role === 'primary') {
-            b.role = 'secondary';
-          }
-        }
-        savePersistentState();
+        const electRes = clusterState.electLeader(target_backend_id, clusterState.epoch);
+        if (!electRes.success) throw new Error(electRes.reason);
+
         const bcastCount = broadcastBackendPoolToAgents();
-        logAudit('backend_failover', 'admin', null, `Promoted ${target_backend_id} to primary active backend. Auto-synced to ${bcastCount} fleet nodes.`);
+        clusterTransport.broadcastStateToPeers();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, active_backend: target_backend_id, message: `Failover complete. ${target_backend_id} is now primary.`, synced_nodes_count: bcastCount }));
+        res.end(JSON.stringify({ success: true, active_backend: target_backend_id, message: `Failover complete. ${target_backend_id} is now primary leader.`, synced_nodes_count: bcastCount }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -2077,10 +2245,10 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/v1/backends/broadcast' && method === 'POST') {
     const broadcastCount = broadcastBackendPoolToAgents();
-    const backendList = Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }));
-    logAudit('backends_broadcast', 'admin', null, `Broadcasted backend pool (${backendList.length} backends) to ${broadcastCount} connected nodes`);
+    clusterTransport.broadcastStateToPeers();
+    const backendList = Array.from(clusterState.nodes.values()).map(b => ({ id: b.backend_id, url: b.deployment_url, role: b.role, state: b.observed_state }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, message: `Broadcasted ${backendList.length} backends to ${broadcastCount} connected nodes.` }));
+    res.end(JSON.stringify({ success: true, message: `Broadcasted ${backendList.length} backends to ${broadcastCount} connected fleet nodes.` }));
     return;
   }
 

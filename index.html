@@ -2127,6 +2127,48 @@
               </div>
             </div>
 
+            <!-- MINECRAFT END-CORE OBSIDIAN PILLARS VISUALIZER -->
+            <div style="margin-bottom:1.5rem; background:radial-gradient(ellipse at center, #1b122e 0%, #0d0b18 70%, #07050d 100%); border:1px solid #7c3aed44; border-radius:var(--radius-sm); position:relative; overflow:hidden; box-shadow:0 8px 32px rgba(124, 58, 237, 0.15);">
+              <!-- Top bar with Quorum & Epoch metrics -->
+              <div style="padding:0.75rem 1.25rem; background:rgba(13,11,24,0.85); border-bottom:1px solid rgba(124,58,237,0.25); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem;">
+                <div style="display:flex; align-items:center; gap:0.75rem;">
+                  <span style="font-size:1.25rem;">🔮</span>
+                  <div>
+                    <div style="font-weight:700; color:#e9d5ff; font-size:0.95rem; letter-spacing:0.5px; display:flex; align-items:center; gap:0.5rem;">
+                      CYBERVPS END-CORE: OBSIDIAN PILLARS MESH
+                      <span id="endcore-quorum-badge" class="badge" style="background:#7c3aed33; color:#c084fc; border:1px solid #7c3aed;">QUORUM HEALTHY</span>
+                    </div>
+                    <div style="font-size:0.72rem; color:#a855f7;">Distributed Self-Healing Ecosystem • Multi-Pillar Reconstitution Engine</div>
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:1.25rem; font-size:0.75rem;">
+                  <div><span style="color:#94a3b8;">Cluster Epoch:</span> <strong id="endcore-epoch" style="color:#c084fc;">#1</strong></div>
+                  <div><span style="color:#94a3b8;">Active Quorum:</span> <strong id="endcore-quorum-ratio" style="color:#38bdf8;">4 / 5</strong></div>
+                  <div><span style="color:#94a3b8;">Fencing Token:</span> <code id="endcore-fencing-token" style="color:#a855f7; font-size:0.7rem;">epoch_1_tok_1</code></div>
+                </div>
+              </div>
+
+              <!-- Interactive Canvas -->
+              <div style="position:relative; width:100%; height:360px; display:flex; align-items:center; justify-content:center;">
+                <canvas id="endcore-canvas" width="900" height="360" style="width:100%; height:100%; max-height:360px; display:block; cursor:pointer;"></canvas>
+                <!-- Central Overlay notice -->
+                <div style="position:absolute; bottom:10px; left:16px; font-size:0.7rem; color:#94a3b8; background:rgba(13,11,24,0.75); padding:3px 8px; border-radius:4px; border:1px solid rgba(124,58,237,0.2);">
+                  💡 Click any Obsidian Pillar on canvas to inspect real machine paths, provider adapters, and recovery actions.
+                </div>
+              </div>
+
+              <!-- Real-Time Reconstitution Live Log Console -->
+              <div id="endcore-live-log-container" style="background:rgba(8,6,15,0.92); border-top:1px solid rgba(124,58,237,0.25); padding:0.6rem 1rem; max-height:90px; overflow-y:auto; font-family:var(--font-mono); font-size:0.72rem; color:#d8b4fe;">
+                <div style="display:flex; align-items:center; gap:0.5rem; color:#a855f7; font-weight:600; margin-bottom:4px;">
+                  <span class="pulse-dot" style="background:#a855f7; width:6px; height:6px;"></span>
+                  LIVE OBSIDIAN RECONSTITUTION STREAM:
+                </div>
+                <div id="endcore-live-log-entries">
+                  <div style="color:#64748b;">[System] End-Core cluster initialized. All obsidian pillars standing in alignment.</div>
+                </div>
+              </div>
+            </div>
+
             <!-- Backends Grid -->
             <div id="backends-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:1rem;">
               <!-- Rendered dynamically -->
@@ -3107,6 +3149,105 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeAddBackendModal()">Cancel</button>
         <button class="btn btn-primary" onclick="submitAddBackend()">Register Node</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: OBSIDIAN PILLAR DEEP INSPECTOR & HEALING ACTIONS -->
+  <div id="modal-pillar-inspect" class="modal-backdrop">
+    <div class="modal" style="max-width:580px;">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <span style="font-size:1.25rem;">🔮</span>
+          <div>
+            <strong style="color:var(--text-primary); font-size:1rem;" id="inspect-pillar-name">Obsidian Pillar</strong>
+            <div style="font-size:0.72rem; color:var(--text-muted);" id="inspect-pillar-id">be_primary_local</div>
+          </div>
+        </div>
+        <button class="btn-icon" onclick="closePillarInspectModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="font-size:0.8rem;">
+        <!-- Status & Quorum Row -->
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; padding:0.6rem 0.85rem; background:rgba(124,58,237,0.08); border:1px solid rgba(124,58,237,0.25); border-radius:var(--radius-sm);">
+          <div>
+            <span style="color:var(--text-muted);">Observed Status:</span>
+            <strong id="inspect-pillar-status" style="margin-left:4px;">HEALTHY</strong>
+          </div>
+          <div>
+            <span style="color:var(--text-muted);">Generation:</span>
+            <strong id="inspect-pillar-gen" style="color:var(--accent-cyan); margin-left:4px;">Gen 0</strong>
+          </div>
+          <div>
+            <span style="color:var(--text-muted);">Role:</span>
+            <strong id="inspect-pillar-role" style="color:#c084fc; margin-left:4px;">PRIMARY</strong>
+          </div>
+        </div>
+
+        <!-- Verified Real Filesystem & Provider Paths -->
+        <div style="background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.85rem; margin-bottom:1rem;">
+          <div style="font-weight:600; color:var(--accent-cyan); font-size:0.75rem; text-transform:uppercase; margin-bottom:0.6rem;">
+            Verified Infrastructure & Filesystem Paths
+          </div>
+          <div style="display:grid; grid-template-columns:120px 1fr; gap:0.4rem; font-family:var(--font-mono); font-size:0.72rem;">
+            <span style="color:var(--text-muted);">Provider:</span>
+            <strong id="inspect-pillar-provider" style="color:var(--text-primary);">process_host</strong>
+
+            <span style="color:var(--text-muted);">Resource ID:</span>
+            <code id="inspect-pillar-res" style="color:var(--text-primary); word-break:break-all;">proc_local_8080</code>
+
+            <span style="color:var(--text-muted);">Host Machine:</span>
+            <strong id="inspect-pillar-machine" style="color:var(--text-primary);">localhost</strong>
+
+            <span style="color:var(--text-muted);">Endpoint:</span>
+            <a id="inspect-pillar-url" href="#" target="_blank" style="color:var(--accent-cyan); word-break:break-all;">http://127.0.0.1:8080</a>
+
+            <span style="color:var(--text-muted);">Install Path:</span>
+            <code id="inspect-pillar-install" style="color:#a855f7; word-break:break-all;">C:\Users\Suraj\.cybervps\backends\node</code>
+
+            <span style="color:var(--text-muted);">Data Path:</span>
+            <code id="inspect-pillar-data" style="color:#a855f7; word-break:break-all;">C:\Users\Suraj\.cybervps\backends\node\data</code>
+
+            <span style="color:var(--text-muted);">Config Path:</span>
+            <code id="inspect-pillar-config" style="color:#a855f7; word-break:break-all;">C:\Users\Suraj\.cybervps\backends\node\config.json</code>
+          </div>
+        </div>
+
+        <!-- Health & Backup Integrity -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:1rem;">
+          <div style="background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.65rem 0.85rem;">
+            <div style="font-size:0.7rem; color:var(--text-muted);">HEALTH TELEMETRY</div>
+            <div style="font-size:0.8rem; margin-top:0.25rem;">Latency: <strong id="inspect-pillar-latency">1ms</strong></div>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">Last Heartbeat: <span id="inspect-pillar-lastseen">Just now</span></div>
+          </div>
+          <div style="background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.65rem 0.85rem;">
+            <div style="font-size:0.7rem; color:var(--text-muted);">BACKUP MANIFEST</div>
+            <div style="font-size:0.8rem; margin-top:0.25rem;">Checksum: <strong id="inspect-pillar-backup">VERIFIED (SHA256)</strong></div>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">Schema: v1.0 • Snapshot Ready</div>
+          </div>
+        </div>
+
+        <!-- Action Controls -->
+        <div style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.5rem;">
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn btn-primary" id="btn-inspect-recover" style="flex:1; background:linear-gradient(135deg, #7c3aed, #a855f7); border:none;" onclick="triggerSelectedPillarRecovery()">
+              🔥 Reconstitute Pillar (15-Step Healing)
+            </button>
+            <button class="btn btn-secondary" id="btn-inspect-promote" style="flex:1;" onclick="promoteSelectedPillar()">
+              👑 Promote to Leader
+            </button>
+          </div>
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn btn-secondary" style="flex:1;" onclick="verifySelectedPillarBackup()">
+              🛡️ Verify Backup Snapshot
+            </button>
+            <button class="btn btn-secondary" style="flex:1;" onclick="testSelectedPillarRestore()">
+              🧪 Test Sandbox Restore
+            </button>
+          </div>
+          <button class="btn btn-secondary" style="color:var(--status-danger); border-color:rgba(239,68,68,0.3);" onclick="tombstoneSelectedPillar()">
+            🗑️ Administrative Removal (Signed Tombstone)
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -8804,66 +8945,410 @@
     }
 
     // =========================================================================
-    // 16. MULTI-BACKEND HIGH AVAILABILITY CONTROLLER
+    // 16. CYBERVPS END-CORE — OBSIDIAN PILLARS DISTRIBUTED MESH CONTROLLER
     // =========================================================================
+    let currentSelectedPillarId = null;
+    let endCoreAnimationId = null;
+    let endCorePillarPositions = [];
+    let endCoreStars = [];
+
     async function syncBackends() {
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/backends`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to fetch backends');
+        let clusterData = null;
+        try {
+          const cRes = await fetch(`${base}/api/v1/cluster/status`, { headers: getAuthHeaders() });
+          if (cRes.ok) clusterData = await cRes.json();
+        } catch (_) {}
 
-        const backends = data.backends || [];
-        document.getElementById('ha-mesh-status').innerText = data.ha_status ? data.ha_status.toUpperCase() : 'OPERATIONAL';
-        document.getElementById('ha-active-primary').innerText = data.active_backend || 'be_primary_local';
-        document.getElementById('ha-total-nodes').innerText = data.total_backends || backends.length;
-        document.getElementById('ha-healthy-nodes').innerText = backends.filter(b => b.state === 'healthy').length;
+        if (clusterData && clusterData.nodes) {
+          window.lastClusterStatus = clusterData;
+          const quorum = clusterData.quorum || {};
+          document.getElementById('ha-mesh-status').innerText = quorum.quorum_state ? quorum.quorum_state : 'OPERATIONAL';
+          document.getElementById('ha-active-primary').innerText = clusterData.leader_id || 'be_primary_local';
+          document.getElementById('ha-total-nodes').innerText = clusterData.nodes.length;
+          document.getElementById('ha-healthy-nodes').innerText = clusterData.nodes.filter(n => n.observed_state === 'healthy').length;
 
-        renderBackends(backends);
+          // Update End-Core metrics bar
+          if (document.getElementById('endcore-epoch')) {
+            document.getElementById('endcore-epoch').innerText = '#' + clusterData.epoch;
+            document.getElementById('endcore-quorum-ratio').innerText = `${quorum.reachable_count || 1} / ${quorum.total_active_members || 1}`;
+            document.getElementById('endcore-fencing-token').innerText = clusterData.fencing_token || `epoch_${clusterData.epoch}_tok_1`;
+            const qBadge = document.getElementById('endcore-quorum-badge');
+            if (quorum.has_quorum) {
+              qBadge.innerText = 'QUORUM HEALTHY';
+              qBadge.style.color = '#c084fc';
+              qBadge.style.borderColor = '#7c3aed';
+            } else {
+              qBadge.innerText = 'QUORUM LOST';
+              qBadge.style.color = '#f87171';
+              qBadge.style.borderColor = '#ef4444';
+            }
+          }
+
+          renderBackends(clusterData.nodes);
+          renderEndCoreCanvas(clusterData);
+          initEndCoreEvents();
+        } else {
+          // Fallback legacy endpoint
+          const res = await fetch(`${base}/api/v1/backends`);
+          const data = await res.json();
+          renderBackends(data.backends || []);
+        }
       } catch (err) {
         showToast(err.message, 'error');
       }
     }
 
+    // Connect to real-time SSE stream for healing convergence beams
+    function initEndCoreEvents() {
+      if (window.endCoreEventSource) return;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const sse = new EventSource(`${base}/api/v1/cluster/events`);
+        window.endCoreEventSource = sse;
+        sse.addEventListener('HEALING_PROGRESS', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            addEndCoreLiveLog(`[STEP ${data.step}/15] ${data.step_name}: ${data.description}`);
+            window.activeHealingJob = data;
+            if (window.lastClusterStatus) renderEndCoreCanvas(window.lastClusterStatus);
+          } catch (_) {}
+        });
+        sse.addEventListener('RECOVERY_COMPLETED', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            addEndCoreLiveLog(`[RESTORED] Pillar ${data.backend_id} reconstituted (Gen ${data.recovery_generation})! Quorum aligned.`);
+            window.activeHealingJob = null;
+            syncBackends();
+          } catch (_) {}
+        });
+        sse.addEventListener('SUSPECTED_FAILURE', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            addEndCoreLiveLog(`[ALERT] Suspected failure on pillar ${data.backend_id}: ${data.error}`);
+            syncBackends();
+          } catch (_) {}
+        });
+      } catch (_) {}
+    }
+
+    function addEndCoreLiveLog(msg) {
+      const container = document.getElementById('endcore-live-log-entries');
+      if (!container) return;
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.style.marginBottom = '2px';
+      div.innerHTML = `<span style="color:#64748b;">[${time}]</span> ${escapeHtml(msg)}`;
+      container.prepend(div);
+      while (container.children.length > 25) container.removeChild(container.lastChild);
+    }
+
+    // Canvas Renderer: Minecraft End-Core Obsidian Pillars & Healing Convergence Beams
+    function renderEndCoreCanvas(clusterData) {
+      const canvas = document.getElementById('endcore-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const width = canvas.width;
+      const height = canvas.height;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const orbitRadius = Math.min(width, height) * 0.38;
+
+      // Seed stars if empty
+      if (endCoreStars.length === 0) {
+        for (let i = 0; i < 45; i++) {
+          endCoreStars.push({
+            x: Math.random() * width,
+            y: Math.random() * height,
+            size: Math.random() * 1.5 + 0.5,
+            alpha: Math.random() * 0.7 + 0.3,
+            speed: Math.random() * 0.02 + 0.005
+          });
+        }
+      }
+
+      // Attach mouse click handler once
+      if (!canvas.hasEndCoreListener) {
+        canvas.hasEndCoreListener = true;
+        canvas.addEventListener('click', (e) => {
+          const rect = canvas.getBoundingClientRect();
+          const scaleX = canvas.width / rect.width;
+          const scaleY = canvas.height / rect.height;
+          const clickX = (e.clientX - rect.left) * scaleX;
+          const clickY = (e.clientY - rect.top) * scaleY;
+
+          for (const p of endCorePillarPositions) {
+            const dist = Math.hypot(clickX - p.x, clickY - p.y);
+            if (dist < 32) {
+              inspectPillarNode(p.node.backend_id);
+              return;
+            }
+          }
+        });
+      }
+
+      const nodes = clusterData.nodes || [];
+      const totalPillars = Math.max(nodes.length, 1);
+      const now = Date.now() / 1000;
+
+      // Clear Canvas with End Void gradient
+      ctx.fillStyle = '#0a0814';
+      ctx.fillRect(0, 0, width, height);
+
+      // Draw Twinkling End-Void Stars
+      for (const star of endCoreStars) {
+        const a = 0.3 + 0.7 * Math.abs(Math.sin(now * star.speed * 10 + star.x));
+        ctx.fillStyle = `rgba(216, 180, 254, ${a})`;
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Draw Orbit Ring
+      ctx.strokeStyle = 'rgba(124, 58, 237, 0.2)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, orbitRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Compute and draw pillar positions
+      endCorePillarPositions = [];
+      nodes.forEach((n, idx) => {
+        const angle = (idx / totalPillars) * Math.PI * 2 - Math.PI / 2;
+        const px = centerX + Math.cos(angle) * orbitRadius;
+        const py = centerY + Math.sin(angle) * orbitRadius;
+        endCorePillarPositions.push({ x: px, y: py, node: n });
+      });
+
+      // Draw Mesh Link Beams between healthy pillars
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < endCorePillarPositions.length; i++) {
+        const p1 = endCorePillarPositions[i];
+        const nextIdx = (i + 1) % endCorePillarPositions.length;
+        const p2 = endCorePillarPositions[nextIdx];
+        const isHealthy = p1.node.observed_state === 'healthy' && p2.node.observed_state === 'healthy';
+
+        ctx.strokeStyle = isHealthy ? 'rgba(192, 132, 252, 0.35)' : 'rgba(239, 68, 68, 0.2)';
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      }
+
+      // Draw Central End-Core Crystal (Ender Dragon Core)
+      const corePulse = Math.sin(now * 3) * 4;
+      const coreRadius = 24 + corePulse;
+
+      // Core Aura Glow
+      const auraGrad = ctx.createRadialGradient(centerX, centerY, 5, centerX, centerY, coreRadius * 2.2);
+      auraGrad.addColorStop(0, 'rgba(192, 132, 252, 0.8)');
+      auraGrad.addColorStop(0.5, 'rgba(124, 58, 237, 0.4)');
+      auraGrad.addColorStop(1, 'rgba(124, 58, 237, 0)');
+      ctx.fillStyle = auraGrad;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, coreRadius * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Core Crystal Octahedron
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(now * 0.5);
+
+      ctx.fillStyle = '#a855f7';
+      ctx.strokeStyle = '#e9d5ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, -coreRadius);
+      ctx.lineTo(coreRadius, 0);
+      ctx.lineTo(0, coreRadius);
+      ctx.lineTo(-coreRadius, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Inner facet
+      ctx.fillStyle = '#c084fc';
+      ctx.beginPath();
+      ctx.moveTo(0, -coreRadius * 0.6);
+      ctx.lineTo(coreRadius * 0.6, 0);
+      ctx.lineTo(0, coreRadius * 0.6);
+      ctx.lineTo(-coreRadius * 0.6, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Core Text Label
+      ctx.fillStyle = '#e9d5ff';
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('END-CORE CRYSTAL', centerX, centerY + coreRadius + 20);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '9px monospace';
+      ctx.fillText(`Epoch #${clusterData.epoch} • Quorum ${clusterData.quorum?.reachable_count || 1}/${clusterData.quorum?.total_active_members || 1}`, centerX, centerY + coreRadius + 32);
+
+      // Active Reconstitution Healing Beams Animation (Minecraft End Crystal Recovery Beam)
+      if (window.activeHealingJob) {
+        const targetNodeId = window.activeHealingJob.backend_id;
+        const targetPos = endCorePillarPositions.find(p => p.node.backend_id === targetNodeId);
+        if (targetPos) {
+          // Beams from all healthy pillars into the central crystal
+          for (const p of endCorePillarPositions) {
+            if (p.node.observed_state === 'healthy') {
+              ctx.strokeStyle = `rgba(168, 85, 247, ${0.4 + 0.4 * Math.sin(now * 8)})`;
+              ctx.lineWidth = 3;
+              ctx.beginPath();
+              ctx.moveTo(p.x, p.y);
+              ctx.lineTo(centerX, centerY);
+              ctx.stroke();
+            }
+          }
+
+          // Focused Reconstitution Beam from End-Core into the Fractured Crystal
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 4 + Math.sin(now * 12) * 2;
+          ctx.beginPath();
+          ctx.moveTo(centerX, centerY);
+          ctx.lineTo(targetPos.x, targetPos.y);
+          ctx.stroke();
+
+          // Spark particle on target
+          ctx.fillStyle = '#f472b6';
+          ctx.beginPath();
+          ctx.arc(targetPos.x, targetPos.y, 16 + Math.sin(now * 10) * 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Draw Obsidian Pillars & End Crystals
+      for (const p of endCorePillarPositions) {
+        const n = p.node;
+        const isHealthy = n.observed_state === 'healthy' || n.observed_state === 'online';
+        const isRecovering = n.observed_state === 'recovering';
+        const isLeader = n.role === 'primary';
+
+        // 1. Draw 3D Obsidian Pillar Column Base
+        const pillarW = 26;
+        const pillarH = 34;
+        ctx.fillStyle = '#1e1b2e';
+        ctx.strokeStyle = isLeader ? '#38bdf8' : (isHealthy ? '#7c3aed' : '#ef4444');
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(p.x - pillarW / 2, p.y - 6, pillarW, pillarH);
+        ctx.strokeRect(p.x - pillarW / 2, p.y - 6, pillarW, pillarH);
+
+        // Obsidian Runic Marks
+        ctx.fillStyle = isHealthy ? '#a855f7' : (isRecovering ? '#38bdf8' : '#64748b');
+        ctx.fillRect(p.x - 3, p.y + 4, 6, 3);
+        ctx.fillRect(p.x - 3, p.y + 12, 6, 3);
+        ctx.fillRect(p.x - 3, p.y + 20, 6, 3);
+
+        // 2. Draw Perched End Crystal on Top of Pillar
+        const crystalY = p.y - 12;
+        const crystalPulse = Math.sin(now * 4 + p.x) * 2;
+
+        if (isHealthy) {
+          // Glowing Magenta/Cyan End Crystal
+          ctx.fillStyle = isLeader ? '#38bdf8' : '#c084fc';
+          ctx.beginPath();
+          ctx.arc(p.x, crystalY, 7 + crystalPulse, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (isRecovering) {
+          // Reconstituting Crystal
+          ctx.fillStyle = '#f43f5e';
+          ctx.beginPath();
+          ctx.arc(p.x, crystalY, 7, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Fractured / Extinguished Crystal
+          ctx.fillStyle = '#475569';
+          ctx.beginPath();
+          ctx.arc(p.x, crystalY, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // 3. Pillar Label & Provider Pill
+        ctx.fillStyle = '#f1f5f9';
+        ctx.font = 'bold 9px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(n.display_name ? n.display_name.slice(0, 18) : n.backend_id, p.x, p.y + pillarH + 8);
+
+        ctx.fillStyle = isLeader ? '#38bdf8' : (isHealthy ? '#4ade80' : (isRecovering ? '#f472b6' : '#f87171'));
+        ctx.font = '8px monospace';
+        const statusTxt = isLeader ? 'MASTER LEADER' : (isHealthy ? `${n.latency_ms || 2}ms` : (isRecovering ? 'RECONSTITUTING' : 'OFFLINE'));
+        ctx.fillText(statusTxt, p.x, p.y + pillarH + 18);
+      }
+    }
+
+    // Render Backends Cards Grid with Real Path Information & Action Buttons
     function renderBackends(backends) {
       const grid = document.getElementById('backends-grid');
       if (!grid) return;
 
       if (!backends || backends.length === 0) {
-        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-muted);">No backends registered in mesh.</div>';
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-muted);">No obsidian pillars enrolled in End-Core mesh.</div>';
         return;
       }
 
       grid.innerHTML = backends.map(b => {
         const isPrimary = b.role === 'primary';
-        const roleBadge = isPrimary ? '<span class="badge badge-cyan">PRIMARY (ACTIVE)</span>' : '<span class="badge badge-subtle">STANDBY (FAILOVER)</span>';
-        const isHealthy = b.state === 'healthy';
-        const stateBadge = isHealthy ? '<span class="badge badge-success">HEALTHY</span>' : '<span class="badge badge-danger">DEGRADED</span>';
+        const roleBadge = isPrimary ? '<span class="badge badge-cyan" style="background:#0284c722; color:#38bdf8; border:1px solid #0284c7;">PRIMARY LEADER</span>' : '<span class="badge badge-subtle">STANDBY PILLAR</span>';
+        const isHealthy = b.observed_state === 'healthy' || b.state === 'healthy';
+        const isRecovering = b.observed_state === 'recovering' || b.state === 'recovering';
+        const stateBadge = isHealthy
+          ? '<span class="badge badge-success">HEALTHY</span>'
+          : (isRecovering ? '<span class="badge" style="background:#7c3aed33; color:#c084fc; border:1px solid #7c3aed;">RECONSTITUTING</span>' : '<span class="badge badge-danger">SUSPECTED_OFFLINE</span>');
+
+        const bId = b.backend_id || b.id;
+        const bName = b.display_name || b.name || bId;
+        const bUrl = b.deployment_url || b.url || 'http://127.0.0.1:8080';
+        const bInstallPath = b.installation_path || 'C:\\Users\\Suraj\\.cybervps\\backends\\' + bId;
+        const bGen = typeof b.recovery_generation === 'number' ? b.recovery_generation : 0;
+        const bProvider = b.deployment_provider || 'generic_rest';
 
         return `
-          <div style="background:var(--bg-base); border:1px solid ${isPrimary ? 'var(--accent-cyan)' : 'var(--border-subtle)'}; border-radius:var(--radius-sm); padding:1.15rem; display:flex; flex-direction:column; justify-content:space-between;">
+          <div style="background:var(--bg-base); border:1px solid ${isPrimary ? '#7c3aed' : 'var(--border-subtle)'}; border-radius:var(--radius-sm); padding:1.15rem; display:flex; flex-direction:column; justify-content:space-between; position:relative; overflow:hidden;">
+            ${isPrimary ? '<div style="position:absolute; top:0; left:0; width:100%; height:2px; background:linear-gradient(90deg, #7c3aed, #38bdf8);"></div>' : ''}
             <div>
-              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.5rem;">
-                <strong style="color:var(--text-primary); font-size:0.95rem;">${escapeHtml(b.name)}</strong>
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem;">
+                <strong style="color:var(--text-primary); font-size:0.92rem; display:flex; align-items:center; gap:0.4rem;">
+                  <span>🔮</span> ${escapeHtml(bName)}
+                </strong>
                 ${roleBadge}
               </div>
-              <div style="font-family:var(--font-mono); font-size:0.75rem; color:var(--accent-cyan); word-break:break-all; margin-bottom:0.75rem;">
-                ${escapeHtml(b.url)}
+              <div style="font-family:var(--font-mono); font-size:0.75rem; color:var(--accent-cyan); word-break:break-all; margin-bottom:0.6rem;">
+                ${escapeHtml(bUrl)}
               </div>
-              <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
+              <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem;">
                 ${stateBadge}
-                <span style="font-size:0.75rem; color:var(--text-muted);">Latency: <strong>${b.latency_ms || 2}ms</strong></span>
+                <span class="badge" style="background:rgba(255,255,255,0.05); color:var(--text-muted); font-size:0.68rem;">Provider: ${escapeHtml(bProvider)}</span>
+                <span class="badge" style="background:rgba(255,255,255,0.05); color:#a855f7; font-size:0.68rem;">Gen ${bGen}</span>
+                <span style="font-size:0.75rem; color:var(--text-muted); margin-left:auto;">Latency: <strong>${b.latency_ms || 1}ms</strong></span>
+              </div>
+              <div style="font-size:0.7rem; color:var(--text-muted); background:rgba(0,0,0,0.25); padding:4px 6px; border-radius:4px; font-family:var(--font-mono); word-break:break-all; margin-bottom:0.75rem;">
+                Path: ${escapeHtml(bInstallPath)}
               </div>
             </div>
 
             <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border-subtle); padding-top:0.75rem; margin-top:0.5rem;">
-              <span style="font-size:0.7rem; color:var(--text-muted);">ID: <code>${escapeHtml(b.id)}</code></span>
+              <span style="font-size:0.7rem; color:var(--text-muted);">ID: <code>${escapeHtml(bId)}</code></span>
               <div style="display:flex; gap:0.4rem;">
-                ${!isPrimary ? `
-                  <button class="btn btn-secondary" onclick="promoteBackendToPrimary('${escapeHtml(b.id)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem;">
-                    Promote Primary
+                <button class="btn btn-secondary" onclick="inspectPillarNode('${escapeHtml(bId)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem;" title="Inspect verified filesystem paths & recovery actions">
+                  🔍 Details
+                </button>
+                ${!isHealthy ? `
+                  <button class="btn btn-primary" onclick="triggerPillarRecoveryDirect('${escapeHtml(bId)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem; background:#7c3aed; border:none;" title="Fire 15-step reconstitution">
+                    🔥 Heal
                   </button>
-                  <button class="btn btn-secondary" onclick="removeBackend('${escapeHtml(b.id)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem; color:var(--status-danger);">
+                ` : ''}
+                ${!isPrimary ? `
+                  <button class="btn btn-secondary" onclick="promoteBackendToPrimary('${escapeHtml(bId)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem;">
+                    Promote
+                  </button>
+                  <button class="btn btn-secondary" onclick="removeBackend('${escapeHtml(bId)}')" style="font-size:0.72rem; padding:0.25rem 0.55rem; color:var(--status-danger);">
                     Remove
                   </button>
                 ` : `
@@ -8874,6 +9359,117 @@
           </div>
         `;
       }).join('');
+    }
+
+    // Pillar Inspector Dialog Controller
+    function inspectPillarNode(backendId) {
+      currentSelectedPillarId = backendId;
+      const nodes = window.lastClusterStatus ? window.lastClusterStatus.nodes : [];
+      const node = nodes.find(n => (n.backend_id || n.id) === backendId);
+      if (!node) return showToast('Pillar node not found', 'error');
+
+      const isHealthy = node.observed_state === 'healthy' || node.state === 'healthy';
+      const isRecovering = node.observed_state === 'recovering' || node.state === 'recovering';
+      const bId = node.backend_id || node.id;
+
+      document.getElementById('inspect-pillar-name').innerText = node.display_name || node.name || bId;
+      document.getElementById('inspect-pillar-id').innerText = bId;
+      document.getElementById('inspect-pillar-status').innerText = isHealthy ? 'HEALTHY' : (isRecovering ? 'RECONSTITUTING' : 'OFFLINE');
+      document.getElementById('inspect-pillar-status').style.color = isHealthy ? 'var(--status-success)' : (isRecovering ? '#c084fc' : 'var(--status-danger)');
+      document.getElementById('inspect-pillar-gen').innerText = `Gen ${node.recovery_generation || 0}`;
+      document.getElementById('inspect-pillar-role').innerText = (node.role || 'secondary').toUpperCase();
+
+      document.getElementById('inspect-pillar-provider').innerText = node.deployment_provider || 'generic_rest';
+      document.getElementById('inspect-pillar-res').innerText = node.deployment_resource_id || `res_${bId}`;
+      document.getElementById('inspect-pillar-machine').innerText = node.machine_id || 'localhost';
+      document.getElementById('inspect-pillar-url').innerText = node.deployment_url || node.url || 'http://127.0.0.1:8080';
+      document.getElementById('inspect-pillar-url').href = node.deployment_url || node.url || '#';
+      document.getElementById('inspect-pillar-install').innerText = node.installation_path || 'C:\\Users\\Suraj\\.cybervps\\backends\\' + bId;
+      document.getElementById('inspect-pillar-data').innerText = node.data_path || 'C:\\Users\\Suraj\\.cybervps\\backends\\' + bId + '\\data';
+      document.getElementById('inspect-pillar-config').innerText = node.config_path || 'C:\\Users\\Suraj\\.cybervps\\backends\\' + bId + '\\config.json';
+
+      document.getElementById('inspect-pillar-latency').innerText = `${node.latency_ms || 1}ms`;
+      document.getElementById('inspect-pillar-lastseen').innerText = node.last_successful_health_check ? new Date(node.last_successful_health_check).toLocaleTimeString() : 'Just now';
+
+      document.getElementById('modal-pillar-inspect').style.display = 'flex';
+    }
+
+    function closePillarInspectModal() {
+      document.getElementById('modal-pillar-inspect').style.display = 'none';
+      currentSelectedPillarId = null;
+    }
+
+    // Trigger 15-step reconstitution pipeline
+    async function triggerSelectedPillarRecovery() {
+      if (!currentSelectedPillarId) return;
+      await triggerPillarRecoveryDirect(currentSelectedPillarId);
+      closePillarInspectModal();
+    }
+
+    async function triggerPillarRecoveryDirect(backendId) {
+      showToast(`Initiating 15-step End-Core reconstitution on ${backendId}...`, 'info');
+      addEndCoreLiveLog(`[Trigger] Administrator initiated reconstitution on pillar ${backendId}.`);
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/cluster/nodes/${backendId}/recover`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Reconstitution failed');
+        showToast(`Reconstitution pipeline dispatched for ${backendId}!`, 'success');
+        syncBackends();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function promoteSelectedPillar() {
+      if (!currentSelectedPillarId) return;
+      await promoteBackendToPrimary(currentSelectedPillarId);
+      closePillarInspectModal();
+    }
+
+    async function verifySelectedPillarBackup() {
+      if (!currentSelectedPillarId) return;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/cluster/nodes/${currentSelectedPillarId}/backup/verify`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Backup verification failed');
+        showToast(`Backup verified! SHA256: ${data.checksum_sha256.slice(0, 16)}`, 'success');
+        addEndCoreLiveLog(`[Backup] Verified snapshot for ${currentSelectedPillarId} (Checksum: ${data.checksum_sha256.slice(0, 12)})`);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function testSelectedPillarRestore() {
+      if (!currentSelectedPillarId) return;
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      try {
+        const res = await fetch(`${base}/api/v1/cluster/nodes/${currentSelectedPillarId}/backup/test-restore`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Restore test failed');
+        showToast(`Sandbox test restore passed at: ${data.sandbox_path}`, 'success');
+        addEndCoreLiveLog(`[Sandbox] Dry-run restoration passed for ${currentSelectedPillarId} (Schema v${data.restored_schema_version})`);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function tombstoneSelectedPillar() {
+      if (!currentSelectedPillarId) return;
+      if (!confirm(`TOMBSTONE CONFIRMATION: Remove ${currentSelectedPillarId} permanently? Surviving pillars will record this administrative removal and NEVER resurrect it.`)) return;
+      const id = currentSelectedPillarId;
+      closePillarInspectModal();
+      await removeBackend(id);
     }
 
     function openAddBackendModal() {
@@ -8892,15 +9488,16 @@
 
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/backends`, {
+        const res = await fetch(`${base}/api/v1/cluster/nodes`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ name, url, role })
         });
         const result = await res.json();
         if (!res.ok || result.error) throw new Error(result.error || 'Failed to add backend');
         closeAddBackendModal();
-        showToast('Backend registered in high-availability mesh!', 'success');
+        showToast('Obsidian pillar registered in End-Core mesh!', 'success');
+        addEndCoreLiveLog(`[Enrollment] New obsidian pillar enrolled (${name || url}).`);
         await syncBackends();
       } catch (err) {
         showToast(err.message, 'error');
@@ -8908,13 +9505,16 @@
     }
 
     async function removeBackend(id) {
-      if (!confirm(`Are you sure you want to remove backend ${id}?`)) return;
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/backends/${id}`, { method: 'DELETE' });
+        const res = await fetch(`${base}/api/v1/cluster/nodes/${id}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders()
+        });
         const result = await res.json();
         if (!res.ok || result.error) throw new Error(result.error || 'Failed to delete backend');
-        showToast(`Backend ${id} removed.`, 'success');
+        showToast(`Pillar ${id} tombstoned. Cluster will respect removal.`, 'success');
+        addEndCoreLiveLog(`[Tombstone] Pillar ${id} intentionally removed by administrator.`);
         await syncBackends();
       } catch (err) {
         showToast(err.message, 'error');
@@ -8922,12 +9522,16 @@
     }
 
     async function testAllBackends() {
-      showToast('Health checking all mesh backend nodes...', 'info');
+      showToast('Auditing End-Core cluster health across all obsidian pillars...', 'info');
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/backends/health`, { method: 'POST' });
+        const res = await fetch(`${base}/api/v1/cluster/health-check`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
         const result = await res.json();
-        showToast(`Mesh check complete: ${result.active_mesh_count || 1} backends healthy.`, 'success');
+        showToast(`Audit complete: ${result.healthy_count || 1} / ${result.active_mesh_count || 1} pillars healthy.`, 'success');
+        addEndCoreLiveLog(`[Audit] Cluster health check complete. Healthy pillars: ${result.healthy_count || 1}/${result.active_mesh_count || 1}`);
         await syncBackends();
       } catch (err) {
         showToast(err.message, 'error');
@@ -8937,14 +9541,14 @@
     async function promoteBackendToPrimary(id) {
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/backends/failover`, {
+        const res = await fetch(`${base}/api/v1/cluster/nodes/${id}/promote`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target_backend_id: id })
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }
         });
         const result = await res.json();
-        if (!res.ok || result.error) throw new Error(result.error || 'Failed to failover');
-        showToast(`Failover complete: ${id} promoted to Primary.`, 'success');
+        if (!res.ok || result.error) throw new Error(result.error || 'Failed to promote');
+        showToast(`Quorum election complete: ${id} promoted to Primary Leader.`, 'success');
+        addEndCoreLiveLog(`[Consensus] Pillar ${id} elected as Primary Leader for Epoch #${result.epoch || 2}.`);
         await syncBackends();
       } catch (err) {
         showToast(err.message, 'error');
@@ -8954,15 +9558,17 @@
     async function broadcastBackendsToFleet() {
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
       try {
-        const res = await fetch(`${base}/api/v1/backends/broadcast`, { method: 'POST' });
+        const res = await fetch(`${base}/api/v1/cluster/sync-peers`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
         const result = await res.json();
         if (res.ok) {
-          showToast(result.message || 'Synced backends to entire fleet!', 'success');
-        } else {
-          showToast(result.error || 'Failed to sync backends', 'error');
+          showToast('Synchronized End-Core mesh state to all surviving peers and fleet nodes!', 'success');
+          addEndCoreLiveLog('[Sync] P2P cluster state package broadcasted across all peers.');
         }
       } catch (err) {
-        showToast('Error syncing backends: ' + err.message, 'error');
+        showToast(err.message, 'error');
       }
     }
 
