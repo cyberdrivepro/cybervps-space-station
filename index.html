@@ -3736,8 +3736,15 @@
       }
       tbody.innerHTML = appState.machines.map(m => {
         const isDaytona = m.attributes?.['node:daytona'] === 'true';
-        const cpuPct = m.telemetry?.cpu_percent !== undefined ? m.telemetry.cpu_percent : null;
-        const memPct = m.telemetry?.memory_percent !== undefined ? m.telemetry.memory_percent : (m.telemetry?.memory_used_mb && m.telemetry?.memory_total_mb ? Math.round((m.telemetry.memory_used_mb / m.telemetry.memory_total_mb) * 100) : null);
+        const cpuPct = m.telemetry?.cpu_percent !== undefined ? m.telemetry.cpu_percent : (m.cpu_usage !== undefined ? m.cpu_usage : null);
+        let memPct = null;
+        if (m.telemetry?.memory_percent !== undefined) {
+          memPct = m.telemetry.memory_percent;
+        } else if (m.telemetry?.memory_used_mb && m.telemetry?.memory_total_mb && m.telemetry.memory_total_mb > 0) {
+          memPct = Math.round((m.telemetry.memory_used_mb / m.telemetry.memory_total_mb) * 100);
+        } else if (m.memory_used_bytes && m.memory_total_bytes && m.memory_total_bytes > 0) {
+          memPct = Math.round((m.memory_used_bytes / m.memory_total_bytes) * 100);
+        }
         const rawOs = m.os_full_version || m.os;
         const osLabel = (rawOs && rawOs !== 'Unknown') ? rawOs : 'Unknown / Unverified';
 
@@ -4487,17 +4494,28 @@
             appendTerminalBanner(`[*] Transport bridge connected. Launching remote shell on host (${launchLabel})...\n`);
           }
 
-          // Safety timeout: ensure quick buttons enable even if ready event is delayed or host sends raw output first
+          // Diagnostic timer: Track shell readiness accurately without false positive
           setTimeout(() => {
             if (appState.activeTerminalToken === currentSessionToken && ws.readyState === WebSocket.OPEN && !appState.isTerminalReady) {
-              appState.isTerminalReady = true;
-              setQuickChipsEnabled(true);
               if (badge.innerText === 'Starting Shell...') {
-                badge.className = 'badge badge-success';
-                badge.innerText = `Ready (${isWin ? 'PowerShell' : 'PTY'})`;
+                badge.className = 'badge badge-warning';
+                badge.innerText = 'Shell Initializing...';
               }
             }
-          }, 2000);
+          }, 3000);
+
+          setTimeout(() => {
+            if (appState.activeTerminalToken === currentSessionToken && ws.readyState === WebSocket.OPEN && !appState.isTerminalReady) {
+              badge.className = 'badge badge-danger';
+              badge.innerText = 'Shell Busy / Not Ready';
+              const timeoutNotice = `\x1b[33m[!] Notice: Host agent has not returned an interactive shell prompt yet. Check host agent status or terminal permissions.\x1b[0m\r\n`;
+              if (appState.termInstance) {
+                appState.termInstance.writeln(timeoutNotice);
+              } else {
+                appendTerminalBanner(timeoutNotice);
+              }
+            }
+          }, 15000);
         };
 
         ws.onmessage = (event) => {
@@ -4834,18 +4852,18 @@
       const beRes = await apiRequest('/api/v1/backends');
       results.push({
         title: 'Multi-Backend HA Routing & Mesh',
-        status: beRes.ok ? (beRes.data?.ha_status === 'operational' ? 'pass' : 'warn') : 'warn',
-        details: beRes.ok ? `HA Status: ${(beRes.data.ha_status || 'operational').toUpperCase()} (${beRes.data.total_backends || 0} nodes registered, Active: ${beRes.data.active_backend || 'primary'})` : 'Local fallback backend only'
+        status: beRes.ok ? (beRes.data?.ha_status === 'operational' ? 'pass' : 'warn') : 'fail',
+        details: beRes.ok ? `HA Status: ${(beRes.data.ha_status || 'operational').toUpperCase()} (${beRes.data.total_backends || 0} nodes registered, Active: ${beRes.data.active_backend || 'primary'})` : 'HA Backend API unreachable'
       });
 
       // Check 6: Enrolled Fleet Health
       const fleetRes = await apiRequest('/api/v1/machines');
-      const mList = fleetRes.ok ? (fleetRes.data?.machines || fleetRes.data || []) : [];
+      const mList = fleetRes.ok ? (Array.isArray(fleetRes.data) ? fleetRes.data : (fleetRes.data?.machines || [])) : [];
       const onlineM = mList.filter(m => m.status === 'online');
       results.push({
         title: 'Enrolled Host Fleet & Agents',
-        status: onlineM.length > 0 ? 'pass' : (mList.length > 0 ? 'warn' : 'pass'),
-        details: mList.length > 0 ? `${onlineM.length} of ${mList.length} machines reporting online via heartbeat` : 'No machines enrolled yet'
+        status: !fleetRes.ok ? 'fail' : (onlineM.length > 0 ? 'pass' : (mList.length > 0 ? 'warn' : 'info')),
+        details: !fleetRes.ok ? 'Fleet API unreachable' : (mList.length > 0 ? `${onlineM.length} of ${mList.length} machines reporting online via heartbeat` : 'No machines enrolled yet (Run the 1-line installer on a machine)')
       });
 
       // Check 7: Admin RBAC & Security Session

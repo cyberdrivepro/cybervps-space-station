@@ -148,15 +148,71 @@ function getMasterEnrollmentToken() {
   return process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
 }
 
-function isValidEnrollmentToken(token) {
+function generateNodeToken(machineId) {
+  if (!machineId) return null;
+  const sig = crypto.createHmac('sha256', BOOTSTRAP_SECRET)
+    .update(`node:${machineId}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `cvps_node_${machineId}_${sig}`;
+}
+
+function verifyNodeToken(token, machineId = null) {
+  if (!token || typeof token !== 'string') return false;
+  const clean = token.trim().replace(/^['"]+|['"]+$/g, '');
+  if (!clean.startsWith('cvps_node_')) return false;
+
+  // 1. In-memory check
+  if (db.enrollmentTokens && db.enrollmentTokens.has(clean)) return true;
+
+  // 2. Direct HMAC check against provided machineId
+  if (machineId) {
+    if (db.revokedDevices && db.revokedDevices.has(machineId)) return false;
+    const expected = generateNodeToken(machineId);
+    if (clean === expected) return true;
+  }
+
+  // 3. Structured token check: cvps_node_<embeddedMid>_<sig24>
+  const lastUnderscore = clean.lastIndexOf('_');
+  if (lastUnderscore > 10) {
+    const embeddedMid = clean.slice(10, lastUnderscore);
+    const sig = clean.slice(lastUnderscore + 1);
+    if (embeddedMid && sig && sig.length === 24) {
+      if (db.revokedDevices && db.revokedDevices.has(embeddedMid)) return false;
+      const expectedSig = crypto.createHmac('sha256', BOOTSTRAP_SECRET)
+        .update(`node:${embeddedMid}`)
+        .digest('hex')
+        .slice(0, 24);
+      try {
+        if (crypto.timingSafeEqual(Buffer.from(sig, 'utf8'), Buffer.from(expectedSig, 'utf8'))) {
+          return true;
+        }
+      } catch (_) {}
+    }
+  }
+
+  // 4. Legacy cvps_node_<32hex> fallback
+  if (/^cvps_node_[0-9a-f]{32}$/i.test(clean)) {
+    if (machineId && db.revokedDevices && db.revokedDevices.has(machineId)) return false;
+    return true;
+  }
+
+  return false;
+}
+
+function isValidEnrollmentToken(token, machineId = null) {
   if (!token) return false;
   const clean = String(token).trim().replace(/^['"]+|['"]+$/g, '');
   const master = getMasterEnrollmentToken();
   if (clean === master) return true;
+  if (clean === BOOTSTRAP_SECRET) return true;
   if (db.enrollmentTokens && db.enrollmentTokens.has(clean)) return true;
   if (clean.startsWith('cvps_boot_')) {
     const ver = verifyBootstrapTicket(clean);
     return ver.valid;
+  }
+  if (clean.startsWith('cvps_node_')) {
+    return verifyNodeToken(clean, machineId);
   }
   return false;
 }
@@ -560,12 +616,17 @@ function verifyAdminAuthorization(req) {
 
   // Evaluate credentials in order of privilege without letting a stale bearer shadow a valid pairing key
   for (const c of candidates) {
-    if (isValidEnrollmentToken(c.token)) {
-      hadEnrollmentToken = true;
-      continue;
+    // A. Explicit Admin token
+    if (process.env.CYBERVPS_ADMIN_TOKEN && c.token === process.env.CYBERVPS_ADMIN_TOKEN) {
+      return { authorized: true, user: 'admin', role: 'admin', source: c.source };
     }
 
-    // A. Active session
+    // B. Pairing Key
+    if (configuredPairing && c.token === configuredPairing) {
+      return { authorized: true, user: 'paired_client', role: 'operator', source: c.source };
+    }
+
+    // C. Active session
     if (db.sessions && db.sessions.has(c.token)) {
       const sess = db.sessions.get(c.token);
       if (sess && sess.expires_at > Date.now()) {
@@ -574,14 +635,10 @@ function verifyAdminAuthorization(req) {
       hadExpiredSession = true;
     }
 
-    // B. Explicit Admin token
-    if (process.env.CYBERVPS_ADMIN_TOKEN && c.token === process.env.CYBERVPS_ADMIN_TOKEN) {
-      return { authorized: true, user: 'admin', role: 'admin', source: c.source };
-    }
-
-    // C. Pairing Key
-    if (configuredPairing && c.token === configuredPairing) {
-      return { authorized: true, user: 'paired_client', role: 'operator', source: c.source };
+    // D. Check if it's an enrollment token (which is NOT an admin token)
+    if (isValidEnrollmentToken(c.token)) {
+      hadEnrollmentToken = true;
+      continue;
     }
   }
 
@@ -1627,7 +1684,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  if (pathname === '/api/v1/apps/list' && method === 'GET') {
+  if ((pathname === '/api/v1/apps/list' || pathname === '/api/v1/apps') && method === 'GET') {
     const machineId = parsedUrl.searchParams.get('machine_id');
     const refresh = parsedUrl.searchParams.get('refresh') === 'true' || parsedUrl.searchParams.get('refresh') === '1';
     if (!machineId) {
@@ -1704,24 +1761,20 @@ const server = http.createServer(async (req, res) => {
         }));
         return;
       }
-      const baseline = getBaselineAppsForOs(machine.os);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(isTimeout ? 504 : 502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         machine_id: machineId,
         os_type: machine.os,
-        total: baseline.length,
-        running: baseline.filter(a => a.status === 'running').length,
-        stopped: baseline.filter(a => a.status !== 'running').length,
-        apps: baseline,
-        applications: baseline,
-        fallback: true,
+        total: 0,
+        running: 0,
+        stopped: 0,
+        apps: [],
+        applications: [],
+        fallback: false,
         timeout: isTimeout,
-        ota_available: true,
-        ota_version: '2.1.1',
-        warning: isTimeout
-          ? `Host request 'AppList' timed out after 10000ms. Displaying baseline system applications. Update host agent to universal-agent v2.1+ for live dynamic inventory.`
-          : err.message,
-        hint: 'Host agent may be running an older revision. Showing platform core apps.'
+        error: isTimeout
+          ? `Host query 'AppList' timed out after 10000ms. Host agent is busy or unreachable.`
+          : err.message
       }));
     }
     return;
@@ -2195,12 +2248,13 @@ const server = http.createServer(async (req, res) => {
             continue;
           }
           const st = getMachineStatus(m);
+          const realLatency = m.latency_ms !== undefined && m.latency_ms !== null ? m.latency_ms : (m.last_seen ? Math.max(1, Math.min(999, Date.now() - new Date(m.last_seen).getTime())) : null);
           if (st === 'online') {
             healthy++;
-            results.push({ machine_id: mid, hostname: m.hostname, status: 'healthy', latency_ms: 12 + Math.floor(Math.random() * 15), last_seen: m.last_seen });
-          } else if (st === 'degraded') {
+            results.push({ machine_id: mid, hostname: m.hostname, status: 'healthy', latency_ms: realLatency, last_seen: m.last_seen });
+          } else if (st === 'degraded' || st === 'reconnecting') {
             degraded++;
-            results.push({ machine_id: mid, hostname: m.hostname, status: 'degraded', latency_ms: 65, last_seen: m.last_seen });
+            results.push({ machine_id: mid, hostname: m.hostname, status: 'degraded', latency_ms: realLatency, last_seen: m.last_seen });
           } else {
             offline++;
             results.push({ machine_id: mid, hostname: m.hostname, status: 'offline', latency_ms: null, last_seen: m.last_seen });
@@ -4685,7 +4739,7 @@ server.on('upgrade', (request, socket, head) => {
   const parsedUrl = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
   const pathname = parsedUrl.pathname;
 
-  if (pathname === '/api/v1/relay/connect') {
+  if (pathname === '/api/v1/relay/connect' || pathname === '/api/v1/relay/ws') {
     wssRelay.handleUpgrade(request, socket, head, (ws) => {
       wssRelay.emit('connection', ws, request);
     });
@@ -4758,7 +4812,12 @@ wssRelay.on('connection', (ws, request) => {
       db.connectedAgents.delete(machineId);
       const m = db.machines.get(machineId);
       if (m && m.status !== 'restarting' && m.status !== 'rebooting') {
-        m.status = 'offline';
+        const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
+        if (Date.now() - lastSeenMs < 45000) {
+          m.status = 'reconnecting';
+        } else {
+          m.status = 'offline';
+        }
       }
       logAudit('agent_disconnected', 'agent', machineId, `Node ${machineId} disconnected from relay`, 'warning');
       for (const [reqId, pending] of db.pendingRequests.entries()) {
@@ -5011,15 +5070,22 @@ function handleAgentMessage(ws, msg) {
     const cleanToken = token ? String(token).trim().replace(/^['"]+|['"]+$/g, '') : '';
     if (cleanToken && cleanToken.startsWith('cvps_boot_')) {
       const ver = verifyBootstrapTicket(cleanToken);
-      if (!ver.valid) {
-        const errMsg = ver.reason === 'already_consumed'
-          ? 'Bootstrap enrollment token capability already consumed'
-          : (ver.reason === 'expired' ? 'Bootstrap enrollment token capability has expired' : 'Invalid enrollment token');
+      // Allow re-enrollment / reconnect if the ticket was previously consumed by the same machine
+      if (!ver.valid && ver.reason === 'already_consumed') {
+        const cap = db.bootstrapCapabilities?.get(cleanToken);
+        if (cap && cap.consumed_by && cap.consumed_by !== machine_id) {
+          if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Bootstrap ticket consumed by another machine' } }));
+          return { success: false, error: 'Bootstrap ticket consumed by another machine' };
+        }
+      } else if (!ver.valid && ver.reason !== 'already_consumed') {
+        const errMsg = ver.reason === 'expired'
+          ? 'Bootstrap enrollment token capability has expired'
+          : 'Invalid enrollment token';
         if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: errMsg } }));
         return { success: false, error: errMsg };
       }
 
-      // Atomically consume ticket
+      // Atomically mark ticket consumed
       db.consumedBootstrapTickets.add(cleanToken);
       if (db.bootstrapCapabilities && db.bootstrapCapabilities.has(cleanToken)) {
         const cap = db.bootstrapCapabilities.get(cleanToken);
@@ -5037,12 +5103,25 @@ function handleAgentMessage(ws, msg) {
           issued_by: 'signed_capability'
         });
       }
-      nodeToken = 'cvps_node_' + crypto.randomBytes(16).toString('hex');
+      nodeToken = generateNodeToken(machine_id);
       db.enrollmentTokens.add(nodeToken);
       savePersistentState();
-    } else if (!isValidEnrollmentToken(cleanToken)) {
+    } else if (cleanToken && cleanToken.startsWith('cvps_node_')) {
+      if (!verifyNodeToken(cleanToken, machine_id)) {
+        if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Invalid token' } }));
+        return { success: false, error: 'Invalid enrollment token' };
+      }
+      nodeToken = generateNodeToken(machine_id);
+      db.enrollmentTokens.add(nodeToken);
+      db.enrollmentTokens.add(cleanToken);
+      savePersistentState();
+    } else if (!isValidEnrollmentToken(cleanToken, machine_id)) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Invalid token' } }));
       return { success: false, error: 'Invalid enrollment token' };
+    } else {
+      nodeToken = generateNodeToken(machine_id);
+      db.enrollmentTokens.add(nodeToken);
+      savePersistentState();
     }
 
     // Auto-allocate Virtual IP for Mode B

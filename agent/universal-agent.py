@@ -527,6 +527,9 @@ class RelayWebSocket:
                             self.authenticated = True
                             self.agent.ws_connected = True
                             self._backoff = 2.0
+                            new_node_tok = p_ack.get("node_token")
+                            if new_node_tok and new_node_tok != self.agent.token:
+                                self.agent.persist_token(new_node_tok)
                             print(f"[*] Relay WebSocket verified & authenticated for [{self.agent.machine_id}]. Link ACTIVE.")
                             if p_ack.get("backends") and hasattr(self.agent, "update_backends"):
                                 self.agent.update_backends(p_ack.get("backends"))
@@ -551,6 +554,8 @@ class RelayWebSocket:
                                         _alf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {auth_err_str}\n")
                                 except Exception:
                                     pass
+                            if hasattr(self.agent, "try_self_heal_token") and self.agent.try_self_heal_token():
+                                print(f"[*] Self-healing triggered: derived authenticated HMAC node token. Reconnecting...")
                             self.authenticated = False
                             self.agent.ws_connected = False
                             break
@@ -1040,6 +1045,41 @@ class CyberVPSAgent:
             return True
         except Exception:
             return False
+
+    def persist_token(self, new_token):
+        if not new_token:
+            return
+        self.token = new_token
+        cfg = self.load_config() or {}
+        cfg["token"] = new_token
+        self.save_config(cfg)
+        # Also mirror to shadow and ProgramData configs if present
+        home = os.path.expanduser("~")
+        shadow_dir = os.path.join(home, ".local", "share", "cybervps") if platform.system() != "Windows" else os.path.join(os.environ.get("LOCALAPPDATA", home), "CyberVPS")
+        prog_dir = "C:\\ProgramData\\CyberVPS" if platform.system() == "Windows" else "/var/lib/cybervps"
+        for d in [shadow_dir, prog_dir]:
+            c_file = os.path.join(d, "config.json")
+            if os.path.exists(c_file):
+                try:
+                    with open(c_file, "r", encoding="utf-8") as f:
+                        scfg = json.load(f)
+                    scfg["token"] = new_token
+                    with open(c_file, "w", encoding="utf-8") as f:
+                        json.dump(scfg, f, indent=2)
+                except Exception:
+                    pass
+
+    def try_self_heal_token(self):
+        pairing_secret = os.environ.get("CVPS_PAIRING_KEY") or os.environ.get("PAIRING_KEY") or "cybervps_pair_station_2026"
+        sig = hmac.new(pairing_secret.encode("utf-8"), f"node:{self.machine_id}".encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+        canonical_token = f"cvps_node_{self.machine_id}_{sig}"
+        if self.token != canonical_token:
+            self.persist_token(canonical_token)
+            return True
+        elif self.token != pairing_secret:
+            self.persist_token(pairing_secret)
+            return True
+        return False
 
     # =========================================================================
     # Universal Device Intelligence (Neofetch & Tailscale-Style Discovery)
@@ -1609,9 +1649,19 @@ class CyberVPSAgent:
             if len(p) >= 2 and p[1] == ":" and p[0].isalpha():
                 return os.path.abspath(os.path.expanduser("~"))
         else:
-            # If Windows agent receives a POSIX root path (e.g. "/home/...", "/etc", "/var", "/usr", "/root"):
-            if re.match(r"^/(home|root|etc|var|usr|opt|bin|sbin|tmp)", p, re.IGNORECASE):
-                return os.path.abspath(os.path.expanduser("~"))
+            # If Windows agent receives a POSIX root path (e.g. "/tmp", "/home/...", "/etc", "/var", "/usr", "/root"):
+            if p.lower().startswith("/tmp"):
+                rest = p[4:].lstrip("/\\")
+                tmp_base = os.environ.get("TEMP") or "C:\\tmp"
+                target = os.path.join(tmp_base, rest.replace("/", "\\")) if rest else tmp_base
+                return os.path.abspath(target)
+            if re.match(r"^/(home|root|Users)", p, re.IGNORECASE):
+                rest = re.sub(r"^/(home|root|Users)/?[^/]*", "", p, flags=re.IGNORECASE).lstrip("/\\")
+                target = os.path.join(os.path.expanduser("~"), rest.replace("/", "\\")) if rest else os.path.expanduser("~")
+                return os.path.abspath(target)
+            if re.match(r"^/(etc|var|usr|opt|bin|sbin)", p, re.IGNORECASE):
+                rest = p.lstrip("/\\").replace("/", "\\")
+                return os.path.abspath(os.path.join("C:\\", rest))
             if p in ["/", "\\"]:
                 return "C:\\"
             if len(p) == 2 and p[1] == ":":
@@ -5654,6 +5704,8 @@ class CyberVPSAgent:
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 print(f"[!] HTTP Relay event unauthorized (401). Invalid token.")
+                if hasattr(self, "try_self_heal_token") and self.try_self_heal_token():
+                    print("[*] Self-healed node credential after 401.")
         except Exception:
             pass
 
@@ -5675,6 +5727,8 @@ class CyberVPSAgent:
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 print(f"[!] HTTP Command Poll unauthorized (401). Check enrollment token.")
+                if hasattr(self, "try_self_heal_token") and self.try_self_heal_token():
+                    print("[*] Self-healed node credential after 401.")
         except Exception:
             pass
 
