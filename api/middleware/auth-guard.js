@@ -7,9 +7,10 @@ const crypto = require('crypto');
 
 class AuthGuard {
   constructor(options = {}) {
-    this.adminPassword = options.adminPassword || process.env.ADMIN_PASSWORD || 'cybervps_admin_2026';
-    this.pairingKey = options.pairingKey || process.env.PAIRING_KEY || 'cybervps_pair_station_2026';
-    this.enrollmentToken = options.enrollmentToken || process.env.ENROLLMENT_TOKEN || 'cvps_enroll_master_token';
+    const isProd = process.env.NODE_ENV === 'production';
+    this.adminPassword = options.adminPassword || process.env.ADMIN_PASSWORD || (isProd ? null : 'cybervps_admin_2026');
+    this.pairingKey = options.pairingKey || process.env.PAIRING_KEY || (isProd ? null : 'cybervps_pair_station_2026');
+    this.enrollmentToken = options.enrollmentToken || process.env.ENROLLMENT_TOKEN || (isProd ? null : 'cvps_enroll_master_token');
     this.auditService = options.auditService || null;
     this.sessions = new Map();
   }

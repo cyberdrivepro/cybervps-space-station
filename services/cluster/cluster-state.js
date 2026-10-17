@@ -20,7 +20,8 @@ class ClusterState {
   constructor(options = {}) {
     this.clusterId = options.clusterId || process.env.CVPS_CLUSTER_ID || 'cvps_endcore_mesh_default';
     this.selfNodeId = options.selfNodeId || process.env.CVPS_NODE_ID || 'be_primary_local';
-    this.secret = options.secret || process.env.BOOTSTRAP_SECRET || process.env.PAIRING_KEY || 'cybervps_pair_station_2026';
+    const isProd = process.env.NODE_ENV === 'production';
+    this.secret = options.secret || process.env.BOOTSTRAP_SECRET || process.env.PAIRING_KEY || (isProd ? crypto.randomBytes(32).toString('hex') : 'cybervps_pair_station_2026');
     this.dataDir = options.dataDir || process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
     this.stateFile = path.join(this.dataDir, 'endcore-cluster-state.json');
 

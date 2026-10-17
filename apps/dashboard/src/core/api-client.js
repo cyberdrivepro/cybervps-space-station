@@ -6,16 +6,21 @@
 class StationApiClient {
   constructor(stateStore) {
     this.store = stateStore;
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
     this.candidateBackends = [
       'https://cybervps-space-station.up.railway.app',
       'https://cybervpsbackend4.getvoroa.com',
-      'https://cybervps-render-control.onrender.com',
-      'http://localhost:8080'
+      'https://cybervps-render-control.onrender.com'
     ];
+    if (!isHttps) {
+      this.candidateBackends.push('http://localhost:8080');
+    }
   }
 
   getBaseUrl() {
-    return this.store.get('backendUrl') || 'http://localhost:8080';
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    const fallbackDefault = isHttps ? 'https://cybervps-space-station.up.railway.app' : 'http://localhost:8080';
+    return this.store.get('backendUrl') || fallbackDefault;
   }
 
   getHeaders() {

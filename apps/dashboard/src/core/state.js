@@ -7,16 +7,16 @@ class StationState {
   constructor() {
     this.state = {
       backendUrl: this._getInitialBackend(),
-      pairingKey: localStorage.getItem('cvps_pairing_key') || 'cybervps_pair_station_2026',
-      sessionToken: localStorage.getItem('cvps_session_token') || null,
+      pairingKey: (typeof localStorage !== 'undefined') ? (localStorage.getItem('cvps_pairing_key') || null) : null,
+      sessionToken: (typeof localStorage !== 'undefined') ? (localStorage.getItem('cvps_session_token') || null) : null,
       activeModule: 'overview',
-      activeMachineId: localStorage.getItem('cvps_active_machine') || null,
+      activeMachineId: (typeof localStorage !== 'undefined') ? (localStorage.getItem('cvps_active_machine') || null) : null,
       fleet: [],
       clusterNodes: [],
-      systemHealth: { score: 100, status: 'HEALTHY' },
+      systemHealth: { score: null, status: 'PENDING_VERIFICATION' },
       isConnecting: false,
       lastSyncTime: null,
-      theme: localStorage.getItem('cvps_theme') || 'cyberpunk',
+      theme: (typeof localStorage !== 'undefined') ? (localStorage.getItem('cvps_theme') || 'cyberpunk') : 'cyberpunk',
       notifications: []
     };
 
@@ -24,18 +24,37 @@ class StationState {
   }
 
   _getInitialBackend() {
+    if (typeof window === 'undefined') return 'http://localhost:8080';
     const params = new URLSearchParams(window.location.search);
     const backendParam = params.get('backend');
     if (backendParam) return backendParam.replace(/\/$/, '');
     
-    const saved = localStorage.getItem('cvps_control_plane_url');
+    // Check both potential storage keys for consistency
+    const saved = localStorage.getItem('cvps_control_plane_url') || localStorage.getItem('cvps_server_url');
+    const isHostedDomain = window.location.hostname && 
+      (window.location.hostname.endsWith('github.io') || window.location.hostname.endsWith('netlify.app'));
+
+    // If hosted on GitHub Pages or Netlify and stored target is loopback without explicit query param, auto-recover to Railway public endpoint
+    const isLoopback = saved && (saved.includes('localhost') || saved.includes('127.0.0.1'));
+    if (isHostedDomain && isLoopback) {
+      console.warn('[CyberVPS] Hosted environment detected with stale loopback target. Auto-recovering to Railway public relay');
+      const defaultCloud = 'https://cybervps-space-station.up.railway.app';
+      try {
+        localStorage.setItem('cvps_control_plane_url', defaultCloud);
+        localStorage.setItem('cvps_server_url', defaultCloud);
+      } catch (_) {}
+      return defaultCloud;
+    }
+
     if (saved) return saved.replace(/\/$/, '');
 
-    // Default to origin if self-hosted, or Railway production if on GitHub Pages
-    if (window.location.origin.includes('github.io')) {
+    // Default to Railway production if on GitHub Pages/Netlify, or origin if self-hosted
+    if (isHostedDomain) {
       return 'https://cybervps-space-station.up.railway.app';
     }
-    return window.location.origin || 'http://localhost:8080';
+    return (window.location.origin && window.location.origin.startsWith('http')) 
+      ? window.location.origin 
+      : 'https://cybervps-space-station.up.railway.app';
   }
 
   get(key) {
@@ -44,11 +63,25 @@ class StationState {
 
   set(key, value) {
     this.state[key] = value;
-    if (key === 'backendUrl') localStorage.setItem('cvps_control_plane_url', value);
-    if (key === 'pairingKey') localStorage.setItem('cvps_pairing_key', value);
-    if (key === 'sessionToken') localStorage.setItem('cvps_session_token', value);
-    if (key === 'activeMachineId') localStorage.setItem('cvps_active_machine', value || '');
-    if (key === 'theme') localStorage.setItem('cvps_theme', value);
+    if (typeof localStorage !== 'undefined') {
+      if (key === 'backendUrl') {
+        localStorage.setItem('cvps_control_plane_url', value);
+        localStorage.setItem('cvps_server_url', value);
+      }
+      if (key === 'pairingKey') {
+        if (value) localStorage.setItem('cvps_pairing_key', value);
+        else localStorage.removeItem('cvps_pairing_key');
+      }
+      if (key === 'sessionToken') {
+        if (value) localStorage.setItem('cvps_session_token', value);
+        else localStorage.removeItem('cvps_session_token');
+      }
+      if (key === 'activeMachineId') {
+        if (value) localStorage.setItem('cvps_active_machine', value);
+        else localStorage.removeItem('cvps_active_machine');
+      }
+      if (key === 'theme') localStorage.setItem('cvps_theme', value);
+    }
 
     this.notify(key, value);
   }

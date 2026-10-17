@@ -813,17 +813,36 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  function getControlPlaneMetadata() {
+    const commitSha = process.env.RAILWAY_GIT_COMMIT_SHA ||
+                      process.env.GIT_COMMIT_SHA ||
+                      process.env.COMMIT_SHA ||
+                      '57bf173';
+    const version = '2.2.0';
+    const protocolVersion = '2.2.0';
+    const buildId = `cvps-${version}-${commitSha}`;
+    return {
+      version,
+      commit_sha: commitSha,
+      git_commit: commitSha,
+      build_id: buildId,
+      protocol_version: protocolVersion,
+      deployment_env: process.env.NODE_ENV || 'production'
+    };
+  }
+
   // 2. HEALTH & DOWNLOAD ENDPOINTS
   if (pathname === '/health' || pathname === '/healthz') {
+    const meta = getControlPlaneMetadata();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'OK',
-      version: '2.1.0',
-      commit_sha: '302aa7d',
-      git_commit: '302aa7d',
-      build_id: 'cvps-2.1.0-302aa7d',
+      version: meta.version,
+      commit_sha: meta.commit_sha,
+      git_commit: meta.git_commit,
+      build_id: meta.build_id,
       built_at: new Date().toISOString(),
-      protocol_version: '2.1.0',
+      protocol_version: meta.protocol_version,
       service: 'CyberVPS Space Station Universal Network Bridge',
       timestamp: new Date().toISOString(),
       active_machines: db.connectedAgents.size,
@@ -835,16 +854,17 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/v1/system/info' && method === 'GET') {
+    const meta = getControlPlaneMetadata();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'operational',
       name: 'CyberVPS Space Station Control Plane',
-      version: '2.1.0',
-      commit_sha: 'cc24d44',
-      git_commit: 'cc24d44',
-      build_id: 'cvps-2.1.0-cc24d44',
-      built_at: '2026-10-15T06:15:00Z',
-      protocol_version: '2.1.0',
+      version: meta.version,
+      commit_sha: meta.commit_sha,
+      git_commit: meta.git_commit,
+      build_id: meta.build_id,
+      built_at: new Date().toISOString(),
+      protocol_version: meta.protocol_version,
       node_version: process.version,
       platform: process.platform,
       arch: process.arch,
@@ -2571,9 +2591,26 @@ const server = http.createServer(async (req, res) => {
       try {
         const { username, password } = JSON.parse(body || '{}');
         const expectedUser = process.env.CYBERVPS_ADMIN_USER || 'admin';
-        const expectedPass = process.env.CYBERVPS_ADMIN_PASSWORD || 'Cyberexpert2026!';
+        const isProd = process.env.NODE_ENV === 'production';
+        const expectedPass = process.env.CYBERVPS_ADMIN_PASSWORD || (isProd ? null : 'Cyberexpert2026!');
+
+        if (!expectedPass) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Administrative password not configured on this server. Set CYBERVPS_ADMIN_PASSWORD.' }));
+          return;
+        }
+
         const isUserMatch = (username === expectedUser);
-        const isPassMatch = (password === expectedPass);
+        let isPassMatch = false;
+        try {
+          const bufProvided = Buffer.from(password || '');
+          const bufExpected = Buffer.from(expectedPass);
+          if (bufProvided.length === bufExpected.length) {
+            isPassMatch = crypto.timingSafeEqual(bufProvided, bufExpected);
+          } else {
+            crypto.timingSafeEqual(bufProvided, bufProvided);
+          }
+        } catch (_) {}
 
         if (!isUserMatch || !isPassMatch) {
           logAudit('admin_login_failed', username || 'anonymous', null, 'Failed admin login attempt', 'warning');
