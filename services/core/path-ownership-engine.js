@@ -496,7 +496,66 @@ class PathOwnershipEngine extends EventEmitter {
 
     return conflict;
   }
+
+  /**
+   * Dumps memory state for atomic persistence
+   */
+  dumpState() {
+    return {
+      registry: Array.from(this.registryCache.values()),
+      conflicts: Array.from(this.conflicts.values())
+    };
+  }
+
+  /**
+   * Loads dumped state back into memory cache
+   */
+  loadState(state = {}) {
+    if (!state) return;
+    if (Array.isArray(state.registry)) {
+      for (const r of state.registry) {
+        if (r && r.machine_id && r.canonical_path) {
+          const key = this._makeKey(r.machine_id, r.canonical_path);
+          this.registryCache.set(key, r);
+        }
+      }
+    }
+    if (Array.isArray(state.conflicts)) {
+      for (const c of state.conflicts) {
+        if (c && c.conflict_id) {
+          this.conflicts.set(c.conflict_id, c);
+        }
+      }
+    }
+  }
+
+  /**
+   * Look up backend record by machine and path
+   */
+  getBackendByPath(machineId, rawPath, platform = process.platform) {
+    if (!machineId || !rawPath) return null;
+    const canonical = this.canonicalizePath(rawPath, platform);
+    const key = this._makeKey(machineId, canonical);
+    return this.registryCache.get(key) || null;
+  }
+
+  /**
+   * Get all registered paths for a given backend ID
+   */
+  getPathsForBackend(backendId) {
+    if (!backendId) return [];
+    return Array.from(this.registryCache.values()).filter(r => r.backend_id === backendId && !r.is_tombstone);
+  }
+
+  /**
+   * Get all registered paths for a given machine ID
+   */
+  getPathsForMachine(machineId) {
+    if (!machineId) return [];
+    return Array.from(this.registryCache.values()).filter(r => r.machine_id === machineId && !r.is_tombstone);
+  }
 }
 
 module.exports = PathOwnershipEngine;
 module.exports.PathOwnershipEngine = PathOwnershipEngine;
+

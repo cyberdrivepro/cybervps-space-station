@@ -463,6 +463,7 @@ class RelayWebSocket:
 
         # Send Auth message
         hw = self.agent.get_hardware_identity() if hasattr(self.agent, "get_hardware_identity") else {}
+        runtime_paths = self.agent.get_runtime_paths() if hasattr(self.agent, "get_runtime_paths") else {}
         auth_msg = {
             "type": "Auth",
             "payload": {
@@ -477,7 +478,8 @@ class RelayWebSocket:
                 "hardware_uuid": hw.get("hardware_uuid"),
                 "hardware_serial": hw.get("hardware_serial"),
                 "capabilities": self.agent.get_capabilities(),
-                "profile": self.agent.device_profile
+                "profile": self.agent.device_profile,
+                "runtime_paths": runtime_paths
             }
         }
         self.send_text(json.dumps(auth_msg))
@@ -984,6 +986,27 @@ class CyberVPSAgent:
             "hardware_serial": hw_serial
         }
 
+    def get_runtime_paths(self):
+        try:
+            script_file = os.path.abspath(__file__) if "__file__" in globals() else os.path.abspath(sys.argv[0])
+        except Exception:
+            script_file = os.path.abspath(sys.argv[0]) if len(sys.argv) > 0 else os.getcwd()
+        install_dir = os.path.dirname(script_file)
+        data_dir = os.path.join(install_dir, "data")
+        config_file = os.path.join(install_dir, "agent.json")
+        log_file = os.path.join(install_dir, "agent.log")
+        return {
+            "installation_path": install_dir,
+            "script_path": script_file,
+            "executable_path": sys.executable,
+            "runtime_pid": os.getpid(),
+            "cwd": os.getcwd(),
+            "data_path": data_dir,
+            "config_path": config_file,
+            "log_path": log_file,
+            "platform": platform.system().lower()
+        }
+
     def perform_bootstrap_claim(self, server_url, machine_id, recovery_ticket):
         claim_url = f"{server_url.rstrip('/')}/api/v1/recovery/claim"
         hw_info = self.get_hardware_identity()
@@ -1299,7 +1322,8 @@ class CyberVPSAgent:
             "local_ips": lan_endpoints,
             "ghost_mode": getattr(self, "ghost_mode", False),
             "attributes": attributes,
-            "neofetch": neofetch_summary
+            "neofetch": neofetch_summary,
+            "runtime_paths": self.get_runtime_paths() if hasattr(self, "get_runtime_paths") else {}
         }
         return self.device_profile
 
@@ -4013,14 +4037,47 @@ class CyberVPSAgent:
             time.sleep(0.5)
 
             cmd = [sys.executable, script_path] + sys.argv[1:]
+            child_proc = None
             if platform.system() == "Windows":
                 DETACHED = 0x00000008
                 CREATE_NEW_PROCESS_GROUP = 0x00000200
-                subprocess.Popen(cmd, creationflags=DETACHED | CREATE_NEW_PROCESS_GROUP, close_fds=True)
+                child_proc = subprocess.Popen(cmd, creationflags=DETACHED | CREATE_NEW_PROCESS_GROUP, close_fds=True)
             else:
-                subprocess.Popen(cmd, start_new_session=True, close_fds=True)
+                child_proc = subprocess.Popen(cmd, start_new_session=True, close_fds=True)
 
-            print("[+] Exiting old agent instance. New version launched cleanly.")
+            # Canary startup probation: wait 3 seconds to verify child process does not crash immediately
+            time.sleep(3.0)
+            ret_code = child_proc.poll()
+            if ret_code is not None and ret_code != 0:
+                print(f"[!] New agent child process exited with error code {ret_code}! Initiating automated rollback...")
+                if os.path.exists(backup_path):
+                    try:
+                        shutil.copyfile(backup_path, script_path)
+                    except Exception:
+                        pass
+                self.send_agent_event({
+                    "type": "OtaUpdateEvent",
+                    "payload": {
+                        "machine_id": self.machine_id,
+                        "status": "failed_rollback",
+                        "error": f"Child exited with code {ret_code}. Restored previous version {PROTOCOL_VERSION}.",
+                        "old_version": PROTOCOL_VERSION,
+                        "target_version": target_version
+                    }
+                })
+                return False
+
+            print("[+] Child process passed startup probation. Exiting old agent instance. New version launched cleanly.")
+            self.send_agent_event({
+                "type": "OtaUpdateEvent",
+                "payload": {
+                    "machine_id": self.machine_id,
+                    "status": "stabilized",
+                    "old_version": PROTOCOL_VERSION,
+                    "new_version": target_version
+                }
+            })
+            time.sleep(0.5)
             os._exit(0)
         except Exception as err:
             print(f"[!] OTA update failed: {err}")
@@ -6131,7 +6188,8 @@ class CyberVPSAgent:
                                 "agent_version": PROTOCOL_VERSION,
                                 "hardware_uuid": hw.get("hardware_uuid"),
                                 "hardware_serial": hw.get("hardware_serial"),
-                                "ghost_mode": getattr(self, "ghost_mode", False)
+                                "ghost_mode": getattr(self, "ghost_mode", False),
+                                "runtime_paths": self.get_runtime_paths() if hasattr(self, "get_runtime_paths") else {}
                             }
                         })
                         last_hb = now

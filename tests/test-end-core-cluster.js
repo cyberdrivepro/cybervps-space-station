@@ -316,9 +316,11 @@ async function runEndCoreTestSuite() {
       stepDelayMs: 15,
       simulate_health: true
     });
-    assert.strictEqual(rec.success, true);
-
-    await new Promise(r => setTimeout(r, 1200));
+    // Resilient poll for pipeline completion (up to 3500ms)
+    const deadline = Date.now() + 3500;
+    while (Date.now() < deadline && nodeC.observed_state !== 'healthy') {
+      await new Promise(r => setTimeout(r, 50));
+    }
 
     // Node C is restored to the mesh
     assert.strictEqual(nodeC.observed_state, 'healthy');

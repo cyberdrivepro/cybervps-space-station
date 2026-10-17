@@ -20,6 +20,7 @@ const DoctorService = require('./core/doctor-service');
 const PathOwnershipEngine = require('./core/path-ownership-engine');
 const ResourceReconciliationService = require('./core/resource-reconciliation');
 const InfrastructureIntelService = require('./core/infrastructure-intel');
+const CanaryRolloutManager = require('./core/canary-rollout-manager');
 
 const PORT = process.env.PORT || 8080;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
@@ -113,6 +114,8 @@ const db = {
   consumedBootstrapTickets: new Set(), // ticket -> already consumed
   revokedDevices: new Set() // machine_id -> permanently revoked devices
 };
+
+const canaryRolloutManager = new CanaryRolloutManager({ db });
 
 const BOOTSTRAP_SECRET = process.env.BOOTSTRAP_SECRET || process.env.PAIRING_KEY || process.env.CVPS_PAIRING_KEY || 'cybervps_pair_station_2026';
 
@@ -230,6 +233,7 @@ function isValidEnrollmentToken(token, machineId = null) {
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(DATA_DIR, 'server-state.json');
+const STATE_FILE_BAK = path.join(DATA_DIR, 'server-state.json.bak');
 
 const clusterState = new ClusterState({
   dataDir: DATA_DIR,
@@ -249,9 +253,36 @@ function loadPersistentState() {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
+    let raw = null;
     if (fs.existsSync(STATE_FILE)) {
-      const raw = fs.readFileSync(STATE_FILE, 'utf8');
-      const data = JSON.parse(raw);
+      try {
+        raw = fs.readFileSync(STATE_FILE, 'utf8');
+      } catch (readErr) {
+        console.warn(`[WARN] Reading ${STATE_FILE} failed: ${readErr.message}`);
+      }
+    }
+
+    let data = null;
+    if (raw && raw.trim().length > 0) {
+      try {
+        data = JSON.parse(raw);
+      } catch (jsonErr) {
+        console.warn(`[WARN] Primary state file corrupted (${jsonErr.message}). Attempting recovery from backup...`);
+      }
+    }
+
+    // Fallback to .bak if primary is missing, empty, or corrupted
+    if (!data && fs.existsSync(STATE_FILE_BAK)) {
+      try {
+        const bakRaw = fs.readFileSync(STATE_FILE_BAK, 'utf8');
+        data = JSON.parse(bakRaw);
+        console.log('[*] Successfully restored state from backup snapshot: server-state.json.bak');
+      } catch (bakErr) {
+        console.warn(`[WARN] Backup snapshot also unreadable: ${bakErr.message}`);
+      }
+    }
+
+    if (data) {
       if (Array.isArray(data.machines)) {
         for (const m of data.machines) {
           db.machines.set(m.id, m);
@@ -325,10 +356,59 @@ function loadPersistentState() {
       if (Array.isArray(data.consumedBootstrapTickets)) {
         for (const ct of data.consumedBootstrapTickets) db.consumedBootstrapTickets.add(ct);
       }
+      if (data.pathOwnership && typeof pathEngine.loadState === 'function') {
+        pathEngine.loadState(data.pathOwnership);
+      }
       console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels, ${db.backends.size} backends, ${db.recoveryProfiles.size} recovery profiles`);
     }
   } catch (err) {
     console.warn(`[WARN] Could not load persistent state: ${err.message}`);
+  }
+}
+
+function executeAtomicSave() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const data = {
+      machines: Array.from(db.machines.values()),
+      ports: Array.from(db.ports.entries()).map(([mid, pts]) => ({ machine_id: mid, ports: pts })),
+      bridgeMappings: Array.from(db.bridgeMappings.values()),
+      tunnels: Array.from(db.tunnels.values()),
+      auditLogs: db.auditLogs.slice(0, 300),
+      backends: Array.from(db.backends.values()),
+      wireguardPeers: Array.from(db.wireguardPeers.values()),
+      sandboxes: Array.from(db.sandboxes.values()),
+      hostingProjects: Array.from(db.hostingProjects.values()),
+      domains: Array.from(db.domains.values()),
+      plugins: Array.from(db.plugins.values()),
+      recoveryProfiles: Array.from(db.recoveryProfiles.values()),
+      recoveryTickets: Array.from(db.recoveryTickets.values()).filter(rt => rt.expires_at > Date.now()),
+      revokedDevices: Array.from(db.revokedDevices),
+      sessions: Array.from(db.sessions.entries()).filter(([_, s]) => s && s.expires_at > Date.now()),
+      enrollmentTokens: Array.from(db.enrollmentTokens),
+      bootstrapCapabilities: Array.from(db.bootstrapCapabilities.values()).filter(bc => bc && bc.expires_at > Date.now()),
+      consumedBootstrapTickets: Array.from(db.consumedBootstrapTickets),
+      pathOwnership: typeof pathEngine.dumpState === 'function' ? pathEngine.dumpState() : null,
+      saved_at: new Date().toISOString()
+    };
+
+    const payload = JSON.stringify(data, null, 2);
+    const tmpFile = `${STATE_FILE}.tmp.${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    fs.writeFileSync(tmpFile, payload, 'utf8');
+
+    // Create / refresh backup copy before replacing primary
+    if (fs.existsSync(STATE_FILE)) {
+      try {
+        fs.copyFileSync(STATE_FILE, STATE_FILE_BAK);
+      } catch (_) {}
+    }
+
+    // Atomic rename into place
+    fs.renameSync(tmpFile, STATE_FILE);
+  } catch (err) {
+    console.warn(`[WARN] Could not save persistent state: ${err.message}`);
   }
 }
 
@@ -337,35 +417,16 @@ function savePersistentState() {
   if (saveStateTimeout) return;
   saveStateTimeout = setTimeout(() => {
     saveStateTimeout = null;
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      const data = {
-        machines: Array.from(db.machines.values()),
-        ports: Array.from(db.ports.entries()).map(([mid, pts]) => ({ machine_id: mid, ports: pts })),
-        bridgeMappings: Array.from(db.bridgeMappings.values()),
-        tunnels: Array.from(db.tunnels.values()),
-        auditLogs: db.auditLogs.slice(0, 300),
-        backends: Array.from(db.backends.values()),
-        wireguardPeers: Array.from(db.wireguardPeers.values()),
-        sandboxes: Array.from(db.sandboxes.values()),
-        hostingProjects: Array.from(db.hostingProjects.values()),
-        domains: Array.from(db.domains.values()),
-        plugins: Array.from(db.plugins.values()),
-        recoveryProfiles: Array.from(db.recoveryProfiles.values()),
-        recoveryTickets: Array.from(db.recoveryTickets.values()).filter(rt => rt.expires_at > Date.now()),
-        revokedDevices: Array.from(db.revokedDevices),
-        sessions: Array.from(db.sessions.entries()).filter(([_, s]) => s && s.expires_at > Date.now()),
-        enrollmentTokens: Array.from(db.enrollmentTokens),
-        bootstrapCapabilities: Array.from(db.bootstrapCapabilities.values()).filter(bc => bc && bc.expires_at > Date.now()),
-        consumedBootstrapTickets: Array.from(db.consumedBootstrapTickets)
-      };
-      fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), 'utf8');
-    } catch (err) {
-      console.warn(`[WARN] Could not save persistent state: ${err.message}`);
-    }
+    executeAtomicSave();
   }, 500);
+}
+
+function flushPersistentState() {
+  if (saveStateTimeout) {
+    clearTimeout(saveStateTimeout);
+    saveStateTimeout = null;
+  }
+  executeAtomicSave();
 }
 
 function initDefaultPlatformState() {
@@ -501,6 +562,24 @@ function initDefaultPlatformState() {
 // Load state immediately on startup and initialize defaults
 loadPersistentState();
 initDefaultPlatformState();
+
+function initControlPlanePathOwnership() {
+  try {
+    const cpRoot = path.resolve(__dirname, '..');
+    pathEngine.registerPathOwnership({
+      resource_id: 'res_be_primary_local',
+      machine_id: 'control-plane-host',
+      path: cpRoot,
+      logical_path: '/cybervps/space-station',
+      backend_id: 'be_primary_local',
+      ownership_role: 'primary',
+      resource_type: 'backend',
+      platform: process.platform,
+      initiator: 'control_plane_bootstrap'
+    }).catch(() => {});
+  } catch (_) {}
+}
+initControlPlanePathOwnership();
 
 const recentAuditThrottle = new Map();
 function logAudit(eventType, actor, machineId, details, severity = 'info') {
@@ -772,6 +851,9 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/doctor/run') return true;
   if (pathname === '/api/v1/openapi.json') return true;
   if (pathname.startsWith('/api/v1/registry/')) return true;
+  if (pathname === '/api/v1/backends/paths') return true;
+  if (pathname === '/api/v1/system/ready') return true;
+  if (pathname === '/api/v1/fleet/ota-update/status') return true;
   if (pathname === '/api/v1/topology/graph') return true;
   if (pathname === '/api/v1/machines/name') return true;
   return false;
@@ -853,6 +935,38 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // READINESS PROBES (/ready, /readyz, /api/v1/system/ready)
+  if (pathname === '/ready' || pathname === '/readyz' || pathname === '/api/v1/system/ready') {
+    let persistenceWritable = false;
+    let storageStatus = 'connected';
+    try {
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      const testFile = path.join(DATA_DIR, `.probe_${Date.now()}`);
+      fs.writeFileSync(testFile, 'probe');
+      fs.unlinkSync(testFile);
+      persistenceWritable = true;
+    } catch (_) {
+      persistenceWritable = false;
+      storageStatus = 'degraded_unwritable';
+    }
+
+    const isReady = persistenceWritable;
+    const statusCode = isReady ? 200 : 503;
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: isReady ? 'READY' : 'NOT_READY',
+      ready: isReady,
+      storage: storageStatus,
+      persistence_writable: persistenceWritable,
+      data_dir: DATA_DIR,
+      uptime_seconds: Math.round(process.uptime()),
+      connected_agents: db.connectedAgents.size,
+      enrolled_machines: db.machines.size,
+      timestamp: new Date().toISOString()
+    }));
+    return;
+  }
+
   if (pathname === '/api/v1/system/info' && method === 'GET') {
     const meta = getControlPlaneMetadata();
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -914,6 +1028,100 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 1. PATH OWNERSHIP REGISTRY ENDPOINTS (Strict Single-Authoritative-Writer Invariant)
+  if (pathname === '/api/v1/backends/paths' || pathname === '/api/v1/registry/backends-inventory') {
+    if (method === 'GET') {
+      const q = Object.fromEntries(parsedUrl.searchParams.entries());
+      const filterMachine = q.machine_id || null;
+      const filterBackend = q.backend_id || null;
+
+      const registeredPathRecords = pathEngine.listRegistry(q);
+      const inventory = [];
+
+      // 1. Local Control Plane Backend (Ender Core Origin)
+      const cpRoot = path.resolve(__dirname, '..');
+      const cpRecord = {
+        backend_id: 'be_primary_local',
+        backend_name: 'Primary Control Plane Gateway (Local)',
+        machine_id: 'control-plane-host',
+        role: 'control_plane',
+        status: 'online',
+        is_control_plane: true,
+        canonical_path: pathEngine.canonicalizePath(cpRoot, process.platform),
+        raw_path: cpRoot,
+        installation_path: cpRoot,
+        executable_path: process.execPath,
+        script_path: path.resolve(__filename),
+        runtime_pid: process.pid,
+        data_path: DATA_DIR,
+        config_path: path.join(DATA_DIR, 'config.json'),
+        platform: process.platform,
+        lease_status: 'authoritative_permanent',
+        pillar_index: 0,
+        pillar_title: 'Central Control Core (Ender Heart)',
+        last_verified_at: new Date().toISOString(),
+        single_writer_verified: true
+      };
+      if ((!filterMachine || filterMachine === cpRecord.machine_id) && (!filterBackend || filterBackend === cpRecord.backend_id)) {
+        inventory.push(cpRecord);
+      }
+
+      // 2. Remote Machine Backends (Obsidian Pillars)
+      let pillarIdx = 1;
+      for (const [mId, m] of db.machines.entries()) {
+        if (filterMachine && filterMachine !== mId) continue;
+        const isConnected = db.connectedAgents.has(mId) && db.connectedAgents.get(mId).readyState === WebSocket.OPEN;
+        const rPaths = m.runtime_paths || (m.profile && m.profile.runtime_paths) || {};
+        const registered = registeredPathRecords.find(r => r.machine_id === mId || r.backend_id === mId);
+
+        const rawPath = rPaths.installation_path || (registered ? registered.canonical_path : (m.os === 'Windows' ? 'C:\\CyberVPS\\Agent' : '/opt/cybervps/agent'));
+        const canonical = pathEngine.canonicalizePath(rawPath, m.os === 'Windows' ? 'win32' : 'linux');
+
+        const item = {
+          backend_id: `be_agent_${mId}`,
+          backend_name: m.friendly_name || m.hostname || mId,
+          machine_id: mId,
+          role: m.role || 'fleet_worker',
+          status: isConnected ? 'online' : (m.status || 'offline'),
+          is_control_plane: false,
+          canonical_path: canonical,
+          raw_path: rawPath,
+          installation_path: rPaths.installation_path || rawPath,
+          script_path: rPaths.script_path || null,
+          executable_path: rPaths.executable_path || (m.os === 'Windows' ? 'python.exe' : '/usr/bin/python3'),
+          runtime_pid: rPaths.runtime_pid || null,
+          data_path: rPaths.data_path || (m.os === 'Windows' ? `${rawPath}\\data` : `${rawPath}/data`),
+          config_path: rPaths.config_path || null,
+          log_path: rPaths.log_path || null,
+          platform: (m.os || '').toLowerCase().includes('win') ? 'win32' : 'linux',
+          lease_token: registered ? registered.lease_token : null,
+          lease_expires_at: registered ? registered.lease_expires_at : null,
+          pillar_index: pillarIdx,
+          pillar_title: `Obsidian Pillar #${pillarIdx} (${m.hostname || mId})`,
+          last_verified_at: m.last_seen || new Date().toISOString(),
+          single_writer_verified: true,
+          history: registered && registered.history ? registered.history : []
+        };
+        pillarIdx++;
+
+        if (!filterBackend || filterBackend === item.backend_id) {
+          inventory.push(item);
+        }
+      }
+
+      const conflicts = pathEngine.listConflicts(filterMachine);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        total_backends: inventory.length,
+        single_writer_invariant: 'STRICT_ENFORCED',
+        inventory,
+        conflicts_count: conflicts.length,
+        conflicts
+      }));
+      return;
+    }
+  }
+
   if (pathname === '/api/v1/registry/paths') {
     if (method === 'GET') {
       const q = Object.fromEntries(parsedUrl.searchParams.entries());
@@ -4059,57 +4267,71 @@ while True:
     req.on('end', async () => {
       try {
         const payload = JSON.parse(body || '{}');
-        const targetMachineId = payload.machine_id;
-        const targetVersion = payload.target_version || '2.1.1';
+        const targetVersion = payload.target_version || '2.2.0';
         const force = !!payload.force;
+        const targetMachineId = payload.machine_id || null;
+        const batchSize = payload.batch_size || 2;
+        const canaryTimeoutMs = payload.canary_timeout_ms || 30000;
 
-        let targetAgents = [];
-        if (targetMachineId) {
-          const ws = db.connectedAgents.get(targetMachineId);
-          if (!ws) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: `Agent '${targetMachineId}' is not currently connected.` }));
-            return;
-          }
-          targetAgents.push({ machineId: targetMachineId, ws });
-        } else {
-          for (const [mid, ws] of db.connectedAgents.entries()) {
-            targetAgents.push({ machineId: mid, ws });
-          }
-        }
+        const result = canaryRolloutManager.startRollout({
+          target_version: targetVersion,
+          force,
+          target_machine_id: targetMachineId,
+          batch_size: batchSize,
+          canary_timeout_ms: canaryTimeoutMs,
+          initiated_by: 'admin'
+        });
 
-        let dispatched = 0;
-        for (const { machineId, ws } of targetAgents) {
-          try {
-            if (ws && (ws.readyState === 1 || ws.readyState === (ws.OPEN || 1))) {
-              ws.send(JSON.stringify({
-                type: 'OtaUpdate',
-                payload: {
-                  download_url: '/api/v1/ota/download/universal-agent.py',
-                  target_version: targetVersion,
-                  force: force,
-                  timestamp: new Date().toISOString()
-                }
-              }));
-              dispatched++;
-              const m = db.machines.get(machineId);
-              if (m) m.ota_status = 'updating';
-            }
-          } catch (_) {}
-        }
+        logAudit('ota_canary_rollout_started', 'admin', targetMachineId || 'fleet', `Initiated canary staged OTA rollout [${result.job_id}] for v${targetVersion}. Canary: [${result.canary.machine_id}]`);
 
-        logAudit('ota_update_fleet_dispatched', 'admin', targetMachineId || 'fleet', `Dispatched OTA update v${targetVersion} to ${dispatched} host(s)`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
-          dispatched_count: dispatched,
+          job_id: result.job_id,
           target_version: targetVersion,
-          message: `OTA update to v${targetVersion} successfully dispatched to ${dispatched} connected agent(s). Agents will silently self-update and reconcile.`
+          status: result.status,
+          canary: result.canary,
+          counts: result.counts,
+          message: `Canary staged OTA rollout launched. Testing canary agent [${result.canary.machine_id}]. Fleet will progressively update once canary stabilizes.`
         }));
       } catch (err) {
-        sendHttpError(res, err);
+        const status = err.statusCode || 400;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
       }
     });
+    return;
+  }
+
+  if (pathname === '/api/v1/fleet/ota-update/status' && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(canaryRolloutManager.getStatus()));
+    return;
+  }
+
+  if (pathname === '/api/v1/fleet/ota-update/abort' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const reason = payload.reason || 'Operator manually aborted rollout';
+        const result = canaryRolloutManager.abortActiveRollout('admin', reason);
+        logAudit('ota_canary_rollout_aborted', 'admin', 'fleet', `Canary rollout aborted: ${reason}`, 'warning');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, status: result }));
+      } catch (err) {
+        const status = err.statusCode || 400;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/fleet/ota-update/history' && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ history: canaryRolloutManager.getHistory() }));
     return;
   }
 
@@ -5677,8 +5899,26 @@ function handleAgentMessage(ws, msg) {
       machineInfo.tags.push('ghost-mode');
     }
 
+    if (payload.runtime_paths) {
+      machineInfo.runtime_paths = payload.runtime_paths;
+      if (payload.runtime_paths.installation_path) {
+        pathEngine.registerPathOwnership({
+          machine_id,
+          path: payload.runtime_paths.installation_path,
+          backend_id: `be_agent_${machine_id}`,
+          ownership_role: 'primary',
+          resource_type: 'backend',
+          platform: (normOs || '').toLowerCase().includes('win') ? 'win32' : 'linux',
+          initiator: 'agent_auth'
+        }).catch(() => {});
+      }
+    }
+
     db.machines.set(machine_id, machineInfo);
     db.deviceRevocationCodes.set(machine_id, machineInfo.revocation_code);
+
+    // Notify canary rollout manager
+    canaryRolloutManager.handleAgentConnected(machine_id, machineInfo.agent_version);
 
     // Ensure recovery profile exists and links hardware identity
     if (!db.recoveryProfiles.has(machine_id)) {
@@ -5721,10 +5961,22 @@ function handleAgentMessage(ws, msg) {
     return { success: true, result: { machine_id, virtual_ip: virtualIp, node_token: nodeToken || token, revocation_code: machineInfo.revocation_code, status: 'online' } };
   }
 
+  else if (type === 'OtaUpdateEvent') {
+    canaryRolloutManager.handleAgentOtaEvent(payload.machine_id, payload);
+    return { success: true };
+  }
+
   else if (type === 'Heartbeat' || type === 'TelemetryHeartbeat') {
     const { machine_id, uptime_seconds, cpu_usage, memory_used_bytes, memory_total_bytes, disk_used_bytes, disk_total_bytes, telemetry } = payload;
     if (!machine_id) {
       return { success: false, error: 'Missing machine_id' };
+    }
+    if (payload.runtime_paths && db.machines.has(machine_id)) {
+      const m = db.machines.get(machine_id);
+      m.runtime_paths = payload.runtime_paths;
+    }
+    if (payload.agent_version) {
+      canaryRolloutManager.handleAgentConnected(machine_id, payload.agent_version);
     }
     if (!db.machines.has(machine_id)) {
       const virtualIp = vpnPool.allocate(machine_id);
@@ -6760,12 +7012,66 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[SERVER UNHANDLED REJECTION]', reason);
 });
 
-// Clean process termination
+// Clean process termination & graceful shutdown
+let isShuttingDown = false;
 const cleanup = async () => {
-  console.log('\n[!] Shutting down Space Station server...');
-  await tunnelManager.stop();
-  server.close(() => process.exit(0));
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log('\n[!] Initiating graceful shutdown of Space Station server...');
+
+  // 1. Notify connected agents of service restart so they reconnect gracefully with backoff
+  try {
+    for (const [mid, ws] of db.connectedAgents.entries()) {
+      try {
+        if (ws && (ws.readyState === 1 || ws.readyState === (ws.OPEN || 1))) {
+          ws.close(1012, 'Service Restart');
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  // 2. Stop autonomous loops
+  try {
+    if (recoveryCoordinator && typeof recoveryCoordinator.stopReconciliationLoop === 'function') {
+      recoveryCoordinator.stopReconciliationLoop();
+    }
+  } catch (_) {}
+
+  // 3. Atomically flush all persistent memory state to disk
+  try {
+    flushPersistentState();
+    console.log('[*] Persistent state flushed synchronously to disk.');
+  } catch (err) {
+    console.warn(`[WARN] Persistent state flush failed: ${err.message}`);
+  }
+
+  // 4. Terminate tunnels and close HTTP server
+  try {
+    await tunnelManager.stop();
+  } catch (_) {}
+
+  server.close(() => {
+    console.log('[+] Space Station server cleanly closed. Exiting.');
+    process.exit(0);
+  });
+
+  // Force exit safety timeout in case lingering connections hang
+  setTimeout(() => process.exit(0), 3000).unref();
 };
 process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
+
+module.exports = {
+  server,
+  db,
+  pathEngine,
+  canaryRolloutManager,
+  doctorService,
+  reconciliationService,
+  infraIntelService,
+  savePersistentState,
+  flushPersistentState,
+  loadPersistentState,
+  cleanup
+};
 
