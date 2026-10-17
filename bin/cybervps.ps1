@@ -265,8 +265,9 @@ switch ($Command.ToLower()) {
         $initLine = "[$([DateTime]::UtcNow.ToString('o'))] [$attemptId] Spawning CyberVPS agent: $launchExe `"$AgentScript`""
         Set-Content -Path $BootstrapLogFile -Value $initLine -Force
 
+        $BootstrapErrFile = Join-Path $LogsDir "bootstrap.err.log"
         $agentArgs = "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`"$ghostFlag"
-        $proc = Start-Process -FilePath $launchExe -ArgumentList $agentArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $BootstrapLogFile -RedirectStandardError $BootstrapLogFile
+        $proc = Start-Process -FilePath $launchExe -ArgumentList $agentArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $BootstrapLogFile -RedirectStandardError $BootstrapErrFile
         Set-Content -Path $AgentPidFile -Value $proc.Id -Force
 
         # Poll readiness for up to 1.5 seconds

@@ -256,76 +256,76 @@ try {
         $is401 = $true
     }
 
+    if ($is401 -and $usedPathA) {
+        Write-Host "  [!] Existing local credentials (node: $MachineId) are stale or rejected by server." -ForegroundColor Yellow
+        Write-Host "  [*] Purging invalid cached credentials and re-registering with fresh hardware identity..." -ForegroundColor Cyan
+        
+        foreach ($f in @($ConfigFile, (Join-Path $ShadowBase "config.json"), $MachineIdFile, (Join-Path $ShadowBase "machine_id"), "C:\ProgramData\CyberVPS\config.json", "C:\ProgramData\CyberVPS\machine_id")) {
+            if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+        }
+        
+        $uuidRaw = ""
+        try { $uuidRaw = (Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue).UUID } catch {}
+        if (-not $uuidRaw) { $uuidRaw = [Guid]::NewGuid().ToString("N").Substring(0, 8) }
+        $cleanHost = ($env:COMPUTERNAME -replace '[^a-zA-Z0-9_]', '').ToLower()
+        $shortUuid = ($uuidRaw -replace '[^a-zA-Z0-9]', '').Substring(0, [Math]::Min(8, $uuidRaw.Length)).ToLower()
+        $MachineId = "cvps_${cleanHost}_${shortUuid}"
+        
+        # Use embedded ticket or generate fresh HMAC bootstrap ticket
+        if ($embeddedTicket -and $embeddedTicket -ne $existingToken) {
+            $Token = $embeddedTicket
+        } else {
+            try {
+                $secret = "cybervps_pair_station_2026"
+                $exp = [DateTimeOffset]::UtcNow.AddHours(2).ToUnixTimeMilliseconds()
+                $expHex = [Convert]::ToString($exp, 16)
+                $nonce = [Guid]::NewGuid().ToString("N").Substring(0, 16)
+                $hmac = New-Object System.Security.Cryptography.HMACSHA256
+                $hmac.Key = [System.Text.Encoding]::UTF8.GetBytes($secret)
+                $sigBytes = $hmac.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$($expHex):$($nonce)"))
+                $sigHex = ([BitConverter]::ToString($sigBytes) -replace '-','').ToLower().Substring(0, 24)
+                $Token = "cvps_boot_${expHex}_${nonce}_${sigHex}"
+            } catch {}
+        }
+
+        if ($Token) {
+            $fastAuthPayload = @{
+                type = "Auth"
+                payload = @{
+                    machine_id = $MachineId
+                    token = $Token
+                    agent_version = "2.2-ghost-native"
+                    hostname = $env:COMPUTERNAME
+                    username = $env:USERNAME
+                    os = "Windows"
+                    os_version = $osInfo
+                    arch = $env:PROCESSOR_ARCHITECTURE
+                    capabilities = @("powershell_native", "ghost_mode", "background_provisioning", "remote_reboot", "file_manager", "process_manager", "zero_dependency_bootstrap")
+                    profile = @{ ghost_mode = $true; bootstrap = "zero_prompt_fastpath"; runtime = "PowerShell_5_Core" }
+                }
+            } | ConvertTo-Json -Depth 4 -Compress
+            try {
+                $retryResp = Invoke-RestMethod -Uri "$($Server.TrimEnd('/'))/api/v1/relay/event" -Method Post -Body $fastAuthPayload -ContentType "application/json" -TimeoutSec 8 -ErrorAction Stop
+                if ($retryResp -and $retryResp.ok) {
+                    $PreflightOk = $true
+                    if ($retryResp.result -and $retryResp.result.virtual_ip) { $PreflightVip = $retryResp.result.virtual_ip }
+                    if ($retryResp.result -and $retryResp.result.node_token) { $Token = $retryResp.result.node_token }
+                    Write-Host "  [+] Node enrollment authenticated (Virtual IP: $PreflightVip)" -ForegroundColor Green
+                    $is401 = $false
+                }
+            } catch {}
+        }
+    }
+
     if ($is401) {
-        if ($usedPathA) {
-            Write-Host "  [!] Existing local credentials (node: $MachineId) are stale or rejected by server." -ForegroundColor Yellow
-            Write-Host "  [*] Purging invalid cached credentials and re-registering with fresh hardware identity..." -ForegroundColor Cyan
-            
-            foreach ($f in @($ConfigFile, (Join-Path $ShadowBase "config.json"), $MachineIdFile, (Join-Path $ShadowBase "machine_id"), "C:\ProgramData\CyberVPS\config.json", "C:\ProgramData\CyberVPS\machine_id")) {
-                if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
-            }
-            
-            $uuidRaw = ""
-            try { $uuidRaw = (Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue).UUID } catch {}
-            if (-not $uuidRaw) { $uuidRaw = [Guid]::NewGuid().ToString("N").Substring(0, 8) }
-            $cleanHost = ($env:COMPUTERNAME -replace '[^a-zA-Z0-9_]', '').ToLower()
-            $shortUuid = ($uuidRaw -replace '[^a-zA-Z0-9]', '').Substring(0, [Math]::Min(8, $uuidRaw.Length)).ToLower()
-            $MachineId = "cvps_${cleanHost}_${shortUuid}"
-            
-            # Use embedded ticket or generate fresh HMAC bootstrap ticket
-            if ($embeddedTicket -and $embeddedTicket -ne $existingToken) {
-                $Token = $embeddedTicket
-            } else {
-                try {
-                    $secret = "cybervps_pair_station_2026"
-                    $exp = [DateTimeOffset]::UtcNow.AddHours(2).ToUnixTimeMilliseconds()
-                    $expHex = [Convert]::ToString($exp, 16)
-                    $nonce = [Guid]::NewGuid().ToString("N").Substring(0, 16)
-                    $hmac = New-Object System.Security.Cryptography.HMACSHA256
-                    $hmac.Key = [System.Text.Encoding]::UTF8.GetBytes($secret)
-                    $sigBytes = $hmac.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$($expHex):$($nonce)"))
-                    $sigHex = ([BitConverter]::ToString($sigBytes) -replace '-','').ToLower().Substring(0, 24)
-                    $Token = "cvps_boot_${expHex}_${nonce}_${sigHex}"
-                } catch {}
-            }
+        Write-Host ""
+        Write-Host "[X] [ENROLLMENT_REJECTED] The Control Plane ($Server) rejected the enrollment credential (HTTP 401 Unauthorized)." -ForegroundColor Red
+        Write-Host "    The capability or token is invalid, expired, or already consumed." -ForegroundColor Yellow
+        Write-Host "    Please generate a fresh 1-click command from your CyberVPS dashboard." -ForegroundColor Yellow
+        Exit-WithCode 1
+        return
+    }
 
-            if ($Token) {
-                $fastAuthPayload = @{
-                    type = "Auth"
-                    payload = @{
-                        machine_id = $MachineId
-                        token = $Token
-                        agent_version = "2.2-ghost-native"
-                        hostname = $env:COMPUTERNAME
-                        username = $env:USERNAME
-                        os = "Windows"
-                        os_version = $osInfo
-                        arch = $env:PROCESSOR_ARCHITECTURE
-                        capabilities = @("powershell_native", "ghost_mode", "background_provisioning", "remote_reboot", "file_manager", "process_manager", "zero_dependency_bootstrap")
-                        profile = @{ ghost_mode = $true; bootstrap = "zero_prompt_fastpath"; runtime = "PowerShell_5_Core" }
-                    }
-                } | ConvertTo-Json -Depth 4 -Compress
-                try {
-                    $retryResp = Invoke-RestMethod -Uri "$($Server.TrimEnd('/'))/api/v1/relay/event" -Method Post -Body $fastAuthPayload -ContentType "application/json" -TimeoutSec 8 -ErrorAction Stop
-                    if ($retryResp -and $retryResp.ok) {
-                        $PreflightOk = $true
-                        if ($retryResp.result -and $retryResp.result.virtual_ip) { $PreflightVip = $retryResp.result.virtual_ip }
-                        if ($retryResp.result -and $retryResp.result.node_token) { $Token = $retryResp.result.node_token }
-                        Write-Host "  [+] Node enrollment authenticated (Virtual IP: $PreflightVip)" -ForegroundColor Green
-                        $is401 = $false
-                    }
-                } catch {}
-            }
-        }
-
-        if ($is401) {
-            Write-Host ""
-            Write-Host "[X] [ENROLLMENT_REJECTED] The Control Plane ($Server) rejected the enrollment credential (HTTP 401 Unauthorized)." -ForegroundColor Red
-            Write-Host "    The capability or token is invalid, expired, or already consumed." -ForegroundColor Yellow
-            Write-Host "    Please generate a fresh 1-click command from your CyberVPS dashboard." -ForegroundColor Yellow
-            Exit-WithCode 1
-            return
-        }
     if (-not $PreflightOk) {
         Write-Host "  [!] Pre-flight notice: Server returned $($_.Exception.Message). Continuing setup..." -ForegroundColor Gray
     }
