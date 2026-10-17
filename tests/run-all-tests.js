@@ -1948,7 +1948,66 @@ async function runTests() {
   const openapiData = JSON.parse(openapiRes.body);
   assert.strictEqual(openapiData.openapi, '3.1.0', 'OpenAPI version must be 3.1.0');
   assert(openapiData.paths['/api/v1/overview'], 'OpenAPI spec must map /api/v1/overview');
-  console.log('  ✅ OpenAPI 3.1 contract specification serving verified.');
+  // [TEST 44] Testing Path Ownership Registry & Invariant Enforcement HTTP API...
+  console.log('\n[TEST 44] Testing Path Ownership Registry & Invariant Enforcement HTTP API...');
+  const pathsListRes = await request(`${SERVER_URL}/api/v1/registry/paths`);
+  assert.strictEqual(pathsListRes.statusCode, 200, 'GET /api/v1/registry/paths must return 200');
+
+  const testHostId = 'integration_host_' + Math.random().toString(36).substring(2, 7);
+  const testClaimPath = 'C:/CyberVPS/Production/AppService1';
+
+  // Step 1: First primary claim succeeds (200 OK)
+  const claimRes1 = await request(`${SERVER_URL}/api/v1/registry/claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      machine_id: testHostId,
+      path: testClaimPath,
+      backend_id: 'backend_primary_alpha',
+      ownership_role: 'primary',
+      checksum: 'sha256_golden_hash_112233'
+    })
+  });
+  assert.strictEqual(claimRes1.statusCode, 200, 'First authoritative claim must return 200 OK');
+  const claimData1 = JSON.parse(claimRes1.body);
+  assert.strictEqual(claimData1.status, 'REGISTERED');
+  assert.strictEqual(claimData1.record.ownership_role, 'primary');
+
+  // Step 2: Competing primary claim on the exact same machine and path MUST be rejected with 409 Conflict
+  const claimRes2 = await request(`${SERVER_URL}/api/v1/registry/claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      machine_id: testHostId,
+      path: testClaimPath,
+      backend_id: 'competing_rogue_beta',
+      ownership_role: 'primary'
+    })
+  });
+  assert.strictEqual(claimRes2.statusCode, 409, 'Duplicate primary claim must be rejected with 409 Conflict');
+  const claimData2 = JSON.parse(claimRes2.body);
+  assert(claimData2.error.includes('Strict Path Ownership Violation'));
+
+  // Step 3: Verify recorded conflict via GET /api/v1/registry/conflicts
+  const conflictsRes = await request(`${SERVER_URL}/api/v1/registry/conflicts?machine_id=${testHostId}`);
+  assert.strictEqual(conflictsRes.statusCode, 200);
+  const conflictsData = JSON.parse(conflictsRes.body);
+  assert(conflictsData.total >= 1, 'Conflict must be cataloged in conflicts registry');
+  assert.strictEqual(conflictsData.conflicts[0].existing_owner_backend, 'backend_primary_alpha');
+  assert.strictEqual(conflictsData.conflicts[0].competing_owner_backend, 'competing_rogue_beta');
+  console.log('  ✅ Strict Single-Authoritative-Writer Path Ownership & 409 Conflict Invariant verified over HTTP API.');
+
+  // [TEST 45] Testing Connection Topology Graph & Circular Routing Loop Discovery...
+  console.log('\n[TEST 45] Testing Connection Topology Graph & Circular Routing Loop Discovery...');
+  const topoRes = await request(`${SERVER_URL}/api/v1/topology/graph`);
+  assert.strictEqual(topoRes.statusCode, 200, 'GET /api/v1/topology/graph must return 200');
+  const topoData = JSON.parse(topoRes.body);
+  assert(Array.isArray(topoData.nodes), 'Topology response must contain nodes');
+  assert(Array.isArray(topoData.edges), 'Topology response must contain edges');
+  assert(topoData.summary, 'Topology response must contain summary metrics');
+  assert(topoData.summary.obsidian_mesh_healthy, 'Obsidian pillars circle mesh must be marked healthy');
+  assert.strictEqual(topoData.summary.routing_loops_count, 0, 'Clean topology graph must have 0 harmful routing loops');
+  console.log(`  ✅ Connection Topology Graph verified: ${topoData.nodes.length} nodes, ${topoData.edges.length} edges, 0 routing loops.`);
 
   // Clean up
   winBridge.stop();
@@ -1957,7 +2016,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 43 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA & STREAMING TESTS PASSED!');
+  console.log('🎉 ALL 45 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA, PATH OWNERSHIP & TOPOLOGY TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

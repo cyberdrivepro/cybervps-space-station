@@ -1189,12 +1189,27 @@ class CyberVPSAgent:
                 except Exception:
                     pass
 
-        # 3. Network Addresses Discovery
-        ip_endpoints = []
+        # 3. Network Addresses Discovery - Accurate LAN vs Loopback Separation
+        lan_endpoints = []
+        loopback_addr = "127.0.0.1"
         try:
+            # Method A: UDP connect trick to find true routable LAN interface without sending data
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(('10.255.255.255', 1))
+                pri_ip = s.getsockname()[0]
+                if pri_ip and not pri_ip.startswith("127.") and not pri_ip.startswith("169.254."):
+                    lan_endpoints.append(pri_ip)
+            except Exception:
+                pass
+            finally:
+                s.close()
+
+            # Method B: Hostname interface resolution
             for ip in socket.gethostbyname_ex(hostname)[2]:
-                if not ip.startswith("127."):
-                    ip_endpoints.append(ip)
+                if not ip.startswith("127.") and not ip.startswith("169.254."):
+                    if ip not in lan_endpoints:
+                        lan_endpoints.append(ip)
         except Exception:
             pass
 
@@ -1236,7 +1251,8 @@ class CyberVPSAgent:
             "node:agentVersion": PROTOCOL_VERSION,
             "node:localUser": self.username,
             "node:publicIp": public_ip,
-            "node:localIps": ", ".join(ip_endpoints) if ip_endpoints else "127.0.0.1",
+            "node:lanIps": ", ".join(lan_endpoints) if lan_endpoints else "No routable LAN interface",
+            "node:loopbackIp": loopback_addr,
             "node:tailscaleCompatible": "true"
         }
         if daytona_info:
@@ -1256,7 +1272,9 @@ class CyberVPSAgent:
             "virtualization": virtualization,
             "provider": provider,
             "public_ip": public_ip,
-            "local_ips": ip_endpoints
+            "lan_ips": lan_endpoints,
+            "loopback_ip": loopback_addr,
+            "local_ips": lan_endpoints
         }
 
         self.device_profile = {
@@ -1276,7 +1294,9 @@ class CyberVPSAgent:
             "provider": provider,
             "daytona": daytona_info,
             "public_ip": public_ip,
-            "local_ips": ip_endpoints,
+            "lan_ips": lan_endpoints,
+            "loopback_ip": loopback_addr,
+            "local_ips": lan_endpoints,
             "ghost_mode": getattr(self, "ghost_mode", False),
             "attributes": attributes,
             "neofetch": neofetch_summary

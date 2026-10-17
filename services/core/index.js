@@ -13,6 +13,9 @@ const AuditService = require('./audit-service');
 const AppManager = require('./app-manager');
 const TunnelService = require('./tunnel-service');
 const MeshManager = require('./mesh-manager');
+const { PathOwnershipEngine } = require('./path-ownership-engine');
+const { ResourceReconciliationService } = require('./resource-reconciliation');
+const { InfrastructureIntelService } = require('./infrastructure-intel');
 
 class CoreServices {
   constructor(options = {}) {
@@ -72,6 +75,25 @@ class CoreServices {
       bridgeManager: this.bridgeManager,
       clusterState: this.clusterState
     });
+
+    // 10. Path Ownership Engine (Single-Authoritative-Writer Invariant)
+    this.pathOwnershipEngine = new PathOwnershipEngine(this.storage, {
+      auditService: this.auditService
+    });
+
+    // 11. Resource Reconciliation Service (Detection & Atomic Staged Recovery)
+    this.resourceReconciliation = new ResourceReconciliationService(this.storage, {
+      pathEngine: this.pathOwnershipEngine,
+      auditService: this.auditService
+    });
+
+    // 12. Infrastructure Intel Service (Truthful Network Discovery & Obsidian Mesh Graph)
+    this.infrastructureIntel = new InfrastructureIntelService({
+      fleetManager: this.fleetManager,
+      clusterState: this.clusterState,
+      pathOwnershipEngine: this.pathOwnershipEngine,
+      storage: this.storage
+    });
   }
 
   async initialize() {
@@ -83,6 +105,9 @@ class CoreServices {
     }
     if (this.bridgeManager && typeof this.bridgeManager.init === 'function') {
       await this.bridgeManager.init();
+    }
+    if (this.pathOwnershipEngine && typeof this.pathOwnershipEngine.initialize === 'function') {
+      await this.pathOwnershipEngine.initialize();
     }
     await this.auditService.info('core_services_init', 'CyberVPS Space Station Core Domain Services successfully initialized');
     return this;
@@ -99,5 +124,8 @@ module.exports = {
   AuditService,
   AppManager,
   TunnelService,
-  MeshManager
+  MeshManager,
+  PathOwnershipEngine,
+  ResourceReconciliationService,
+  InfrastructureIntelService
 };

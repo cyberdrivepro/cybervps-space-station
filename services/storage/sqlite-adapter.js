@@ -91,36 +91,40 @@ class SQLiteAdapter extends StorageAdapter {
     return { applied, status: 'synced' };
   }
 
+  _getTableMeta(tableName) {
+    if (!this.tableMeta) this.tableMeta = new Map();
+    if (!this.tableMeta.has(tableName)) {
+      try {
+        const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all();
+        const colSet = new Set(rows.map(r => r.name));
+        const pkRow = rows.find(r => r.pk > 0);
+        const pkName = pkRow ? pkRow.name : 'id';
+        this.tableMeta.set(tableName, { columns: colSet, primaryKey: pkName });
+      } catch (_) {
+        return { columns: new Set(), primaryKey: 'id' };
+      }
+    }
+    return this.tableMeta.get(tableName);
+  }
+
   async get(collection, key) {
     if (!this.db) await this.connect();
-    // Generalized collection query by primary key
-    const stmt = this._getOrCreateStmt(`SELECT * FROM ${this._sanitizeName(collection)} WHERE id = ?`);
+    const cleanCol = this._sanitizeName(collection);
+    const meta = this._getTableMeta(cleanCol);
+    const pkCol = meta.primaryKey || 'id';
+    const stmt = this._getOrCreateStmt(`SELECT * FROM ${cleanCol} WHERE ${pkCol} = ?`);
     const row = stmt.get(String(key));
     return row ? this._deserializeRow(row) : null;
   }
 
-  _getTableColumns(tableName) {
-    if (!this.tableCols) this.tableCols = new Map();
-    if (!this.tableCols.has(tableName)) {
-      try {
-        const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all();
-        const set = new Set(rows.map(r => r.name));
-        this.tableCols.set(tableName, set);
-      } catch (_) {
-        return new Set();
-      }
-    }
-    return this.tableCols.get(tableName);
-  }
-
   _ensureColumns(tableName, keys) {
-    const existing = this._getTableColumns(tableName);
-    if (!existing || existing.size === 0) return;
+    const meta = this._getTableMeta(tableName);
+    if (!meta || !meta.columns || meta.columns.size === 0) return;
     for (const k of keys) {
-      if (!existing.has(k)) {
+      if (!meta.columns.has(k)) {
         try {
           this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${this._sanitizeName(k)} TEXT;`);
-          existing.add(k);
+          meta.columns.add(k);
         } catch (_) {}
       }
     }
@@ -129,20 +133,25 @@ class SQLiteAdapter extends StorageAdapter {
   async set(collection, key, value) {
     if (!this.db) await this.connect();
     const cleanCol = this._sanitizeName(collection);
-    const data = { ...value, id: String(key) };
+    const meta = this._getTableMeta(cleanCol);
+    const pkCol = meta.primaryKey || 'id';
+
+    const data = { ...value };
+    data[pkCol] = String(key);
+    if (meta.columns.has('id') && pkCol !== 'id') {
+      data.id = String(key);
+    }
     const serialized = this._serializeRow(data);
 
     const keys = Object.keys(serialized);
     this._ensureColumns(cleanCol, keys);
 
     const placeholders = keys.map(() => '?').join(', ');
-    const updates = keys.map(k => `${k} = excluded.${k}`).join(', ');
+    const updates = keys.filter(k => k !== pkCol).map(k => `${k} = excluded.${k}`).join(', ');
 
-    const sql = `
-      INSERT INTO ${cleanCol} (${keys.join(', ')})
-      VALUES (${placeholders})
-      ON CONFLICT(id) DO UPDATE SET ${updates};
-    `;
+    const sql = updates.length > 0
+      ? `INSERT INTO ${cleanCol} (${keys.join(', ')}) VALUES (${placeholders}) ON CONFLICT(${pkCol}) DO UPDATE SET ${updates};`
+      : `INSERT INTO ${cleanCol} (${keys.join(', ')}) VALUES (${placeholders}) ON CONFLICT(${pkCol}) DO NOTHING;`;
 
     const stmt = this.db.prepare(sql);
     stmt.run(...Object.values(serialized));
@@ -151,7 +160,10 @@ class SQLiteAdapter extends StorageAdapter {
 
   async delete(collection, key) {
     if (!this.db) await this.connect();
-    const stmt = this._getOrCreateStmt(`DELETE FROM ${this._sanitizeName(collection)} WHERE id = ?`);
+    const cleanCol = this._sanitizeName(collection);
+    const meta = this._getTableMeta(cleanCol);
+    const pkCol = meta.primaryKey || 'id';
+    const stmt = this._getOrCreateStmt(`DELETE FROM ${cleanCol} WHERE ${pkCol} = ?`);
     const res = stmt.run(String(key));
     return res.changes > 0;
   }
@@ -227,6 +239,15 @@ class SQLiteAdapter extends StorageAdapter {
       out[k] = v;
     }
     return out;
+  }
+
+  async close() {
+    if (this.db) {
+      try {
+        this.db.close();
+      } catch (_) {}
+      this.db = null;
+    }
   }
 }
 

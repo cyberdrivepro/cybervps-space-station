@@ -25,7 +25,10 @@ function build() {
     'modules/terminal-view.js',
     'modules/file-manager-view.js',
     'modules/doctor-view.js',
-    'modules/cluster-ha-view.js'
+    'modules/cluster-ha-view.js',
+    'modules/infrastructure-view.js',
+    'modules/path-registry-view.js',
+    'modules/connection-graph-view.js'
   ];
 
   let bundledJs = '';

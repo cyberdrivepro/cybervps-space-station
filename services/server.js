@@ -17,11 +17,17 @@ const { ClusterState } = require('./cluster/cluster-state');
 const { RecoveryCoordinator } = require('./cluster/recovery-coordinator');
 const { ClusterTransport } = require('./cluster/cluster-transport');
 const DoctorService = require('./core/doctor-service');
+const PathOwnershipEngine = require('./core/path-ownership-engine');
+const ResourceReconciliationService = require('./core/resource-reconciliation');
+const InfrastructureIntelService = require('./core/infrastructure-intel');
 
 const PORT = process.env.PORT || 8080;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
 const tunnelManager = new TunnelManager({ port: PORT, pairingKey: process.env.PAIRING_KEY });
 const doctorService = new DoctorService();
+const pathEngine = new PathOwnershipEngine();
+const reconciliationService = new ResourceReconciliationService({ pathEngine });
+const infraIntelService = new InfrastructureIntelService({ pathEngine });
 
 // Daemon file logging support
 if (process.env.CYBERVPS_LOG_FILE) {
@@ -765,6 +771,9 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/cluster/peer/sync') return true;
   if (pathname === '/api/v1/doctor/run') return true;
   if (pathname === '/api/v1/openapi.json') return true;
+  if (pathname.startsWith('/api/v1/registry/')) return true;
+  if (pathname === '/api/v1/topology/graph') return true;
+  if (pathname === '/api/v1/machines/name') return true;
   return false;
 }
 
@@ -882,6 +891,186 @@ const server = http.createServer(async (req, res) => {
       fs.createReadStream(specPath).pipe(res);
       return;
     }
+  }
+
+  // 1. PATH OWNERSHIP REGISTRY ENDPOINTS (Strict Single-Authoritative-Writer Invariant)
+  if (pathname === '/api/v1/registry/paths') {
+    if (method === 'GET') {
+      const q = Object.fromEntries(parsedUrl.searchParams.entries());
+      const records = pathEngine.listRegistry(q);
+      const conflicts = pathEngine.listConflicts(q.machine_id);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ count: records.length, records, conflicts }));
+      return;
+    }
+  }
+
+  if (pathname === '/api/v1/registry/claim' && method === 'POST') {
+    let bodyStr = '';
+    req.on('data', c => { bodyStr += c; });
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const record = await pathEngine.registerPathOwnership(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'REGISTERED', record }));
+      } catch (err) {
+        const status = err.statusCode || 400;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: err.message,
+          conflict_id: err.conflictId || null,
+          existing_owner: err.existingOwner || null
+        }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/registry/release' && method === 'POST') {
+    let bodyStr = '';
+    req.on('data', c => { bodyStr += c; });
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const result = await pathEngine.releaseOwnership(body.resource_id, body.backend_id, body.reason);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/registry/conflicts') {
+    if (method === 'GET') {
+      const mId = parsedUrl.searchParams.get('machine_id');
+      const conflicts = pathEngine.listConflicts(mId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ total: conflicts.length, conflicts }));
+      return;
+    }
+  }
+
+  if (pathname === '/api/v1/registry/conflicts/resolve' && method === 'POST') {
+    let bodyStr = '';
+    req.on('data', c => { bodyStr += c; });
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const result = await pathEngine.resolveConflict(body.conflict_id, body.resolution_policy, body.user);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'RESOLVED', conflict: result }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 2. RESOURCE RECONCILIATION & SAFE RECOVERY ENDPOINTS
+  if (pathname === '/api/v1/registry/reconcile' && method === 'POST') {
+    let bodyStr = '';
+    req.on('data', c => { bodyStr += c; });
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const mId = body.machine_id || 'all';
+        const result = await reconciliationService.scanAndDetect(mId, body.existing_paths);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/registry/candidates' && method === 'GET') {
+    const rId = parsedUrl.searchParams.get('resource_id');
+    try {
+      const result = await reconciliationService.findReplacementCandidates(rId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/registry/recover' && method === 'POST') {
+    let bodyStr = '';
+    req.on('data', c => { bodyStr += c; });
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const result = await reconciliationService.executeSafeRecovery(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'RECOVERED', result }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/registry/history' && method === 'GET') {
+    const rId = parsedUrl.searchParams.get('resource_id');
+    const history = await reconciliationService.getResourceHistory(rId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ total: history.length, history }));
+    return;
+  }
+
+  // 3. CONNECTION TOPOLOGY GRAPH & MESH ROUTING
+  if (pathname === '/api/v1/topology/graph' && method === 'GET') {
+    try {
+      const graph = await infraIntelService.buildConnectionGraph();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(graph));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // 4. PERSISTENT MACHINE IDENTITY & EDITABLE NAME
+  if (pathname === '/api/v1/machines/name' && method === 'POST') {
+    let bodyStr = '';
+    req.on('data', c => { bodyStr += c; });
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const mId = body.machine_id;
+        const newName = body.name || body.friendly_name;
+        if (!mId || !newName) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'machine_id and name are required' }));
+        }
+
+        const machine = db.machines.get(mId);
+        if (machine) {
+          machine.friendly_name = newName;
+          machine.hostname = newName;
+          machine.updated_at = new Date().toISOString();
+          saveState();
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ machine_id: mId, friendly_name: newName, status: 'UPDATED' }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
   }
 
   function resolveTargetHost(req, parsedUrl) {
