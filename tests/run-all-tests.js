@@ -1926,6 +1926,30 @@ async function runTests() {
 
   console.log('  ✅ Ultra-Fast Zero-Prompt Provisioning verified: 1-click bootstrap tickets, single-use enforcement, node_token issuance & zero Read-Host prompts.');
 
+  // [TEST 42] Testing System Doctor 16-Point Diagnostics & Auto-Remediation...
+  console.log('\n[TEST 42] Testing System Doctor 16-Point Diagnostics & Auto-Remediation...');
+  const doctorRes = await request(`${SERVER_URL}/api/v1/doctor/run`);
+  assert.strictEqual(doctorRes.statusCode, 200, 'Doctor diagnostics must return 200');
+  const doctorData = JSON.parse(doctorRes.body);
+  assert.strictEqual(doctorData.checks_total, 16, 'Doctor must execute all 16 checks');
+  assert(doctorData.health_score >= 80, 'Health score must be >= 80');
+  
+  const remediateRes = await request(`${SERVER_URL}/api/v1/doctor/run`, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'bridge_subsystem' })
+  });
+  assert.strictEqual(remediateRes.statusCode, 200, 'Auto-remediation must return 200');
+  console.log('  ✅ System Doctor 16-point diagnostics & self-healing verified.');
+
+  // [TEST 43] Testing OpenAPI 3.1 Spec Endpoint & Contract Delivery...
+  console.log('\n[TEST 43] Testing OpenAPI 3.1 Spec Endpoint & Contract Delivery...');
+  const openapiRes = await request(`${SERVER_URL}/api/v1/openapi.json`);
+  assert.strictEqual(openapiRes.statusCode, 200, 'OpenAPI spec endpoint must return 200');
+  const openapiData = JSON.parse(openapiRes.body);
+  assert.strictEqual(openapiData.openapi, '3.1.0', 'OpenAPI version must be 3.1.0');
+  assert(openapiData.paths['/api/v1/overview'], 'OpenAPI spec must map /api/v1/overview');
+  console.log('  ✅ OpenAPI 3.1 contract specification serving verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -1933,7 +1957,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 41 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA & STREAMING TESTS PASSED!');
+  console.log('🎉 ALL 43 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA & STREAMING TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

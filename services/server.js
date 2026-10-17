@@ -16,10 +16,12 @@ const TunnelManager = require('./tunnel-manager');
 const { ClusterState } = require('./cluster/cluster-state');
 const { RecoveryCoordinator } = require('./cluster/recovery-coordinator');
 const { ClusterTransport } = require('./cluster/cluster-transport');
+const DoctorService = require('./core/doctor-service');
 
 const PORT = process.env.PORT || 8080;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
 const tunnelManager = new TunnelManager({ port: PORT, pairingKey: process.env.PAIRING_KEY });
+const doctorService = new DoctorService();
 
 // Daemon file logging support
 if (process.env.CYBERVPS_LOG_FILE) {
@@ -761,6 +763,8 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/cluster/nodes') return true;
   if (pathname === '/api/v1/cluster/events') return true;
   if (pathname === '/api/v1/cluster/peer/sync') return true;
+  if (pathname === '/api/v1/doctor/run') return true;
+  if (pathname === '/api/v1/openapi.json') return true;
   return false;
 }
 
@@ -843,6 +847,41 @@ const server = http.createServer(async (req, res) => {
       virtual_mesh_cidr: '10.77.0.0/24'
     }));
     return;
+  }
+
+  // SYSTEM DOCTOR 16-POINT HEALTH DIAGNOSTICS & REMEDIATION
+  if (pathname === '/api/v1/doctor/run') {
+    if (method === 'GET') {
+      const diag = await doctorService.runFullDiagnostics();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(diag));
+      return;
+    } else if (method === 'POST') {
+      let bodyStr = '';
+      req.on('data', c => { bodyStr += c; });
+      req.on('end', async () => {
+        try {
+          const body = JSON.parse(bodyStr || '{}');
+          const remediated = await doctorService.runAutoRemediation(body.action);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(remediated));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+      return;
+    }
+  }
+
+  // OPENAPI 3.1 SPECIFICATION ENDPOINT
+  if (pathname === '/api/v1/openapi.json') {
+    const specPath = path.join(__dirname, '../api/openapi-spec.json');
+    if (fs.existsSync(specPath)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      fs.createReadStream(specPath).pipe(res);
+      return;
+    }
   }
 
   function resolveTargetHost(req, parsedUrl) {

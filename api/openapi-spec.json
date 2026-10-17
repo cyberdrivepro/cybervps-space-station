@@ -1,0 +1,391 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CyberVPS Space Station API",
+    "version": "2.1.0",
+    "description": "Production-grade REST & WebSocket API for CyberVPS Space Station distributed fleet management, End-Core HA cluster mesh, remote access, and zero-popup background streaming."
+  },
+  "servers": [
+    {
+      "url": "https://cybervps-space-station.up.railway.app",
+      "description": "Production Railway Control Plane"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Local Self-Hosted Control Plane"
+    }
+  ],
+  "paths": {
+    "/api/v1/overview": {
+      "get": {
+        "summary": "Station Overview & Fleet Health Metrics",
+        "description": "Returns top-level cluster metrics, machine counts, and service status for the dashboard overview.",
+        "responses": {
+          "200": {
+            "description": "System overview metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "online_count", "total_fleet", "cluster_nodes", "uptime_seconds"],
+                  "properties": {
+                    "status": { "type": "string", "enum": ["HEALTHY", "DEGRADED", "OFFLINE"] },
+                    "online_count": { "type": "integer" },
+                    "total_fleet": { "type": "integer" },
+                    "cluster_nodes": { "type": "integer" },
+                    "uptime_seconds": { "type": "integer" },
+                    "version": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/machines": {
+      "get": {
+        "summary": "List Enrolled Machines",
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of fleet machines",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer" },
+                    "machines": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Machine" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Register or Heartbeat Host Node",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/MachineRegistration" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Machine registered successfully" },
+          "401": { "description": "Unauthorized enrollment token" }
+        }
+      }
+    },
+    "/api/v1/disaster-recovery/profile": {
+      "get": {
+        "summary": "Get Recovery Profile by Hardware UUID",
+        "parameters": [
+          { "name": "hardware_uuid", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Recovery profile retrieved" },
+          "404": { "description": "Profile not found" }
+        }
+      },
+      "post": {
+        "summary": "Set Disaster Recovery Profile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["hardware_uuid"],
+                "properties": {
+                  "hardware_uuid": { "type": "string" },
+                  "auto_approve": { "type": "boolean" },
+                  "mode": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Profile saved" } }
+      }
+    },
+    "/api/v1/apps/list": {
+      "get": {
+        "summary": "List Applications on Host",
+        "parameters": [
+          { "name": "machine_id", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Application catalog" } }
+      }
+    },
+    "/api/v1/apps/launch": {
+      "post": {
+        "summary": "Launch Desktop Application",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["machine_id", "executable"],
+                "properties": {
+                  "machine_id": { "type": "string" },
+                  "executable": { "type": "string" },
+                  "args": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "App launched" } }
+      }
+    },
+    "/api/v1/remote-desktop/session": {
+      "post": {
+        "summary": "Initialize Remote Desktop Session",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["machine_id"],
+                "properties": {
+                  "machine_id": { "type": "string" },
+                  "protocol": { "type": "string", "enum": ["rdp", "vnc", "rustdesk", "novnc"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Remote desktop session established" } }
+      }
+    },
+    "/api/v1/cluster/topology": {
+      "get": {
+        "summary": "Get End-Core Cluster Mesh Topology",
+        "description": "Returns all Obsidian Pillars backend nodes, health states, latency and consensus metadata.",
+        "responses": { "200": { "description": "Cluster topology" } }
+      }
+    },
+    "/api/v1/custom-hosting": {
+      "get": {
+        "summary": "List Custom Hosted Websites & Apps",
+        "responses": { "200": { "description": "Hosted sites" } }
+      }
+    },
+    "/api/v1/wireguard/peers": {
+      "get": {
+        "summary": "List WireGuard Virtual Network Peers",
+        "responses": { "200": { "description": "WireGuard peer list" } }
+      }
+    },
+    "/api/v1/device-intel": {
+      "get": {
+        "summary": "Get Hardware Device Intelligence (Neofetch)",
+        "parameters": [
+          { "name": "machine_id", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Device hardware and OS details" } }
+      }
+    },
+    "/api/v1/files/list": {
+      "get": {
+        "summary": "List Remote Files (SFTP/Agent)",
+        "parameters": [
+          { "name": "machine_id", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "path", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Directory listing" } }
+      }
+    },
+    "/api/v1/terminal/session": {
+      "post": {
+        "summary": "Create Interactive Terminal Session Token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["machine_id"],
+                "properties": {
+                  "machine_id": { "type": "string" },
+                  "shell": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Terminal session token generated" } }
+      }
+    },
+    "/api/v1/processes/list": {
+      "get": {
+        "summary": "List Remote Running Processes",
+        "parameters": [
+          { "name": "machine_id", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Process snapshot" } }
+      }
+    },
+    "/api/v1/processes/kill": {
+      "post": {
+        "summary": "Kill Remote Process",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["machine_id", "pid"],
+                "properties": {
+                  "machine_id": { "type": "string" },
+                  "pid": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Process terminated" } }
+      }
+    },
+    "/api/v1/bridge/mappings": {
+      "get": {
+        "summary": "List TCP Port Bridge Mappings",
+        "responses": { "200": { "description": "Active bridge streams" } }
+      },
+      "post": {
+        "summary": "Create TCP Port Bridge Mapping",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["machine_id", "target_port"],
+                "properties": {
+                  "machine_id": { "type": "string" },
+                  "target_port": { "type": "integer" },
+                  "alias": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Bridge created" } }
+      }
+    },
+    "/api/v1/mesh/routes": {
+      "get": {
+        "summary": "Virtual Network Mesh Routes & IP Allocations",
+        "responses": { "200": { "description": "Mesh routes" } }
+      }
+    },
+    "/api/v1/ports/scan": {
+      "get": {
+        "summary": "Scan All Listening Ports on Node",
+        "parameters": [
+          { "name": "machine_id", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Port scan results" } }
+      }
+    },
+    "/api/v1/tunnels/list": {
+      "get": {
+        "summary": "List Ingress Public Tunnels",
+        "responses": { "200": { "description": "Active public tunnels" } }
+      }
+    },
+    "/api/v1/doctor/run": {
+      "get": {
+        "summary": "Run 16-Point Deep Diagnostics",
+        "responses": { "200": { "description": "Health diagnostic results" } }
+      },
+      "post": {
+        "summary": "Execute Self-Healing Remediation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Self-healing executed" } }
+      }
+    },
+    "/api/v1/audit/logs": {
+      "get": {
+        "summary": "Query Audit Security Trail",
+        "parameters": [
+          { "name": "level", "in": "query", "schema": { "type": "string" } },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["json", "csv"] } }
+        ],
+        "responses": { "200": { "description": "Audit trail logs" } }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "summary": "Get Station Configuration & Preferences",
+        "responses": { "200": { "description": "Station settings" } }
+      },
+      "post": {
+        "summary": "Update Station Configuration",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Settings saved" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Machine": {
+        "type": "object",
+        "required": ["id", "hostname", "os", "virtual_ip", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "hostname": { "type": "string" },
+          "username": { "type": "string" },
+          "os": { "type": "string" },
+          "arch": { "type": "string" },
+          "virtual_ip": { "type": "string" },
+          "agent_version": { "type": "string" },
+          "status": { "type": "string", "enum": ["online", "degraded", "offline", "revoked"] },
+          "last_seen": { "type": "string", "format": "date-time" }
+        }
+      },
+      "MachineRegistration": {
+        "type": "object",
+        "required": ["machine_id"],
+        "properties": {
+          "machine_id": { "type": "string" },
+          "token": { "type": "string" },
+          "hostname": { "type": "string" },
+          "os": { "type": "string" },
+          "arch": { "type": "string" },
+          "capabilities": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

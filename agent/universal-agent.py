@@ -6786,17 +6786,19 @@ if __name__ == "__main__":
             else:
                 print(f"[!] Warning: Bootstrap claim returned: {claimed.get('error')}")
         try:
-            home = os.path.expanduser("~")
-            cvps_dir = os.path.join(home, ".cybervps")
-            os.makedirs(cvps_dir, exist_ok=True)
-            with open(os.path.join(cvps_dir, "config.json"), "w") as f:
-                json.dump({
-                    "server_url": target,
-                    "server_urls": list(dict.fromkeys([target, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
-                    "token": agent.token,
-                    "machine_id": agent.machine_id,
-                    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                }, f, indent=2)
+            # Only persist to user's home config if this is not a dummy test run
+            if agent.token and agent.token != "dummy_token" and agent.machine_id and agent.machine_id != "test_machine" and not os.environ.get("CYBERVPS_TEST_MODE"):
+                home = os.path.expanduser("~")
+                cvps_dir = os.path.join(home, ".cybervps")
+                os.makedirs(cvps_dir, exist_ok=True)
+                with open(os.path.join(cvps_dir, "config.json"), "w") as f:
+                    json.dump({
+                        "server_url": target,
+                        "server_urls": list(dict.fromkeys([target, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
+                        "token": agent.token,
+                        "machine_id": agent.machine_id,
+                        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    }, f, indent=2)
         except Exception:
             pass
         agent.run()
