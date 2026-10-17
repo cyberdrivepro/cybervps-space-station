@@ -6,8 +6,8 @@
 
 set -e
 
-SERVER_URL="http://localhost:8080"
-TOKEN="cvps_enroll_master_token"
+SERVER_URL="${1:-${CYBERVPS_SERVER:-https://cybervps-space-station.up.railway.app}}"
+TOKEN="${CYBERVPS_TOKEN:-cvps_enroll_master_token}"
 MACHINE_ID=""
 
 POS_1=""
@@ -55,7 +55,9 @@ echo -e "${CYAN}   🚀 CyberVPS SPACE STATION - Universal Agent Installer      
 echo -e "${CYAN}================================================================${NC}"
 
 CVPS_DIR="$HOME/.cybervps"
-mkdir -p "$CVPS_DIR"
+LOG_DIR="$CVPS_DIR/logs"
+mkdir -p "$CVPS_DIR" "$LOG_DIR"
+ln -sf "$LOG_DIR/agent.log" "$CVPS_DIR/agent.log" 2>/dev/null || true
 cd "$CVPS_DIR"
 
 echo -e "\n${GREEN}[1/4] Preparing agent environment in $CVPS_DIR...${NC}"
@@ -133,7 +135,15 @@ echo -e "\n${GREEN}[3/4] Configuring Supervisor & Background Persistence...${NC}
 # Determine service mechanism
 SERVICE_INSTALLED=0
 
-if [ "$(id -u)" -eq 0 ] && [ -d "/etc/systemd/system" ]; then
+# Detect if systemd is genuinely running as PID 1 (avoids container false starts)
+IS_SYSTEMD_RUNNING=0
+if [ -d "/run/systemd/system" ] && command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-system-running --quiet 2>/dev/null || [ $? -eq 0 ] || [ -S /run/systemd/private ]; then
+        IS_SYSTEMD_RUNNING=1
+    fi
+fi
+
+if [ "$(id -u)" -eq 0 ] && [ "$IS_SYSTEMD_RUNNING" -eq 1 ]; then
     echo "Configuring systemd system service..."
     cat <<EOF > /etc/systemd/system/cybervps-agent.service
 [Unit]
@@ -151,13 +161,20 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload
-    systemctl enable --now cybervps-agent.service
-    SERVICE_INSTALLED=1
-    echo -e "${GREEN}Systemd service installed and started!${NC}"
+    if systemctl daemon-reload >/dev/null 2>&1 && \
+       systemctl enable --now cybervps-agent.service >/dev/null 2>&1 && \
+       sleep 1 && \
+       systemctl is-active --quiet cybervps-agent.service 2>/dev/null; then
+        SERVICE_INSTALLED=1
+        echo -e "${GREEN}Systemd service installed and started!${NC}"
+    else
+        echo -e "${YELLOW}Systemd unit could not be activated; falling back to background daemon...${NC}"
+        systemctl disable cybervps-agent.service >/dev/null 2>&1 || true
+        rm -f /etc/systemd/system/cybervps-agent.service 2>/dev/null || true
+    fi
 fi
 
-if [ $SERVICE_INSTALLED -eq 0 ] && command -v systemctl >/dev/null 2>&1 && [ -n "$XDG_RUNTIME_DIR" ]; then
+if [ $SERVICE_INSTALLED -eq 0 ] && [ "$IS_SYSTEMD_RUNNING" -eq 1 ] && command -v systemctl >/dev/null 2>&1 && [ -n "$XDG_RUNTIME_DIR" ]; then
     echo "Configuring systemd user service..."
     mkdir -p "$HOME/.config/systemd/user"
     cat <<EOF > "$HOME/.config/systemd/user/cybervps-agent.service"
@@ -175,8 +192,16 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
-    systemctl --user daemon-reload 2>/dev/null || true
-    systemctl --user enable --now cybervps-agent.service 2>/dev/null && SERVICE_INSTALLED=1 || true
+    if systemctl --user daemon-reload >/dev/null 2>&1 && \
+       systemctl --user enable --now cybervps-agent.service >/dev/null 2>&1 && \
+       sleep 1 && \
+       systemctl --user is-active --quiet cybervps-agent.service 2>/dev/null; then
+        SERVICE_INSTALLED=1
+        echo -e "${GREEN}Systemd user service installed and started!${NC}"
+    else
+        systemctl --user disable cybervps-agent.service >/dev/null 2>&1 || true
+        rm -f "$HOME/.config/systemd/user/cybervps-agent.service" 2>/dev/null || true
+    fi
 fi
 
 if [ $SERVICE_INSTALLED -eq 0 ]; then

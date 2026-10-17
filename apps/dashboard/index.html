@@ -975,6 +975,22 @@
         <button class="btn btn-secondary" onclick="navigate('settings')">Configure Server</button>
       </div>
 
+      <!-- Hosted Loopback Warning & One-Click Auto-Repair Banner -->
+      <div id="loopback-warning-banner" class="connection-banner warning" style="display:none; background:rgba(245, 158, 11, 0.12); border:1px solid rgba(245, 158, 11, 0.35); margin-bottom:1rem; border-radius:var(--radius-sm); padding:0.85rem 1.25rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+        <div style="flex:1; min-width:280px;">
+          <strong style="color:#f59e0b; display:flex; align-items:center; gap:0.5rem; font-size:0.85rem;">
+            <span>⚠️ Loopback Target Configured on Hosted Web Dashboard</span>
+          </strong>
+          <div style="font-size:0.78rem; margin-top:4px; color:var(--text-secondary); line-height:1.4;">
+            This dashboard is running on <span id="loopback-origin-label" style="font-family:var(--font-mono); color:var(--text-primary); font-weight:600;">GitHub Pages</span>, but the Control Plane target is set to local loopback (<code id="loopback-target-label" style="color:var(--accent-cyan);">http://localhost:8080</code>). Modern browsers block mixed HTTP requests to localhost from HTTPS sites.
+          </div>
+        </div>
+        <div style="display:flex; gap:0.5rem; flex-shrink:0;">
+          <button class="btn btn-primary" onclick="fixLocalhostConnection()" style="font-size:0.8rem; padding:0.4rem 0.85rem; background:#0284c7; border-color:#0284c7;">⚡ Fix Connection (Switch to Cloud)</button>
+          <button class="btn btn-secondary" onclick="dismissLoopbackWarning()" style="font-size:0.8rem; padding:0.4rem 0.65rem;">Dismiss</button>
+        </div>
+      </div>
+
       <!-- VIEW: OVERVIEW -->
       <div id="view-overview" class="view-panel">
         <div class="kpi-grid">
@@ -2459,6 +2475,24 @@
             </div>
           </div>
           <div class="card-body" style="max-width:680px;">
+            <div class="form-group" style="margin-bottom: 1.25rem;">
+              <label class="form-label" style="font-weight:600;">Control Plane Connection Mode</label>
+              <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.6rem; margin-top:0.4rem;">
+                <button type="button" class="btn btn-secondary" id="mode-btn-public" onclick="setConnectionMode('public')" style="text-align:left; padding:0.75rem 0.9rem; border-color:var(--accent-cyan); display:flex; flex-direction:column; gap:0.25rem; transition:all 0.15s ease;">
+                  <strong style="color:var(--accent-cyan); font-size:0.84rem;">☁️ Public Cloud Relay</strong>
+                  <span style="font-size:0.7rem; color:var(--text-muted);">Railway Managed (Zero-Config Global)</span>
+                </button>
+                <button type="button" class="btn btn-secondary" id="mode-btn-local" onclick="setConnectionMode('local')" style="text-align:left; padding:0.75rem 0.9rem; display:flex; flex-direction:column; gap:0.25rem; transition:all 0.15s ease;">
+                  <strong style="color:var(--text-primary); font-size:0.84rem;">💻 Local Development</strong>
+                  <span style="font-size:0.7rem; color:var(--text-muted);">http://localhost:8080 (Workstation)</span>
+                </button>
+                <button type="button" class="btn btn-secondary" id="mode-btn-custom" onclick="setConnectionMode('custom')" style="text-align:left; padding:0.75rem 0.9rem; display:flex; flex-direction:column; gap:0.25rem; transition:all 0.15s ease;">
+                  <strong style="color:var(--text-primary); font-size:0.84rem;">⚙️ Custom Endpoint</strong>
+                  <span style="font-size:0.7rem; color:var(--text-muted);">Self-Hosted VPS / Custom Domain</span>
+                </button>
+              </div>
+            </div>
+
             <div class="form-group">
               <label class="form-label">Control Plane Server URL</label>
               <input type="text" id="setting-server-url" class="form-control" placeholder="https://cybervps-space-station.up.railway.app">
@@ -2483,8 +2517,9 @@
 
             <div style="display:flex; gap:0.75rem; margin-top:1.5rem; flex-wrap:wrap;">
               <button class="btn btn-primary" onclick="saveSettings()">Save & Connect</button>
+              <button class="btn btn-secondary" onclick="fixLocalhostConnection()" style="background:rgba(2,132,199,0.18); border-color:#0284c7; color:#38bdf8;">⚡ Fix Localhost Connection</button>
               <button class="btn btn-secondary" onclick="testBackendDirect()">Test Reachability</button>
-              <button class="btn btn-secondary" onclick="useRailwayDefault()">Railway Backend</button>
+              <button class="btn btn-secondary" onclick="useRailwayDefault()">Railway Cloud</button>
               <button class="btn btn-secondary" onclick="useNetlifyDefault()">Netlify Edge</button>
               <button class="btn btn-secondary" onclick="useRenderDefault()">Render Backend</button>
               <button class="btn btn-danger" onclick="resetSettings()">Reset Defaults</button>
@@ -3543,6 +3578,15 @@
     if (savedUrl) {
       savedUrl = normalizeServerUrl(savedUrl);
     }
+    // Auto-recovery for hosted dashboards (e.g. GitHub Pages):
+    // If running on a public remote host and stored URL is loopback without explicit query param override,
+    // automatically recover to defaultRailway to prevent Mixed Content / Private Network CORS lockup.
+    const isLoopbackTarget = savedUrl && (savedUrl.includes('localhost') || savedUrl.includes('127.0.0.1'));
+    if (isStaticHost && isLoopbackTarget && !paramBackend) {
+      console.warn('[CyberVPS] Hosted environment detected with stale loopback target. Auto-recovering to Railway public relay:', defaultRailway);
+      savedUrl = defaultRailway;
+      try { localStorage.setItem('cvps_server_url', defaultRailway); } catch (_) {}
+    }
     if (window.location.protocol === 'https:' && savedUrl && savedUrl.startsWith('http://') && !savedUrl.includes('localhost') && !savedUrl.includes('127.0.0.1')) {
       savedUrl = null;
     }
@@ -3705,6 +3749,7 @@
         const banner = document.getElementById('connection-banner');
 
         statusEndpoint.innerText = appConfig.serverUrl;
+        checkLoopbackBanner();
 
         if (!healthCheck.ok) {
           appState.isOnline = false;
@@ -5056,7 +5101,86 @@
       if (fb) {
         fb.innerHTML = `<span style="color:var(--text-muted);">Current Active Target: <code>${escapeHtml(appConfig.serverUrl || defaultRailway)}</code></span>`;
       }
+      updateConnectionModeUI();
       fetchBuildInfo();
+    }
+
+    function checkLoopbackBanner() {
+      const banner = document.getElementById('loopback-warning-banner');
+      if (!banner) return;
+      const currentUrl = normalizeServerUrl(appConfig.serverUrl) || '';
+      const isLoopback = currentUrl.includes('localhost') || currentUrl.includes('127.0.0.1');
+      const isHosted = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+      if (isHosted && isLoopback && sessionStorage.getItem('cvps_dismiss_loopback') !== 'true') {
+        banner.style.display = 'flex';
+        const originLabel = document.getElementById('loopback-origin-label');
+        if (originLabel) originLabel.innerText = window.location.hostname;
+        const targetLabel = document.getElementById('loopback-target-label');
+        if (targetLabel) targetLabel.innerText = currentUrl;
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    function dismissLoopbackWarning() {
+      sessionStorage.setItem('cvps_dismiss_loopback', 'true');
+      const banner = document.getElementById('loopback-warning-banner');
+      if (banner) banner.style.display = 'none';
+    }
+
+    function fixLocalhostConnection() {
+      const target = defaultRailway;
+      localStorage.setItem('cvps_server_url', target);
+      appConfig.serverUrl = target;
+      const inputEl = document.getElementById('setting-server-url');
+      if (inputEl) inputEl.value = target;
+      sessionStorage.removeItem('cvps_dismiss_loopback');
+      const banner = document.getElementById('loopback-warning-banner');
+      if (banner) banner.style.display = 'none';
+      updateConnectionModeUI('public');
+      showToast('Switched Control Plane to Public Railway Cloud Relay. Reconnecting...', 'success');
+      setupSyncInterval();
+      initTelemetryStream();
+      syncData(true);
+    }
+
+    function setConnectionMode(mode) {
+      const inputEl = document.getElementById('setting-server-url');
+      if (mode === 'public') {
+        if (inputEl) inputEl.value = defaultRailway;
+        updateConnectionModeUI('public');
+        saveSettings();
+      } else if (mode === 'local') {
+        if (inputEl) inputEl.value = 'http://localhost:8080';
+        updateConnectionModeUI('local');
+        saveSettings();
+      } else if (mode === 'custom') {
+        updateConnectionModeUI('custom');
+        if (inputEl) {
+          inputEl.focus();
+          inputEl.select();
+        }
+      }
+    }
+
+    function updateConnectionModeUI(mode) {
+      const currentUrl = (document.getElementById('setting-server-url')?.value || appConfig.serverUrl || '').toLowerCase();
+      const current = mode || (currentUrl.includes('localhost') || currentUrl.includes('127.0.0.1') ? 'local' : (currentUrl.includes('railway') ? 'public' : 'custom'));
+      const btnPub = document.getElementById('mode-btn-public');
+      const btnLoc = document.getElementById('mode-btn-local');
+      const btnCus = document.getElementById('mode-btn-custom');
+      if (btnPub) {
+        btnPub.style.borderColor = current === 'public' ? 'var(--accent-cyan)' : 'var(--border-subtle)';
+        btnPub.style.background = current === 'public' ? 'rgba(56, 189, 248, 0.12)' : 'var(--bg-subtle)';
+      }
+      if (btnLoc) {
+        btnLoc.style.borderColor = current === 'local' ? 'var(--accent-cyan)' : 'var(--border-subtle)';
+        btnLoc.style.background = current === 'local' ? 'rgba(56, 189, 248, 0.12)' : 'var(--bg-subtle)';
+      }
+      if (btnCus) {
+        btnCus.style.borderColor = current === 'custom' ? 'var(--accent-cyan)' : 'var(--border-subtle)';
+        btnCus.style.background = current === 'custom' ? 'rgba(56, 189, 248, 0.12)' : 'var(--bg-subtle)';
+      }
     }
 
     async function fetchBuildInfo(forceToast = false) {
@@ -5100,16 +5224,19 @@
 
     function useRailwayDefault() {
       document.getElementById('setting-server-url').value = defaultRailway;
+      updateConnectionModeUI('public');
       saveSettings();
     }
 
     function useNetlifyDefault() {
       document.getElementById('setting-server-url').value = defaultNetlify;
+      updateConnectionModeUI('custom');
       saveSettings();
     }
 
     function useRenderDefault() {
       document.getElementById('setting-server-url').value = defaultRender;
+      updateConnectionModeUI('custom');
       saveSettings();
     }
 
@@ -5130,6 +5257,8 @@
       localStorage.setItem('cvps_pairing_key', pairInput);
       localStorage.setItem('cvps_refresh_interval', String(intervalInput));
 
+      updateConnectionModeUI();
+      checkLoopbackBanner();
       setupSyncInterval();
       initTelemetryStream();
       showToast('Settings saved. Reconnecting...', 'success');
@@ -5187,6 +5316,8 @@
       document.getElementById('setting-pairing-key').value = '';
       document.getElementById('setting-refresh-interval').value = '4000';
       localStorage.setItem('cvps_server_url', defaultRailway);
+      updateConnectionModeUI('public');
+      checkLoopbackBanner();
       setupSyncInterval();
       initTelemetryStream();
       showToast('Settings reset to defaults', 'info');

@@ -845,15 +845,99 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  function resolveTargetHost(req, parsedUrl) {
+    const queryServer = parsedUrl && (parsedUrl.searchParams.get('server') || parsedUrl.searchParams.get('backend'));
+    if (queryServer) {
+      return queryServer.trim().replace(/\/+$/, '');
+    }
+    if (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost') {
+      return tunnelManager.publicUrl.replace(/\/+$/, '');
+    }
+    if (process.env.CYBERVPS_PUBLIC_URL) {
+      return process.env.CYBERVPS_PUBLIC_URL.trim().replace(/\/+$/, '');
+    }
+    if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+      return `https://${process.env.RAILWAY_PUBLIC_DOMAIN.trim().replace(/\/+$/, '')}`;
+    }
+    const fwdProto = req.headers['x-forwarded-proto'];
+    const hostProto = fwdProto || (req.connection && req.connection.encrypted ? 'https' : 'http');
+    const fwdHost = req.headers['x-forwarded-host'];
+    const reqHost = fwdHost || req.headers.host || '';
+    if (reqHost) {
+      return `${hostProto}://${reqHost}`;
+    }
+    return 'https://cybervps-space-station.up.railway.app';
+  }
+
   if (pathname === '/install.sh') {
-    const installScriptPath = path.join(__dirname, '../scripts/install-agent.sh');
-    fs.readFile(installScriptPath, 'utf8', (err, data) => {
-      res.writeHead(200, { 'Content-Type': 'text/x-shellscript' });
-      const hostProto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
-      const targetHost = (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost')
-        ? tunnelManager.publicUrl
-        : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
-      const customized = (data || '').replace('SERVER_URL="${1:-http://localhost:8080}"', `SERVER_URL="\${1:-${targetHost}}"`);
+    const canonicalPath = path.join(__dirname, '../install.sh');
+    const fallbackPath = path.join(__dirname, '../scripts/install-agent.sh');
+    const scriptPath = fs.existsSync(canonicalPath) ? canonicalPath : fallbackPath;
+    fs.readFile(scriptPath, 'utf8', (err, data) => {
+      if (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('# Error loading install.sh');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/x-shellscript; charset=utf-8' });
+      const targetHost = resolveTargetHost(req, parsedUrl);
+      let customized = data || '';
+
+      // Universal replacement for default SERVER_URL in all installer scripts
+      customized = customized.replace(
+        /SERVER_URL="\$\{1:-\$\{CYBERVPS_SERVER:-[^}]*\}\}"/g,
+        `SERVER_URL="\${1:-\${CYBERVPS_SERVER:-${targetHost}}}"`
+      );
+      customized = customized.replace(
+        /SERVER_URL="\$\{1:-http:\/\/localhost:8080\}"/g,
+        `SERVER_URL="\${1:-\${CYBERVPS_SERVER:-${targetHost}}}"`
+      );
+      customized = customized.replace(
+        /SERVER_URL="http:\/\/localhost:8080"/g,
+        `SERVER_URL="\${1:-\${CYBERVPS_SERVER:-${targetHost}}}"`
+      );
+      customized = customized.replace(
+        /SERVER_URL="\$\{CYBERVPS_SERVER:-http:\/\/localhost:8080\}"/g,
+        `SERVER_URL="\${CYBERVPS_SERVER:-${targetHost}}"`
+      );
+
+      // Support 1-click bootstrap ticket injection just like install.ps1
+      const queryTicket = parsedUrl.searchParams.get('ticket');
+      const queryToken = parsedUrl.searchParams.get('token');
+      const queryCap = parsedUrl.searchParams.get('capability');
+      const rawCap = queryTicket || queryToken || queryCap;
+      let capability = rawCap ? rawCap.trim().replace(/^['"]+|['"]+$/g, '') : null;
+
+      if (!capability || !isValidEnrollmentToken(capability)) {
+        const ttlSeconds = 3600;
+        const expiresAt = Date.now() + (ttlSeconds * 1000);
+        const expHex = expiresAt.toString(16);
+        const nonce = crypto.randomBytes(8).toString('hex');
+        const sig = crypto.createHmac('sha256', BOOTSTRAP_SECRET).update(`${expHex}:${nonce}`).digest('hex').slice(0, 24);
+        capability = `cvps_boot_${expHex}_${nonce}_${sig}`;
+
+        db.bootstrapCapabilities.set(capability, {
+          ticket: capability,
+          created_at: Date.now(),
+          expires_at: expiresAt,
+          used: false,
+          consumed_by: null,
+          consumed_at: null,
+          issued_by: 'install.sh-auto'
+        });
+        savePersistentState();
+      }
+
+      if (capability && isValidEnrollmentToken(capability)) {
+        customized = customized.replace(
+          /TOKEN="\$\{CYBERVPS_TOKEN:-[^"]*\}"/g,
+          `TOKEN="\${CYBERVPS_TOKEN:-${capability}}"`
+        );
+        customized = customized.replace(
+          /TOKEN="cvps_enroll_master_token"/g,
+          `TOKEN="\${CYBERVPS_TOKEN:-${capability}}"`
+        );
+      }
       res.end(customized);
     });
     return;
@@ -870,10 +954,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-      const hostProto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
-      const targetHost = (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost')
-        ? tunnelManager.publicUrl
-        : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
+      const targetHost = resolveTargetHost(req, parsedUrl);
       
       let customized = (data || '');
       customized = customized.replace(

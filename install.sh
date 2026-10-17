@@ -278,7 +278,15 @@ rm -f "${RUN_DIR}/agent.pid" 2>/dev/null || true
 SERVICE_MODE="nohup"
 SYSTEMD_CONFIGURED=0
 
-if [ "$(id -u)" = "0" ] && [ -d "/etc/systemd/system" ] && command -v systemctl >/dev/null 2>&1; then
+# Detect if systemd is genuinely running as PID 1 (avoids container false starts)
+IS_SYSTEMD_RUNNING=0
+if [ -d "/run/systemd/system" ] && command -v systemctl >/dev/null 2>&1; then
+  if systemctl is-system-running --quiet 2>/dev/null || [ $? -eq 0 ] || [ -S /run/systemd/private ]; then
+    IS_SYSTEMD_RUNNING=1
+  fi
+fi
+
+if [ "$(id -u)" = "0" ] && [ "$IS_SYSTEMD_RUNNING" -eq 1 ]; then
   SERVICE_FILE="/etc/systemd/system/cybervps-agent.service"
   cat <<EOF > "${SERVICE_FILE}"
 [Unit]
