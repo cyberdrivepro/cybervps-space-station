@@ -146,14 +146,18 @@ class IntegrationRegistry {
     if (!provider) throw new Error(`Provider '${id}' not found in registry`);
 
     // Create tracked job if operation is long-running
-    const longRunning = ['create_snapshot', 'verify_integrity', 'restore_snapshot', 'deploy_application', 'tofu_plan', 'tofu_apply', 'ansible_run', 'verify_agent_update'];
+    const longRunning = ['create_snapshot', 'verify_integrity', 'restore_snapshot', 'deploy_application', 'tofu_plan', 'tofu_apply', 'ansible_run', 'verify_agent_update', 'test_all_adapters'];
     let job = null;
     if (longRunning.includes(operation)) {
       job = this.jobTracker.createJob(id, operation, params);
+      this.jobTracker.startJob(job.id);
     }
 
     try {
       const result = await provider.executeOperation(operation, params, job);
+      if (job) {
+        this.jobTracker.completeJob(job.id, result);
+      }
       return {
         success: true,
         provider: id,
@@ -167,6 +171,103 @@ class IntegrationRegistry {
     }
   }
 
+  /**
+   * Run live connectivity tests across all registered open-source adapters.
+   * Employs bounded concurrency queue (default 4 workers) to prevent socket starvation.
+   * Emits live progress and logs to tracked background job.
+   */
+  async testAll(options = {}) {
+    const startTime = Date.now();
+    const concurrency = Math.max(1, Math.min(8, options.concurrency || 4));
+    const providerList = Array.from(this.providers.values());
+    const total = providerList.length;
+
+    const job = this.jobTracker.createJob('all', 'test_all_adapters', {
+      total,
+      concurrency,
+      timestamp: new Date().toISOString()
+    });
+    this.jobTracker.startJob(job.id);
+    this.jobTracker.appendLog(job.id, 'info', `Batch testing ${total} open-source adapters with concurrency ${concurrency}...`);
+
+    const results = {};
+    let completedCount = 0;
+    let connectedCount = 0;
+    let unconfiguredCount = 0;
+    let degradedCount = 0;
+    let failedCount = 0;
+
+    let currentIndex = 0;
+    const runWorker = async () => {
+      while (currentIndex < providerList.length) {
+        const idx = currentIndex++;
+        const provider = providerList[idx];
+        const pid = provider.id;
+
+        try {
+          this.jobTracker.appendLog(job.id, 'info', `Testing adapter [${pid}] (${provider.name})...`);
+          const testRes = await this.testProvider(pid);
+          results[pid] = testRes;
+
+          if (testRes.status === 'connected') {
+            connectedCount++;
+          } else if (testRes.status === 'unconfigured' || testRes.status === 'not_configured') {
+            unconfiguredCount++;
+          } else if (testRes.status === 'degraded') {
+            degradedCount++;
+          } else {
+            failedCount++;
+          }
+        } catch (err) {
+          results[pid] = {
+            success: false,
+            status: 'disconnected',
+            error: err.message
+          };
+          failedCount++;
+          this.jobTracker.appendLog(job.id, 'warn', `Adapter [${pid}] test error: ${err.message}`);
+        } finally {
+          completedCount++;
+          const percent = Math.round((completedCount / total) * 100);
+          this.jobTracker.updateProgress(job.id, percent, `Tested ${completedCount}/${total}: ${provider.name} -> ${results[pid]?.status || 'unknown'}`);
+        }
+      }
+    };
+
+    const workers = [];
+    for (let i = 0; i < concurrency; i++) {
+      workers.push(runWorker());
+    }
+
+    try {
+      await Promise.all(workers);
+      const durationMs = Date.now() - startTime;
+      const summary = {
+        total,
+        concurrency,
+        duration_ms: durationMs,
+        tested: completedCount,
+        connected: connectedCount,
+        unconfigured: unconfiguredCount,
+        degraded: degradedCount,
+        disconnected: failedCount,
+        failed: failedCount,
+        results
+      };
+      this.jobTracker.completeJob(job.id, summary);
+      this.saveToDisk();
+      return {
+        success: true,
+        job_id: job.id,
+        summary,
+        data: results
+      };
+    } catch (err) {
+      this.jobTracker.failJob(job.id, err);
+      throw err;
+    }
+  }
+
   getJobTracker() {
     return this.jobTracker;
   }
@@ -176,6 +277,9 @@ class IntegrationRegistry {
     const categories = {};
     let connectedCount = 0;
     let configuredCount = 0;
+    let unconfiguredCount = 0;
+    let degradedCount = 0;
+    let disconnectedCount = 0;
 
     for (const p of all) {
       if (!categories[p.category]) {
@@ -186,16 +290,31 @@ class IntegrationRegistry {
       if (p.status === 'connected') {
         categories[p.category].connected++;
         connectedCount++;
+      } else if (p.status === 'degraded') {
+        degradedCount++;
+      } else if (p.status === 'unconfigured' || p.status === 'not_configured') {
+        unconfiguredCount++;
+      } else {
+        disconnectedCount++;
       }
       if (p.configured) configuredCount++;
     }
+
+    const allJobs = this.jobTracker.listJobs();
+    const activeJobs = allJobs.filter(j => j.status === 'running' || j.status === 'queued');
+    const failedJobs = allJobs.filter(j => j.status === 'failed');
 
     return {
       total_providers: all.length,
       connected_count: connectedCount,
       configured_count: configuredCount,
+      unconfigured_count: unconfiguredCount,
+      degraded_count: degradedCount,
+      disconnected_count: disconnectedCount,
+      active_jobs_count: activeJobs.length,
+      failed_jobs_count: failedJobs.length,
       categories: Object.values(categories),
-      recent_jobs: this.jobTracker.listJobs().slice(0, 5)
+      recent_jobs: allJobs.slice(0, 5)
     };
   }
 }

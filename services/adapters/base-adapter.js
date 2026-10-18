@@ -10,11 +10,15 @@ const https = require('https');
 const { spawn } = require('child_process');
 
 const ADAPTER_STATUS = {
-  UNCONFIGURED: 'unconfigured',
+  NOT_CONFIGURED: 'not_configured',
+  UNCONFIGURED: 'unconfigured', // backwards compatible alias
+  CONFIGURED_UNCHECKED: 'configured_unchecked',
   CONNECTED: 'connected',
   DEGRADED: 'degraded',
+  DISCONNECTED: 'disconnected',
+  BINARY_MISSING: 'binary_missing',
   UNAUTHORIZED: 'unauthorized',
-  DISCONNECTED: 'disconnected'
+  BLOCKED: 'blocked'
 };
 
 class BaseAdapter {
@@ -94,9 +98,9 @@ class BaseAdapter {
     }
     this.config = merged;
     if (this.isConfigured()) {
-      this.status = ADAPTER_STATUS.DISCONNECTED;
+      this.status = this.lastSync ? this.status : ADAPTER_STATUS.CONFIGURED_UNCHECKED;
     } else {
-      this.status = ADAPTER_STATUS.UNCONFIGURED;
+      this.status = ADAPTER_STATUS.NOT_CONFIGURED;
     }
     return this.getSanitizedConfig();
   }
@@ -127,13 +131,20 @@ class BaseAdapter {
    * Get complete status summary object
    */
   getStatus() {
+    let resolvedStatus = this.status;
+    if (!this.isConfigured()) {
+      resolvedStatus = ADAPTER_STATUS.NOT_CONFIGURED;
+    } else if (resolvedStatus === ADAPTER_STATUS.UNCONFIGURED || resolvedStatus === ADAPTER_STATUS.NOT_CONFIGURED) {
+      resolvedStatus = ADAPTER_STATUS.CONFIGURED_UNCHECKED;
+    }
+
     return {
       id: this.id,
       name: this.name,
       category: this.category,
       description: this.description,
       version: this.version,
-      status: this.status,
+      status: resolvedStatus,
       configured: this.isConfigured(),
       lastSync: this.lastSync,
       lastError: this.lastError,

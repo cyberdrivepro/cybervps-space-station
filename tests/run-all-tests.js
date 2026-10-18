@@ -2049,6 +2049,14 @@ async function runTests() {
   assert(msiExecTest.includes('ALL HARDCORE EXECUTABLE & MSI EXECUTION TESTS PASSED'), 'Hardcore executable and MSI tests must pass');
   console.log('  ✅ Hardcore PE inspection, non-blocking ring buffer execution, MSI 3010 reboot code & process termination verified.');
 
+  // [TEST 51] Testing Remote Desktop Supervisor, RustDesk Control Plane & Ecosystem Hub...
+  console.log('\n[TEST 51] Testing Remote Desktop Supervisor, RustDesk Control Plane & Ecosystem Hub...');
+  const supervisorTest = execSync(`node "${require('path').join(__dirname, 'test-remote-desktop-supervisor-and-hub.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(supervisorTest.includes('ALL REMOTE DESKTOP SUPERVISOR & ECOSYSTEM HUB TESTS PASSED'), 'Remote desktop supervisor and hub tests must pass');
+  console.log('  ✅ Remote Desktop Supervisor, RustDesk Direct VIP, Session 0 recovery & Ecosystem Hub verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2056,7 +2064,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 50 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 51 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

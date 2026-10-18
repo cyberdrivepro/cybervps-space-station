@@ -4422,6 +4422,293 @@ class CyberVPSAgent:
                 "payload": {"request_id": req_id, "success": False, "error": str(e)}
             })
 
+    def _find_rustdesk_binary(self):
+        sys_os = platform.system()
+        if sys_os == "Windows":
+            for cand in [r"C:\Program Files\RustDesk\rustdesk.exe", r"C:\Program Files (x86)\RustDesk\rustdesk.exe"]:
+                if os.path.exists(cand):
+                    return cand
+            if shutil.which("rustdesk"):
+                return shutil.which("rustdesk")
+        else:
+            for cand in ["/usr/bin/rustdesk", "/usr/lib/rustdesk/rustdesk"]:
+                if os.path.exists(cand):
+                    return cand
+            if shutil.which("rustdesk"):
+                return shutil.which("rustdesk")
+        return None
+
+    def _get_rustdesk_info(self):
+        sys_os = platform.system()
+        virtual_ip = getattr(self, "virtual_ip", "") or "10.77.0.x"
+        info = {
+            "installed": False,
+            "running": False,
+            "id": "",
+            "binary_path": "",
+            "direct_ip": virtual_ip,
+            "direct_port": 21118,
+            "direct_link": f"{virtual_ip}:21118",
+            "direct_url": f"rustdesk://{virtual_ip}:21118",
+            "rendezvous_server": ""
+        }
+        rd_bin = self._find_rustdesk_binary()
+        if rd_bin:
+            info["installed"] = True
+            info["binary_path"] = rd_bin
+            try:
+                out = subprocess.check_output([rd_bin, "--get-id"], timeout=3).decode("utf-8", errors="ignore").strip()
+                if out and out.isdigit():
+                    info["id"] = out
+            except Exception:
+                pass
+            if sys_os == "Windows":
+                try:
+                    s_out = subprocess.check_output(["powershell", "-NoProfile", "-Command", "(Get-Service rustdesk -ErrorAction SilentlyContinue).Status"], timeout=3).decode("utf-8", errors="ignore").strip()
+                    info["running"] = ("Running" in s_out or "4" in s_out)
+                except Exception:
+                    pass
+            else:
+                try:
+                    chk = subprocess.run(["systemctl", "is-active", "rustdesk"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
+                    info["running"] = (chk.stdout.decode().strip() == "active")
+                except Exception:
+                    pass
+        return info
+
+    def handle_desktop_diagnostics(self, payload):
+        req_id = payload.get("request_id")
+        try:
+            sys_os = platform.system()
+            priv = self.get_privilege_info() if hasattr(self, "get_privilege_info") else {"is_elevated": False, "user": os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"}
+            virtual_ip = getattr(self, "virtual_ip", "") or "10.77.0.x"
+
+            proc_session_id = 0
+            active_console_id = 0
+            is_session_0 = False
+            if sys_os == "Windows":
+                try:
+                    import ctypes
+                    kernel32 = ctypes.windll.kernel32
+                    sess = ctypes.c_ulong()
+                    kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(sess))
+                    proc_session_id = sess.value
+                    active_console_id = kernel32.WTSGetActiveConsoleSessionId()
+                    is_session_0 = (proc_session_id == 0)
+                except Exception:
+                    pass
+
+            # Safe Single-Frame GDI+ Screen DC Probe
+            gdi_probe = {
+                "available": False,
+                "width": 0,
+                "height": 0,
+                "error": None
+            }
+            if sys_os == "Windows":
+                try:
+                    import ctypes
+                    user32 = ctypes.windll.user32
+                    gdi32 = ctypes.windll.gdi32
+                    sw = user32.GetSystemMetrics(0)
+                    sh = user32.GetSystemMetrics(1)
+                    hScreenDC = user32.GetDC(None)
+                    if hScreenDC and sw > 0 and sh > 0:
+                        memDC = gdi32.CreateCompatibleDC(hScreenDC)
+                        hBmp = gdi32.CreateCompatibleBitmap(hScreenDC, 1, 1)
+                        oldBmp = gdi32.SelectObject(memDC, hBmp)
+                        blt_ok = gdi32.BitBlt(memDC, 0, 0, 1, 1, hScreenDC, 0, 0, 0x00CC0020)
+                        gdi32.SelectObject(memDC, oldBmp)
+                        gdi32.DeleteObject(hBmp)
+                        gdi32.DeleteDC(memDC)
+                        user32.ReleaseDC(None, hScreenDC)
+                        if blt_ok:
+                            gdi_probe["available"] = True
+                            gdi_probe["width"] = sw
+                            gdi_probe["height"] = sh
+                        else:
+                            gdi_probe["error"] = "BitBlt failed to read screen surface (desktop locked or headless)."
+                    else:
+                        if hScreenDC: user32.ReleaseDC(None, hScreenDC)
+                        gdi_probe["error"] = "Unable to acquire screen DC handle."
+                except Exception as e:
+                    gdi_probe["error"] = str(e)
+            elif sys_os == "Linux":
+                import glob
+                has_disp = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or glob.glob("/tmp/.X11-unix/X*"))
+                gdi_probe["available"] = has_disp
+                if not has_disp:
+                    gdi_probe["error"] = "Headless Linux host: No X11/Wayland display found."
+
+            rustdesk_info = self._get_rustdesk_info()
+
+            rdp_info = {
+                "supported": False,
+                "enabled": False,
+                "port": 3389,
+                "service_status": "Unknown",
+                "reason": ""
+            }
+            if sys_os == "Windows":
+                edition_id = ""
+                prod_name = ""
+                if winreg:
+                    try:
+                        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+                        try: prod_name = winreg.QueryValueEx(k, "ProductName")[0]
+                        except Exception: pass
+                        try: edition_id = winreg.QueryValueEx(k, "EditionID")[0]
+                        except Exception: pass
+                        winreg.CloseKey(k)
+                    except Exception: pass
+                is_home = any(x in (edition_id or prod_name).lower() for x in ["home", "core", "starter"])
+                rdp_info["supported"] = not is_home
+                if is_home:
+                    rdp_info["reason"] = f"{prod_name or 'Windows Home'} edition does not support incoming RDP."
+                if winreg:
+                    try:
+                        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Control\Terminal Server")
+                        try:
+                            f_deny = winreg.QueryValueEx(k, "fDenyTSConnections")[0]
+                            rdp_info["enabled"] = (f_deny == 0)
+                        except Exception: pass
+                        winreg.CloseKey(k)
+                    except Exception: pass
+
+            recommendations = []
+            if gdi_probe["available"]:
+                primary_engine = "native_hd"
+                recommendations.append("Native HD GDI+ capture is available and operating normally.")
+            elif rustdesk_info["installed"] and rustdesk_info["running"]:
+                primary_engine = "rustdesk"
+                recommendations.append(f"RustDesk is active. Direct connection available via Virtual IP {virtual_ip}.")
+            elif rdp_info["enabled"]:
+                primary_engine = "rdp"
+                recommendations.append(f"Windows RDP is listening on port 3389 ({virtual_ip}:3389).")
+            elif not priv.get("is_elevated") and is_session_0:
+                primary_engine = "rustdesk"
+                recommendations.append("Agent runs unprivileged in Session 0. RustDesk recommended for 24/7 persistent unattended access.")
+            else:
+                primary_engine = "rustdesk"
+                recommendations.append("Install RustDesk Open Source remote control for robust unattended access.")
+
+            diag_result = {
+                "machine_id": self.machine_id,
+                "os": sys_os,
+                "privilege": priv,
+                "virtual_ip": virtual_ip,
+                "session": {
+                    "proc_session_id": proc_session_id,
+                    "active_console_id": active_console_id,
+                    "is_session_0": is_session_0
+                },
+                "gdi_probe": gdi_probe,
+                "rustdesk": rustdesk_info,
+                "rdp": rdp_info,
+                "primary_engine": primary_engine,
+                "recommendations": recommendations,
+                "timestamp": int(time.time() * 1000)
+            }
+
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": diag_result}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_rustdesk_action(self, payload):
+        req_id = payload.get("request_id")
+        action = (payload.get("action") or "status").lower().strip()
+        params = payload.get("params") or {}
+        sys_os = platform.system()
+
+        try:
+            if action == "status":
+                rd_info = self._get_rustdesk_info()
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "result": rd_info}
+                })
+            elif action == "repair":
+                if sys_os == "Windows":
+                    cmd = "Restart-Service rustdesk -Force -ErrorAction SilentlyContinue; (Get-Service rustdesk -ErrorAction SilentlyContinue).Status"
+                    res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+                    out = res.stdout.decode("utf-8", errors="ignore").strip()
+                    is_running = ("Running" in out or "4" in out)
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": True, "result": {"message": "RustDesk service restarted", "running": is_running, "output": out}}
+                    })
+                else:
+                    res = subprocess.run(["systemctl", "restart", "rustdesk"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": res.returncode == 0, "result": {"message": "RustDesk service restarted"}}
+                    })
+            elif action == "configure":
+                rendezvous = params.get("rendezvous_server") or params.get("host")
+                key = params.get("key") or ""
+                rd_bin = self._find_rustdesk_binary()
+                if not rd_bin:
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {"request_id": req_id, "success": False, "error": "RustDesk is not installed on this machine."}
+                    })
+                    return
+                cfg_args = [rd_bin]
+                if rendezvous:
+                    cfg_args.extend(["--custom-rendezvous-server", rendezvous])
+                if key:
+                    cfg_args.extend(["--key", key])
+                res = subprocess.run(cfg_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "result": {"message": "RustDesk configuration updated", "rendezvous": rendezvous}}
+                })
+            elif action == "install":
+                if sys_os == "Windows":
+                    install_cmd = "winget install --id RustDesk.RustDesk -e --silent --accept-package-agreements --accept-source-agreements"
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {
+                            "request_id": req_id,
+                            "success": True,
+                            "result": {
+                                "message": "RustDesk installation command ready",
+                                "command": install_cmd,
+                                "download_url": "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.1-x86_64.exe",
+                                "silent_args": "--silent-install"
+                            }
+                        }
+                    })
+                else:
+                    self.send_agent_event({
+                        "type": "AgentRpcResponse",
+                        "payload": {
+                            "request_id": req_id,
+                            "success": True,
+                            "result": {
+                                "message": "RustDesk installation ready",
+                                "command": "sudo apt-get update && sudo apt-get install -y rustdesk",
+                                "download_url": "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.1-x86_64.deb"
+                            }
+                        }
+                    })
+            else:
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": False, "error": f"Unknown RustDesk action: {action}"}
+                })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
     def _find_active_wts_session(self):
         if platform.system() != "Windows":
             return None
@@ -5945,6 +6232,88 @@ class CyberVPSAgent:
         except Exception:
             return None
 
+    def _create_fallback_notice_bitmap(self, title_text, notice_text, recommendation_text):
+        """Creates a high-contrast diagnostic frame when physical display surface is unavailable."""
+        if platform.system() != "Windows":
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+
+            class BITMAPINFOHEADER(ctypes.Structure):
+                _fields_ = [
+                    ('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
+                    ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
+                    ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
+                    ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)
+                ]
+
+            w, h = 1280, 720
+            bmi = BITMAPINFOHEADER()
+            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.biWidth = w
+            bmi.biHeight = h
+            bmi.biPlanes = 1
+            bmi.biBitCount = 24
+            bmi.biCompression = 0
+
+            memDC = gdi32.CreateCompatibleDC(None)
+            pBits = ctypes.c_void_p()
+            hBmp = gdi32.CreateDIBSection(memDC, ctypes.byref(bmi), 0, ctypes.byref(pBits), None, 0)
+            if not hBmp:
+                gdi32.DeleteDC(memDC)
+                return None
+
+            oldBmp = gdi32.SelectObject(memDC, hBmp)
+
+            # Dark theme background
+            hBrush = gdi32.CreateSolidBrush(0x001B1512)
+            r_full = wintypes.RECT(0, 0, w, h)
+            user32.FillRect(memDC, ctypes.byref(r_full), hBrush)
+            gdi32.DeleteObject(hBrush)
+
+            # Center card box
+            hCardBrush = gdi32.CreateSolidBrush(0x002B201A)
+            r_card = wintypes.RECT(140, 100, w - 140, h - 100)
+            user32.FillRect(memDC, ctypes.byref(r_card), hCardBrush)
+            gdi32.DeleteObject(hCardBrush)
+
+            # Amber warning border
+            hBorderPen = gdi32.CreatePen(0, 2, 0x0000D0FF)
+            oldPen = gdi32.SelectObject(memDC, hBorderPen)
+            gdi32.MoveToEx(memDC, r_card.left, r_card.top, None)
+            gdi32.LineTo(memDC, r_card.right, r_card.top)
+            gdi32.LineTo(memDC, r_card.right, r_card.bottom)
+            gdi32.LineTo(memDC, r_card.left, r_card.bottom)
+            gdi32.LineTo(memDC, r_card.left, r_card.top)
+            gdi32.SelectObject(memDC, oldPen)
+            gdi32.DeleteObject(hBorderPen)
+
+            gdi32.SetBkMode(memDC, 1)
+
+            # Title
+            gdi32.SetTextColor(memDC, 0x0000FFFF)
+            r_title = wintypes.RECT(r_card.left + 30, r_card.top + 35, r_card.right - 30, r_card.top + 95)
+            user32.DrawTextW(memDC, str(title_text), -1, ctypes.byref(r_title), 0x0001 | 0x0010)
+
+            # Notice
+            gdi32.SetTextColor(memDC, 0x00E0E0E0)
+            r_body = wintypes.RECT(r_card.left + 40, r_card.top + 115, r_card.right - 40, r_card.top + 280)
+            user32.DrawTextW(memDC, str(notice_text), -1, ctypes.byref(r_body), 0x0010)
+
+            # Recommendation
+            gdi32.SetTextColor(memDC, 0x0000FF99)
+            r_rec = wintypes.RECT(r_card.left + 40, r_card.top + 300, r_card.right - 40, r_card.bottom - 40)
+            user32.DrawTextW(memDC, str(recommendation_text), -1, ctypes.byref(r_rec), 0x0010)
+
+            gdi32.SelectObject(memDC, oldBmp)
+            gdi32.DeleteDC(memDC)
+            return hBmp
+        except Exception:
+            return None
+
     def _capture_desktop_image(self, quality=80, monitor_idx=0):
         """Captures full Windows/Linux desktop with real hardware mouse cursor overlay."""
         sys_os = platform.system()
@@ -5996,6 +6365,24 @@ class CyberVPSAgent:
                     if not hScreenDC or w <= 0 or h <= 0:
                         if hScreenDC:
                             user32.ReleaseDC(None, hScreenDC)
+                        fb_bmp = self._create_fallback_notice_bitmap(
+                            "CYBERVPS REMOTE DESKTOP SUPERVISOR",
+                            f"Windows Session 0 Isolation: Background agent service running in Session 0 while active console is Session {active_session}. Direct display surface is locked or detached.",
+                            f"Recommended: Launch RustDesk Direct VIP ({getattr(self, 'virtual_ip', '10.77.0.x')}) or connect via 1-Click RDP Bridge."
+                        )
+                        if fb_bmp:
+                            jpeg_data = self._encode_hbitmap_to_jpeg(fb_bmp, quality=quality)
+                            if jpeg_data:
+                                return {
+                                    "success": True,
+                                    "is_diagnostic_frame": True,
+                                    "width": 1280,
+                                    "height": 720,
+                                    "format": "jpeg",
+                                    "data": jpeg_data,
+                                    "status": "session_0_isolated",
+                                    "error": f"Windows Session 0 Isolation: Background agent in Session 0 (Active console Session {active_session}). Direct capture unavailable."
+                                }
                         return {
                             "success": False,
                             "status": "session_0_isolated",
@@ -6010,6 +6397,24 @@ class CyberVPSAgent:
 
                 hScreenDC = user32.GetDC(None)
                 if not hScreenDC:
+                    fb_bmp = self._create_fallback_notice_bitmap(
+                        "CYBERVPS REMOTE DESKTOP SUPERVISOR",
+                        f"Unable to acquire desktop display context handle. Host system may be locked, display sleeping, or headless in Session {current_session.value}.",
+                        f"Recommended: Launch RustDesk Direct VIP ({getattr(self, 'virtual_ip', '10.77.0.x')}) or connect via 1-Click RDP Bridge."
+                    )
+                    if fb_bmp:
+                        jpeg_data = self._encode_hbitmap_to_jpeg(fb_bmp, quality=quality)
+                        if jpeg_data:
+                            return {
+                                "success": True,
+                                "is_diagnostic_frame": True,
+                                "width": 1280,
+                                "height": 720,
+                                "format": "jpeg",
+                                "data": jpeg_data,
+                                "status": "session_0_isolated" if current_session.value == 0 else "permission_denied",
+                                "error": "Unable to acquire desktop DC handle."
+                            }
                     if current_session.value == 0:
                         return {
                             "success": False,
@@ -6026,18 +6431,38 @@ class CyberVPSAgent:
 
                 # Capture full desktop (SRCCOPY = 0x00CC0020)
                 blt_ok = gdi32.BitBlt(memDC, 0, 0, w, h, hScreenDC, 0, 0, 0x00CC0020)
-                if not blt_ok and current_session.value == 0:
+                if not blt_ok:
                     gdi32.SelectObject(memDC, oldBmp)
                     gdi32.DeleteObject(hBmp)
                     gdi32.DeleteDC(memDC)
                     user32.ReleaseDC(None, hScreenDC)
-                    return {
-                        "success": False,
-                        "status": "session_0_isolated",
-                        "session_id": current_session.value,
-                        "active_console_session": active_session,
-                        "error": f"Windows Session 0 Isolation: BitBlt failed to read display surface from Session 0. Use 1-Click RDP Bridge or run agent in active user session {active_session}."
-                    }
+                    fb_bmp = self._create_fallback_notice_bitmap(
+                        "CYBERVPS REMOTE DESKTOP SUPERVISOR",
+                        f"BitBlt failed to read display surface (Session {current_session.value}, Active console {active_session}). Display surface is currently locked or without interactive monitor.",
+                        f"Recommended: Launch RustDesk Direct VIP ({getattr(self, 'virtual_ip', '10.77.0.x')}) or connect via 1-Click RDP Bridge."
+                    )
+                    if fb_bmp:
+                        jpeg_data = self._encode_hbitmap_to_jpeg(fb_bmp, quality=quality)
+                        if jpeg_data:
+                            return {
+                                "success": True,
+                                "is_diagnostic_frame": True,
+                                "width": 1280,
+                                "height": 720,
+                                "format": "jpeg",
+                                "data": jpeg_data,
+                                "status": "session_0_isolated" if current_session.value == 0 else "permission_denied",
+                                "error": f"BitBlt failed to read display surface from Session {current_session.value}."
+                            }
+                    if current_session.value == 0:
+                        return {
+                            "success": False,
+                            "status": "session_0_isolated",
+                            "session_id": current_session.value,
+                            "active_console_session": active_session,
+                            "error": f"Windows Session 0 Isolation: BitBlt failed to read display surface from Session 0. Use 1-Click RDP Bridge or run agent in active user session {active_session}."
+                        }
+                    return {"success": False, "status": "permission_denied", "error": "BitBlt failed to capture display buffer."}
 
                 # Draw real-time hardware cursor
                 try:
@@ -6553,9 +6978,23 @@ class CyberVPSAgent:
                         "format": res.get("format", "jpeg"),
                         "data": res.get("data"),
                         "fps": measured_fps,
+                        "is_diagnostic_frame": res.get("is_diagnostic_frame", False),
                         "timestamp": int(now * 1000)
                     }
                 })
+                if res.get("is_diagnostic_frame"):
+                    self.send_agent_event({
+                        "type": "AppStreamStatus",
+                        "payload": {
+                            "stream_id": stream_id,
+                            "correlation_id": correlation_id,
+                            "status": res.get("status", "session_0_isolated"),
+                            "error": res.get("error", "Headless display notice active"),
+                            "recommendation": "rustdesk",
+                            "timestamp": int(now * 1000)
+                        }
+                    })
+                    time.sleep(1.0)
             else:
                 self.send_agent_event({
                     "type": "AppStreamStatus",
@@ -7876,6 +8315,10 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_service_action, args=(payload,), daemon=True).start()
         elif c_type == "DesktopStatus":
             threading.Thread(target=self.handle_desktop_status, args=(payload,), daemon=True).start()
+        elif c_type in ["DesktopDiagnostics", "RemoteDesktopDiagnostics"]:
+            threading.Thread(target=self.handle_desktop_diagnostics, args=(payload,), daemon=True).start()
+        elif c_type in ["RustDeskAction", "RemoteDesktopRustDeskAction"]:
+            threading.Thread(target=self.handle_rustdesk_action, args=(payload,), daemon=True).start()
         elif c_type == "DesktopAction":
             threading.Thread(target=self.handle_desktop_action, args=(payload,), daemon=True).start()
         elif c_type in ["DesktopLaunch", "launch_interactive", "launch_gui", "desktop_launch"]:

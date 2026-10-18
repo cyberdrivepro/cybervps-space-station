@@ -1317,9 +1317,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/access/status') return true;
   if (pathname === '/api/v1/terminal/token') return true;
   if (pathname === '/api/v1/apps/stream/token') return true;
-  if (pathname === '/api/v1/remote-desktop/session' || pathname === '/api/v1/desktop/session') return true;
-  if (pathname === '/api/v1/remote-desktop/status') return true;
-  if (pathname === '/api/v1/remote-desktop/provision') return true;
+  if (pathname.startsWith('/api/v1/remote-desktop/') || pathname === '/api/v1/desktop/session') return true;
   if (pathname === '/api/v1/auth/login') return true;
   if (pathname === '/api/v1/auth/logout') return true;
   if (pathname === '/api/v1/auth/status') return true;
@@ -2759,56 +2757,343 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 2A-2C. REMOTE DESKTOP CAPABILITY & ENGINE STATUS
+  // 2A-2C. REMOTE DESKTOP CAPABILITY & ENGINE STATUS
   if (pathname === '/api/v1/remote-desktop/status' && method === 'GET') {
     const machineId = parsedUrl.searchParams.get('machine_id');
-    if (!machineId || !db.machines.has(machineId)) {
+    if (machineId && !db.machines.has(machineId)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Machine not found' }));
+      res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
       return;
     }
-    const m = db.machines.get(machineId);
-    const isOnline = m.status === 'online';
-    const activeStreams = Array.from(db.appStreams.values()).filter(s => s.machineId === machineId);
+
+    const m = machineId ? db.machines.get(machineId) : null;
+    const isOnline = m ? (m.status === 'online') : true;
+    const activeStreams = machineId ? Array.from(db.appStreams.values()).filter(s => s.machineId === machineId) : [];
+
+    const engines = [
+      {
+        id: 'native_hd',
+        name: 'CyberVPS Native HD Desktop Engine',
+        protocol: 'Mesh-Compatible WebSocket/WebRTC',
+        status: isOnline ? 'ready' : 'offline',
+        version: '2.3.0',
+        features: ['full_desktop_capture', 'hardware_jpeg_acceleration', 'sendinput_mouse', 'keyboard_injection', 'clipboard_sync', 'multi_monitor']
+      },
+      {
+        id: 'rustdesk',
+        name: 'RustDesk Open Source Remote Access',
+        protocol: 'RustDesk Direct / Rendezvous',
+        status: isOnline ? 'available' : 'offline',
+        direct_ip: (m && m.virtual_ip) || '10.77.0.x',
+        port: 21118,
+        description: 'Zero-trust P2P & relay unattended workstation remote control'
+      },
+      {
+        id: 'rdp',
+        name: 'Windows Remote Desktop Protocol (RDP)',
+        protocol: 'MS-RDP / NLA',
+        port: 3389,
+        status: (!m || m.os === 'Windows') ? (isOnline ? 'available' : 'offline') : 'unsupported'
+      },
+      {
+        id: 'meshcentral',
+        name: 'MeshCentral MeshAgent Integration',
+        protocol: 'MeshAgent WSS / WebRTC (Apache 2.0)',
+        status: isOnline ? 'available' : 'offline',
+        description: 'Open-source remote computer management by Ylian Saint-Hilaire'
+      },
+      {
+        id: 'guacamole',
+        name: 'Apache Guacamole HTML5 Client',
+        protocol: 'Guacamole Tunnel / HTTP5 Canvas',
+        status: 'available',
+        description: 'Clientless browser-native HTML5 remote desktop gateway'
+      }
+    ];
+
+    const data = {
+      native: engines[0],
+      rustdesk: engines[1],
+      rdp: engines[2],
+      meshcentral: engines[3],
+      guacamole: engines[4],
+      recommended_engine: isOnline ? 'rustdesk' : 'native_hd'
+    };
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
-      machine_id: machineId,
-      status: m.status,
+      machine_id: machineId || null,
+      status: m ? m.status : 'ready',
       desktop_ready: isOnline,
       active_sessions_count: activeStreams.length,
-      engines: [
-        {
-          id: 'native_hd',
-          name: 'CyberVPS Native HD Desktop Engine',
-          protocol: 'Mesh-Compatible WebSocket/WebRTC',
-          status: isOnline ? 'ready' : 'offline',
-          version: '2.3.0',
-          features: ['full_desktop_capture', 'hardware_jpeg_acceleration', 'sendinput_mouse', 'keyboard_injection', 'clipboard_sync', 'multi_monitor']
-        },
-        {
-          id: 'meshcentral',
-          name: 'MeshCentral MeshAgent Integration',
-          protocol: 'MeshAgent WSS / WebRTC (Apache 2.0)',
-          status: 'available',
-          description: 'Open-source remote computer management by Ylian Saint-Hilaire',
-          provision_command: 'curl -fsSL /api/v1/remote-desktop/provision'
-        },
-        {
-          id: 'rdp',
-          name: 'Windows Remote Desktop Protocol (RDP)',
-          protocol: 'MS-RDP / NLA',
-          port: 3389,
-          status: m.os === 'Windows' ? 'available' : 'unsupported'
-        },
-        {
-          id: 'rustdesk',
-          name: 'RustDesk Open Source Remote Access',
-          protocol: 'RustDesk Direct / Rendezvous',
-          status: 'available'
-        }
-      ]
+      virtual_ip: (m && m.virtual_ip) || '10.77.0.x',
+      recommended_engine: data.recommended_engine,
+      engines,
+      data
     }));
+    return;
+  }
+
+  // 2A-2C. REMOTE DESKTOP 360-DEGREE DIAGNOSTICS & DISPLAY PROBE
+  if (pathname === '/api/v1/remote-desktop/diagnostics' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    if (!machineId || !db.machines.has(machineId)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
+      return;
+    }
+    const m = db.machines.get(machineId);
+    const isOnline = m.status === 'online';
+
+    if (!isOnline) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        machine_id: machineId,
+        online: false,
+        status: m.status,
+        data: {
+          machine_id: machineId,
+          host_online: false,
+          os: m.os || 'Unknown',
+          virtual_ip: m.virtual_ip || '10.77.0.x',
+          diagnosis: `Host agent ${m.hostname || machineId} is currently unreachable (status: ${m.status}).`,
+          primary_engine: 'offline',
+          recommendations: [`Host machine '${m.hostname || machineId}' is currently offline. Start CyberVPS agent to enable remote access.`]
+        }
+      }));
+      return;
+    }
+
+    try {
+      const diagRes = await sendAgentRequest(machineId, 'DesktopDiagnostics', {}, 5000);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        machine_id: machineId,
+        online: true,
+        data: diagRes.result || diagRes
+      }));
+    } catch (err) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        machine_id: machineId,
+        online: true,
+        fallback: true,
+        error: err.message,
+        data: {
+          machine_id: machineId,
+          os: m.os || 'Unknown',
+          virtual_ip: m.virtual_ip || '10.77.0.x',
+          primary_engine: 'rustdesk',
+          recommendations: [
+            `Agent probe notice: ${err.message}`,
+            `RustDesk Direct VIP connection recommended on ${m.virtual_ip || '10.77.0.x'}`
+          ]
+        }
+      }));
+    }
+    return;
+  }
+
+  // 2A-2C. REMOTE DESKTOP AUTO-RECOVERY SUPERVISOR
+  if (pathname === '/api/v1/remote-desktop/recover' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const machineId = payload.machine_id;
+        if (!machineId || !db.machines.has(machineId)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
+          return;
+        }
+
+        const m = db.machines.get(machineId);
+
+        // Terminate any hanging streams for this machine
+        let closedStreamsCount = 0;
+        for (const [sId, stream] of db.appStreams.entries()) {
+          if (stream.machineId === machineId) {
+            if (stream.ackTimer) clearTimeout(stream.ackTimer);
+            if (stream.firstFrameTimer) clearTimeout(stream.firstFrameTimer);
+            if (stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
+              stream.wsBrowser.send(JSON.stringify({
+                type: 'status',
+                status: 'stream_reset_by_supervisor',
+                message: 'Remote desktop stream reset by auto-recovery supervisor.'
+              }));
+              try { stream.wsBrowser.close(1000, 'Recovered by supervisor'); } catch (_) {}
+            }
+            db.appStreams.delete(sId);
+            closedStreamsCount++;
+          }
+        }
+
+        let diagData = null;
+        if (m.status === 'online') {
+          try {
+            const diagRpc = await sendAgentRequest(machineId, 'DesktopDiagnostics', {}, 5000);
+            diagData = diagRpc.result || diagRpc;
+          } catch (_) {}
+
+          if (payload.repair_rustdesk) {
+            try {
+              await sendAgentRequest(machineId, 'RustDeskAction', { action: 'repair' }, 8000);
+            } catch (_) {}
+          }
+        }
+
+        logAudit('remote_desktop_recovered', 'operator', machineId, `Auto-recovered remote desktop for ${machineId} (reset ${closedStreamsCount} stale streams)`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          recovered: true,
+          machine_id: machineId,
+          closed_streams_count: closedStreamsCount,
+          diagnostics: diagData,
+          recommended_engine: (diagData && diagData.primary_engine) ? diagData.primary_engine : 'rustdesk',
+          virtual_ip: m.virtual_ip || '10.77.0.x',
+          recommendations: diagData ? diagData.recommendations : ['Stale streams flushed. Ready to reconnect.']
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 2A-2C. RUSTDESK CONTROL PLANE: STATUS
+  if (pathname === '/api/v1/remote-desktop/rustdesk/status' && method === 'GET') {
+    const machineId = parsedUrl.searchParams.get('machine_id');
+    if (!machineId || !db.machines.has(machineId)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
+      return;
+    }
+    const m = db.machines.get(machineId);
+    if (m.status !== 'online') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, machine_id: machineId, online: false, data: { installed: false, running: false, direct_ip: m.virtual_ip || '10.77.0.x' } }));
+      return;
+    }
+    try {
+      const rdRes = await sendAgentRequest(machineId, 'RustDeskAction', { action: 'status' }, 5000);
+      const rdData = rdRes.result || rdRes || {};
+      const directIp = rdData.direct_ip || m.virtual_ip || '10.77.0.x';
+      const directPort = rdData.direct_port || 21118;
+      if (!rdData.direct_link) rdData.direct_link = `${directIp}:${directPort}`;
+      if (!rdData.direct_url) rdData.direct_url = `rustdesk://${directIp}:${directPort}`;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, machine_id: machineId, online: true, data: rdData }));
+    } catch (err) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        machine_id: machineId,
+        online: true,
+        data: {
+          installed: false,
+          running: false,
+          direct_ip: m.virtual_ip || '10.77.0.x',
+          error: err.message
+        }
+      }));
+    }
+    return;
+  }
+
+  // 2A-2C. RUSTDESK CONTROL PLANE: REPAIR / RESTART
+  if (pathname === '/api/v1/remote-desktop/rustdesk/repair' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const machineId = payload.machine_id;
+        if (!machineId || !db.machines.has(machineId)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
+          return;
+        }
+        const repRes = await sendAgentRequest(machineId, 'RustDeskAction', { action: 'repair' }, 10000);
+        logAudit('rustdesk_repaired', 'operator', machineId, `Restarted RustDesk service on ${machineId}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, machine_id: machineId, data: repRes.result || repRes }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 2A-2C. RUSTDESK CONTROL PLANE: CONFIGURE
+  if (pathname === '/api/v1/remote-desktop/rustdesk/configure' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const machineId = payload.machine_id;
+        if (!machineId || !db.machines.has(machineId)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
+          return;
+        }
+        const cfgRes = await sendAgentRequest(machineId, 'RustDeskAction', { action: 'configure', params: payload }, 10000);
+        logAudit('rustdesk_configured', 'operator', machineId, `Configured RustDesk parameters on ${machineId}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, machine_id: machineId, data: cfgRes.result || cfgRes }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 2A-2C. RUSTDESK CONTROL PLANE: CONNECT QUICK PARAMS
+  if (pathname === '/api/v1/remote-desktop/rustdesk/connect' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const machineId = payload.machine_id;
+        if (!machineId || !db.machines.has(machineId)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
+          return;
+        }
+        const m = db.machines.get(machineId);
+        const vip = m.virtual_ip || '10.77.0.x';
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          machine_id: machineId,
+          virtual_ip: vip,
+          rustdesk_uri: `rustdesk://${vip}:21118`,
+          web_url: `http://${vip}:21118`,
+          direct_access: true,
+          instructions: `Open RustDesk and connect directly to ${vip} over the encrypted CyberVPS mesh network.`,
+          data: {
+            direct_ip: vip,
+            direct_port: 21118,
+            direct_link: `${vip}:21118`,
+            direct_url: `rustdesk://${vip}:21118`
+          }
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
     return;
   }
 
@@ -2816,7 +3101,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/v1/remote-desktop/provision' && method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const payload = JSON.parse(body || '{}');
         const auth = verifyAdminAuthorization(req);
@@ -2833,6 +3118,29 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        const m = db.machines.get(machineId);
+        let provisionDetails = {};
+
+        if (engine === 'rustdesk') {
+          if (m.status === 'online') {
+            try {
+              const pRes = await sendAgentRequest(machineId, 'RustDeskAction', { action: 'install' }, 8000);
+              provisionDetails = pRes.result || pRes;
+            } catch (e) {
+              provisionDetails = { note: `Agent command dispatched: ${e.message}` };
+            }
+          }
+        } else if (engine === 'rdp') {
+          if (m.status === 'online') {
+            try {
+              const rdpRes = await sendAgentRequest(machineId, 'DesktopAction', { action: 'enable_rdp' }, 10000);
+              provisionDetails = rdpRes.result || rdpRes;
+            } catch (e) {
+              provisionDetails = { note: `RDP command dispatched: ${e.message}` };
+            }
+          }
+        }
+
         logAudit('remote_desktop_provisioned', auth.role || 'admin', machineId, `Provisioned remote desktop engine ${engine} on ${machineId}`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2841,7 +3149,8 @@ const server = http.createServer(async (req, res) => {
           machine_id: machineId,
           engine,
           status: 'provisioned',
-          message: `Remote desktop engine '${engine}' provisioned successfully on ${machineId}.`,
+          message: `Remote desktop engine '${engine}' provisioned on ${machineId}.`,
+          details: provisionDetails,
           removal_command: `cybervps desktop disable --engine=${engine}`
         }));
       } catch (err) {
@@ -3287,6 +3596,32 @@ const server = http.createServer(async (req, res) => {
     const cancelled = integrationRegistry.getJobTracker().cancelJob(jobId);
     res.writeHead(cancelled ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: cancelled, job_id: jobId }));
+    return;
+  }
+
+  // 4B. Batch Test All 17 Open-Source Adapters (Bounded Concurrency & Background Job Tracking)
+  if (pathname === '/api/v1/integrations/test-all' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const options = {
+          concurrency: payload.concurrency ? parseInt(payload.concurrency, 10) : 4
+        };
+        const result = await integrationRegistry.testAll(options);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          job_id: result.job_id,
+          summary: result.summary,
+          data: result.data
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
     return;
   }
 

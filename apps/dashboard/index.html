@@ -2067,6 +2067,9 @@
                   <button type="button" class="btn btn-secondary active" id="btn-engine-native" onclick="switchDesktopEngine('native')" style="font-size:0.78rem; padding:0.35rem 0.8rem;">
                     🖥️ Native Live HD (GDI+)
                   </button>
+                  <button type="button" class="btn btn-secondary" id="btn-engine-rustdesk" onclick="switchDesktopEngine('rustdesk')" style="font-size:0.78rem; padding:0.35rem 0.8rem;">
+                    🦀 RustDesk Open Source (VIP Mesh)
+                  </button>
                   <button type="button" class="btn btn-secondary" id="btn-engine-meshcentral" onclick="switchDesktopEngine('meshcentral')" style="font-size:0.78rem; padding:0.35rem 0.8rem;">
                     🌐 MeshCentral Web Engine
                   </button>
@@ -2126,6 +2129,11 @@
                   <!-- Clipboard -->
                   <button class="btn btn-secondary" onclick="openDesktopClipboardModal()" title="Sync Windows & Local Clipboard" style="font-size:0.76rem; padding:0.3rem 0.65rem;">
                     📋 Clipboard
+                  </button>
+
+                  <!-- Auto-Recovery & Diagnostics Button -->
+                  <button id="btn-desktop-diagnose" class="btn btn-secondary" onclick="diagnoseAndRecoverDesktop()" title="360-degree display diagnostics and auto-recovery supervisor" style="font-size:0.76rem; padding:0.3rem 0.65rem; color:var(--accent-cyan);">
+                    ⚡ Diagnose & Repair
                   </button>
 
                   <!-- Primary Connect / Disconnect Action Button -->
@@ -2195,6 +2203,9 @@
                     <button class="btn btn-primary" onclick="toggleWebRemoteDesktop()" style="padding:0.45rem 1.25rem; font-size:0.85rem; font-weight:600;">
                       🚀 Connect to Remote Desktop
                     </button>
+                    <button class="btn btn-secondary" onclick="switchDesktopEngine('rustdesk')" style="padding:0.45rem 1rem; font-size:0.82rem; color:var(--accent-cyan); border-color:var(--accent-cyan);" title="Connect via Open-Source RustDesk P2P Mesh">
+                      🦀 RustDesk Open Source
+                    </button>
                     <button class="btn btn-secondary" onclick="provisionMeshCentralEngine(currentDesktopState.machineId)" style="padding:0.45rem 1rem; font-size:0.82rem;" title="Provision MeshCentral Open-Source Remote Desktop">
                       🌐 Provision MeshCentral
                     </button>
@@ -2211,13 +2222,17 @@
                 </div>
 
                 <!-- Error State -->
-                <div id="desktop-ws-error" style="display:none; text-align:center; padding:3rem 1.5rem; max-width:540px;">
+                <div id="desktop-ws-error" style="display:none; text-align:center; padding:3rem 1.5rem; max-width:560px;">
                   <div style="width:54px; height:54px; border-radius:50%; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 1rem; color:#ef4444; font-size:1.6rem;">
                     ⚠️
                   </div>
                   <h3 id="desktop-ws-error-title" style="color:var(--text-primary); font-size:1.05rem; margin-bottom:0.4rem;">Session Initialization Failed</h3>
                   <p id="desktop-ws-error-desc" style="color:var(--text-secondary); font-size:0.82rem; line-height:1.5; margin-bottom:1.25rem;"></p>
-                  <button class="btn btn-primary" onclick="toggleWebRemoteDesktop()">🔄 Retry Connection</button>
+                  <div style="display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
+                    <button class="btn btn-primary" onclick="toggleWebRemoteDesktop()">🔄 Retry Connection</button>
+                    <button class="btn btn-secondary" onclick="diagnoseAndRecoverDesktop()">⚡ Diagnose & Auto-Recover</button>
+                    <button class="btn btn-secondary" onclick="connectRustDeskDirect()" style="color:var(--accent-cyan); border-color:var(--accent-cyan); font-weight:600;">🦀 RustDesk Direct VIP</button>
+                  </div>
                 </div>
 
                 <!-- Canvas Surface -->
@@ -2226,6 +2241,79 @@
               </div>
             </div>
             </div> <!-- /desktop-engine-container-native -->
+
+            <!-- CONTAINER: RUSTDESK NATIVE AGENT & MESH SUPERVISOR -->
+            <div id="desktop-engine-container-rustdesk" style="display:none; margin-bottom:1.5rem;">
+              <div class="card" style="border:1px solid rgba(34,197,94,0.3); background:var(--bg-surface); box-shadow:0 12px 36px rgba(0,0,0,0.4);">
+                <div class="card-header" style="background:linear-gradient(135deg, rgba(34,197,94,0.08), rgba(6,182,212,0.04)); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem;">
+                  <div style="display:flex; align-items:center; gap:0.65rem;">
+                    <div style="width:10px; height:10px; border-radius:50%; background:#22c55e;" id="rustdesk-indicator"></div>
+                    <div>
+                      <div class="card-title" style="color:var(--text-primary); font-size:0.95rem;">
+                        <span>RustDesk Native Agent & Unattended Supervisor</span>
+                        <span class="badge badge-success" style="font-size:0.68rem;">CROSS-PLATFORM VIP MESH</span>
+                      </div>
+                      <div class="card-desc">Hardware-accelerated P2P remote desktop surviving Windows Server reboots, Session 0, and unprivileged user sessions</div>
+                    </div>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <button class="btn btn-secondary" onclick="loadRustDeskEngineState()" style="font-size:0.78rem; padding:0.35rem 0.75rem;">
+                      🔄 Refresh Status
+                    </button>
+                    <button class="btn btn-secondary" onclick="repairRustDeskService()" style="font-size:0.78rem; padding:0.35rem 0.75rem;">
+                      ⚡ Restart Service
+                    </button>
+                    <button class="btn btn-primary" onclick="connectRustDeskDirect()" style="font-size:0.78rem; padding:0.35rem 0.95rem; background:linear-gradient(135deg, #22c55e, #06b6d4);">
+                      🚀 1-Click Launch RustDesk
+                    </button>
+                  </div>
+                </div>
+                <div class="card-body" style="padding:1.5rem; background:#070b14;">
+                  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1.25rem;">
+                    
+                    <!-- Direct Mesh IP Quick Connect Card -->
+                    <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:1.25rem;">
+                      <div style="font-size:0.78rem; font-weight:700; color:var(--accent-cyan); text-transform:uppercase; margin-bottom:0.5rem;">Direct Virtual IP Mesh Link</div>
+                      <div style="font-size:1.15rem; font-family:var(--font-mono); font-weight:700; color:#fff; margin-bottom:0.5rem;" id="rustdesk-vip-label">
+                        10.77.0.x:21118
+                      </div>
+                      <p style="font-size:0.78rem; color:var(--text-muted); line-height:1.5; margin-bottom:1rem;">
+                        Connect directly over the encrypted CyberVPS mesh network without relay bandwidth bottlenecks or public rendezvous timeouts.
+                      </p>
+                      <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                        <button class="btn btn-secondary btn-sm" onclick="copyRustDeskDirectIp()">📋 Copy IP</button>
+                        <button class="btn btn-secondary btn-sm" onclick="connectRustDeskDirect()">🔗 Open rustdesk://</button>
+                        <a id="rustdesk-web-link" href="#" target="_blank" class="btn btn-secondary btn-sm">🌐 Open Web Client</a>
+                      </div>
+                    </div>
+
+                    <!-- Host Agent Status Card -->
+                    <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:1.25rem;">
+                      <div style="font-size:0.78rem; font-weight:700; color:#22c55e; text-transform:uppercase; margin-bottom:0.5rem;">Host Agent Supervision</div>
+                      <div style="display:flex; flex-direction:column; gap:0.4rem; font-size:0.8rem; margin-bottom:1rem;">
+                        <div style="display:flex; justify-content:space-between;">
+                          <span style="color:var(--text-muted);">Binary Installed:</span>
+                          <span id="rustdesk-installed-badge" class="badge badge-subtle">Checking...</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between;">
+                          <span style="color:var(--text-muted);">Service Status:</span>
+                          <span id="rustdesk-service-badge" class="badge badge-subtle">Checking...</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between;">
+                          <span style="color:var(--text-muted);">RustDesk ID:</span>
+                          <span id="rustdesk-id-label" style="font-family:var(--font-mono); font-weight:700; color:var(--accent-cyan);">--</span>
+                        </div>
+                      </div>
+                      <div style="display:flex; gap:0.5rem;">
+                        <button class="btn btn-secondary btn-sm" onclick="configureRustDeskModal()">⚙️ Configure Server/Key</button>
+                        <button class="btn btn-secondary btn-sm" onclick="installRustDeskPrompt()">📥 Install / Update</button>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <!-- CONTAINER: MESHCENTRAL WEB ENGINE -->
             <div id="desktop-engine-container-meshcentral" style="display:none; margin-bottom:1.5rem;">
@@ -7878,7 +7966,7 @@
           stopWebRemoteDesktop(false);
           if (e.code === 4001) {
             showWebDesktopError('Session unauthorized or token expired. Please retry.');
-          } else if (!webDesktopState.firstFrameReceived) {
+          } else if (!webDesktopState.firstFrameReceived && !webDesktopState.hadDiagnosticError) {
             showWebDesktopError('Connection closed before first video frame arrived.');
           }
         };
@@ -8123,18 +8211,20 @@
     function showWebDesktopError(message, title = 'Session Initialization Failed') {
       setWebDesktopUiState('error');
       updateWebDesktopConnectButton(false);
+      webDesktopState.hadDiagnosticError = true;
       const titleEl = document.getElementById('desktop-ws-error-title');
       if (titleEl) titleEl.innerText = title;
       const desc = document.getElementById('desktop-ws-error-desc');
       if (desc) {
-        if (message.includes('Session 0 Isolation') || message.includes('session_0_isolated')) {
-          desc.innerHTML = `${escapeHtml(message)}<div style="margin-top:1rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
-            <button class="btn btn-secondary" style="font-size:0.76rem;" onclick="downloadRdpLauncher('rdp')">⚡ 1-Click RDP Bridge</button>
-            <button class="btn btn-secondary" style="font-size:0.76rem;" onclick="downloadRdpConfig()">📥 .rdp File</button>
-          </div>`;
-        } else {
-          desc.innerText = message;
-        }
+        let actionButtons = `
+          <div style="margin-top:1.25rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
+            <button class="btn btn-primary" style="font-size:0.78rem;" onclick="toggleWebRemoteDesktop()">🔄 Retry Connection</button>
+            <button class="btn btn-secondary" style="font-size:0.78rem; color:var(--accent-cyan); border-color:var(--accent-cyan); font-weight:600;" onclick="diagnoseAndRecoverDesktop()">⚡ Diagnose & Auto-Recover</button>
+            <button class="btn btn-secondary" style="font-size:0.78rem; color:#22c55e; border-color:#22c55e; font-weight:600;" onclick="connectRustDeskDirect()">🦀 RustDesk Direct VIP</button>
+            <button class="btn btn-secondary" style="font-size:0.78rem;" onclick="downloadRdpLauncher('rdp')">⚡ 1-Click RDP Bridge</button>
+          </div>
+        `;
+        desc.innerHTML = `<div style="line-height:1.6; margin-bottom:0.75rem;">${escapeHtml(message)}</div>${actionButtons}`;
       }
       showToast(message, 'error');
     }
@@ -9427,22 +9517,34 @@
 
       grid.innerHTML = filtered.map(p => {
         const icon = PROVIDER_ICONS[p.id] || '⚙️';
-        const status = p.status || 'unconfigured';
+        const rawStatus = (p.status || 'not_configured').toLowerCase();
 
         let badgeClass = 'badge-subtle';
         let badgeLabel = 'STANDBY';
-        if (status === 'connected') {
+        if (rawStatus === 'connected') {
           badgeClass = 'badge-success';
           badgeLabel = 'CONNECTED';
-        } else if (status === 'degraded') {
+        } else if (rawStatus === 'degraded') {
           badgeClass = 'badge-warning';
           badgeLabel = 'DEGRADED';
-        } else if (status === 'unauthorized') {
+        } else if (rawStatus === 'configured_unchecked' || rawStatus === 'configured') {
+          badgeClass = 'badge-info';
+          badgeLabel = 'CONFIGURED';
+        } else if (rawStatus === 'binary_missing') {
+          badgeClass = 'badge-warning';
+          badgeLabel = 'BINARY MISSING';
+        } else if (rawStatus === 'unauthorized') {
           badgeClass = 'badge-danger';
           badgeLabel = 'UNAUTHORIZED';
-        } else if (status === 'disconnected') {
+        } else if (rawStatus === 'blocked') {
+          badgeClass = 'badge-danger';
+          badgeLabel = 'BLOCKED';
+        } else if (rawStatus === 'disconnected') {
           badgeClass = 'badge-danger';
           badgeLabel = 'DISCONNECTED';
+        } else if (rawStatus === 'not_configured') {
+          badgeClass = 'badge-subtle';
+          badgeLabel = 'STANDBY / UNCONFIGURED';
         }
 
         const endpointText = p.endpoint || (p.options && p.options.binaryPath) || 'Zero-install fallback standby';
@@ -9511,18 +9613,30 @@
         const res = await apiRequest(`/api/v1/integrations/${providerId}/test`, { method: 'POST' });
         const data = res.data || {};
         const success = data.success;
-        const status = data.status || (success ? 'connected' : 'disconnected');
+        const status = (data.status || (success ? 'connected' : 'disconnected')).toLowerCase();
         const latency = data.latencyMs ? `${data.latencyMs}ms` : '';
 
         if (badge) {
-          if (success) {
+          if (status === 'connected') {
             badge.className = 'badge badge-success';
             badge.innerText = 'CONNECTED';
+          } else if (status === 'degraded') {
+            badge.className = 'badge badge-warning';
+            badge.innerText = 'DEGRADED';
           } else if (status === 'unauthorized') {
             badge.className = 'badge badge-danger';
             badge.innerText = 'UNAUTHORIZED';
-          } else {
+          } else if (status === 'binary_missing') {
             badge.className = 'badge badge-warning';
+            badge.innerText = 'BINARY MISSING';
+          } else if (status === 'blocked') {
+            badge.className = 'badge badge-danger';
+            badge.innerText = 'BLOCKED';
+          } else if (status === 'not_configured') {
+            badge.className = 'badge badge-subtle';
+            badge.innerText = 'STANDBY / UNCONFIGURED';
+          } else {
+            badge.className = 'badge badge-danger';
             badge.innerText = status.toUpperCase();
           }
         }
@@ -9552,21 +9666,31 @@
       const btn = document.getElementById('btn-test-all-integrations');
       if (btn) {
         btn.disabled = true;
-        btn.innerText = 'Testing All...';
+        btn.innerText = 'Testing All (4 Workers)...';
       }
 
-      showToast('Testing all 17 open-source integration adapters...', 'info');
-      const providers = window.__integrationsCache || [];
-      for (const p of providers) {
-        await testIntegrationConnection(p.id);
+      showToast('Testing all 17 open-source integration adapters (bounded concurrency = 4)...', 'info');
+      try {
+        const res = await apiRequest('/api/v1/integrations/test-all', {
+          method: 'POST',
+          body: JSON.stringify({ concurrency: 4 })
+        });
+        if (res.ok && res.data && res.data.success) {
+          const summary = res.data.summary || {};
+          const msg = `Batch test complete (${summary.duration_ms || 0}ms): ${summary.connected || 0} Connected, ${summary.unconfigured || 0} Standby, ${summary.degraded || 0} Degraded, ${summary.disconnected || 0} Disconnected`;
+          showToast(msg, 'success');
+        } else {
+          showToast('Batch test finished with status: ' + ((res.data && res.data.error) || 'OK'), 'info');
+        }
+      } catch (err) {
+        showToast('Batch test error: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = '⚡ Test All Adapters';
+        }
+        loadIntegrationsHub();
       }
-
-      if (btn) {
-        btn.disabled = false;
-        btn.innerText = '⚡ Test All Adapters';
-      }
-      showToast('All open-source provider health checks completed', 'success');
-      loadIntegrationsHub();
     }
 
     function openIntegrationConfigModal(providerId) {
@@ -9909,23 +10033,183 @@
       if (activeBtn) activeBtn.classList.add('active');
 
       const nativeCont = document.getElementById('desktop-engine-container-native');
+      const rustdeskCont = document.getElementById('desktop-engine-container-rustdesk');
       const meshCont = document.getElementById('desktop-engine-container-meshcentral');
       const guacCont = document.getElementById('desktop-engine-container-guacamole');
       const badge = document.getElementById('desktop-engine-status-badge');
 
       if (nativeCont) nativeCont.style.display = (engine === 'native') ? 'block' : 'none';
+      if (rustdeskCont) rustdeskCont.style.display = (engine === 'rustdesk') ? 'block' : 'none';
       if (meshCont) meshCont.style.display = (engine === 'meshcentral') ? 'block' : 'none';
       if (guacCont) guacCont.style.display = (engine === 'guacamole') ? 'block' : 'none';
 
       if (badge) {
         if (engine === 'native') {
           badge.innerHTML = '<span class="badge badge-cyan" style="font-size:0.72rem;">Zero-Install GDI+ Engine Active</span>';
+        } else if (engine === 'rustdesk') {
+          badge.innerHTML = '<span class="badge badge-success" style="font-size:0.72rem;">RustDesk VIP Mesh Active</span>';
         } else if (engine === 'meshcentral') {
           badge.innerHTML = '<span class="badge badge-purple" style="font-size:0.72rem;">MeshCentral Web Engine Active</span>';
         } else if (engine === 'guacamole') {
           badge.innerHTML = '<span class="badge badge-success" style="font-size:0.72rem;">Apache Guacamole Gateway Active</span>';
         }
       }
+
+      if (engine === 'rustdesk') {
+        loadRustDeskEngineState();
+      }
+    }
+
+    async function loadRustDeskEngineState() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+      try {
+        const res = await apiRequest(`/api/v1/remote-desktop/rustdesk/status?machine_id=${encodeURIComponent(machineId)}`);
+        const data = res.data || {};
+        const vip = data.direct_ip || '10.77.0.x';
+        
+        const vipLabel = document.getElementById('rustdesk-vip-label');
+        if (vipLabel) vipLabel.innerText = `${vip}:21118`;
+
+        const instBadge = document.getElementById('rustdesk-installed-badge');
+        if (instBadge) {
+          instBadge.className = data.installed ? 'badge badge-success' : 'badge badge-danger';
+          instBadge.innerText = data.installed ? 'Installed' : 'Not Installed';
+        }
+
+        const svcBadge = document.getElementById('rustdesk-service-badge');
+        if (svcBadge) {
+          svcBadge.className = data.running ? 'badge badge-success' : 'badge badge-warning';
+          svcBadge.innerText = data.running ? 'Running (24/7)' : 'Stopped';
+        }
+
+        const idLabel = document.getElementById('rustdesk-id-label');
+        if (idLabel) {
+          idLabel.innerText = data.id || 'Mesh P2P Active';
+        }
+
+        const webLink = document.getElementById('rustdesk-web-link');
+        if (webLink) {
+          webLink.href = `http://${vip}:21118`;
+        }
+
+        const indicator = document.getElementById('rustdesk-indicator');
+        if (indicator) {
+          indicator.style.background = data.running ? '#22c55e' : (data.installed ? 'var(--accent-cyan)' : 'var(--text-muted)');
+        }
+      } catch (e) {
+        console.warn('loadRustDeskEngineState error:', e);
+      }
+    }
+
+    async function checkRustDeskStatus() {
+      showToast('Checking RustDesk service and rendezvous status...', 'info');
+      await loadRustDeskEngineState();
+      showToast('RustDesk status refreshed', 'success');
+    }
+
+    async function repairRustDeskService() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+      showToast(`Restarting RustDesk service on host '${machineId}'...`, 'info');
+      try {
+        const res = await apiRequest('/api/v1/remote-desktop/rustdesk/repair', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId })
+        });
+        showToast(res.data?.message || 'RustDesk service restarted successfully', 'success');
+        await loadRustDeskEngineState();
+      } catch (e) {
+        showToast('Repair error: ' + e.message, 'error');
+      }
+    }
+
+    async function connectRustDeskDirect() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+      try {
+        const res = await apiRequest('/api/v1/remote-desktop/rustdesk/connect', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId })
+        });
+        const vip = res.virtual_ip || '10.77.0.x';
+        showToast(`Opening RustDesk direct link to ${vip}...`, 'info');
+        if (res.rustdesk_uri) {
+          window.location.href = res.rustdesk_uri;
+        }
+      } catch (e) {
+        showToast('RustDesk connect error: ' + e.message, 'error');
+      }
+    }
+
+    function copyRustDeskDirectIp() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+      const m = (fleetState && fleetState.machines && fleetState.machines[machineId]) || {};
+      const vip = m.virtual_ip || '10.77.0.x';
+      navigator.clipboard.writeText(vip).then(() => {
+        showToast(`Copied Direct VIP: ${vip}`, 'success');
+      }).catch(() => {
+        prompt('Copy Direct VIP IP:', vip);
+      });
+    }
+
+    async function diagnoseAndRecoverDesktop() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+
+      showToast(`Running 360° diagnostics for ${machineId}...`, 'info');
+      try {
+        const res = await apiRequest(`/api/v1/remote-desktop/diagnostics?machine_id=${encodeURIComponent(machineId)}`);
+        const data = res.data || {};
+        
+        let msg = `Display Context: ${data.gdi_probe?.available ? 'Available' : (data.gdi_probe?.error || 'Unavailable')}\n`;
+        msg += `Session 0: ${data.session?.is_session_0 ? 'YES (Headless)' : 'NO (Interactive)'}\n`;
+        msg += `RustDesk: ${data.rustdesk?.installed ? 'Installed (ID: ' + (data.rustdesk?.id || 'Active') + ')' : 'Not Installed'}\n`;
+        msg += `Primary Recommendation: ${(data.recommendations && data.recommendations[0]) || 'Use RustDesk Direct VIP'}`;
+
+        // Auto-recover stale streams
+        await apiRequest('/api/v1/remote-desktop/recover', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId })
+        });
+
+        alert(`🛰️ CyberVPS Remote Desktop Supervisor\n\n${msg}`);
+        showToast('Diagnostics complete. Stale sessions flushed.', 'success');
+      } catch (e) {
+        showToast('Diagnostics error: ' + e.message, 'error');
+      }
+    }
+
+    function configureRustDeskModal() {
+      const host = prompt('Enter Custom Rendezvous / ID Server (or leave blank for CyberVPS Mesh VIP):', '');
+      if (host !== null) {
+        const select = document.getElementById('desktop-machine-select');
+        const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+        apiRequest('/api/v1/remote-desktop/rustdesk/configure', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId, rendezvous_server: host })
+        }).then(() => {
+          showToast('RustDesk configuration updated', 'success');
+          loadRustDeskEngineState();
+        }).catch(err => {
+          showToast('Configure error: ' + err.message, 'error');
+        });
+      }
+    }
+
+    function installRustDeskPrompt() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+      apiRequest('/api/v1/remote-desktop/provision', {
+        method: 'POST',
+        body: JSON.stringify({ machine_id: machineId, engine: 'rustdesk' })
+      }).then(res => {
+        showToast(res.message || 'RustDesk provisioning dispatched to host agent', 'success');
+        setTimeout(loadRustDeskEngineState, 3000);
+      }).catch(err => {
+        showToast('Install error: ' + err.message, 'error');
+      });
     }
 
     async function checkMeshCentralStatus() {
