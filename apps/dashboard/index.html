@@ -6318,6 +6318,15 @@
       const osLabel = machineObj ? (machineObj.os || (isWin ? 'Windows' : 'Linux')) : (isWin ? 'Windows' : 'Remote');
       const vipLabel = machineObj?.virtual_ip ? ` | VIP: ${machineObj.virtual_ip}` : '';
 
+      if (!forceClear && appState.isTerminalConnecting) {
+        return;
+      }
+      if (!forceClear && appState.activeTerminalWs && (appState.activeTerminalWs.readyState === WebSocket.OPEN || appState.activeTerminalWs.readyState === WebSocket.CONNECTING) && appState.currentTerminalMachineId === machineId) {
+        return;
+      }
+      appState.isTerminalConnecting = true;
+      appState.currentTerminalMachineId = machineId;
+
       appState.isTerminalReady = false;
       updateTerminalQuickChips(machineObj || osLabel);
       setQuickChipsEnabled(false);
@@ -6481,6 +6490,7 @@
         }
         singleUseToken = tokenData.token;
       } catch (authErr) {
+        appState.isTerminalConnecting = false;
         if (appState.activeTerminalToken !== currentSessionToken) return;
         badge.className = 'badge badge-danger';
         badge.innerText = 'Auth Required';
@@ -6509,6 +6519,7 @@
         appState.activeTerminalWs = ws;
 
         ws.onopen = () => {
+          appState.isTerminalConnecting = false;
           if (appState.activeTerminalToken !== currentSessionToken) return;
           badge.className = 'badge badge-warning';
           badge.innerText = 'Starting Shell...';
@@ -6642,6 +6653,7 @@
         };
 
         ws.onerror = () => {
+          appState.isTerminalConnecting = false;
           if (appState.activeTerminalToken !== currentSessionToken) return;
           appState.isTerminalReady = false;
           setQuickChipsEnabled(false);
@@ -6655,6 +6667,7 @@
         };
 
         ws.onclose = () => {
+          appState.isTerminalConnecting = false;
           if (appState.activeTerminalToken !== currentSessionToken) return;
           appState.isTerminalReady = false;
           setQuickChipsEnabled(false);
@@ -6667,6 +6680,7 @@
           }
         };
       } catch (e) {
+        appState.isTerminalConnecting = false;
         appState.isTerminalReady = false;
         setQuickChipsEnabled(false);
         badge.className = 'badge badge-danger';
@@ -8960,7 +8974,7 @@
               const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
               if (firstOnline) select.value = firstOnline.id;
             }
-            if (select.value && (!appState.activeTerminalWs || appState.activeTerminalWs.readyState !== WebSocket.OPEN)) {
+            if (select.value && !appState.isTerminalConnecting && (!appState.activeTerminalWs || (appState.activeTerminalWs.readyState !== WebSocket.OPEN && appState.activeTerminalWs.readyState !== WebSocket.CONNECTING))) {
               initTerminalSession(false);
             }
           }
@@ -17654,6 +17668,9 @@ class TerminalView {
       return;
     }
 
+    if (this.isConnecting) return;
+    this.isConnecting = true;
+
     const profilePref = document.getElementById('term-profile-select')?.value || 'auto';
     const shellPref = document.getElementById('term-shell-select')?.value || 'auto';
 
@@ -17712,6 +17729,7 @@ class TerminalView {
       this.activeWs = ws;
 
       ws.onopen = () => {
+        this.isConnecting = false;
         if (this.activeSessionToken !== sessionCorrelation) return;
         this._setStatus('connecting', 'Bridge established · Initializing shell...', '#00f0ff');
         const sessEl = document.getElementById('term-session-id');
@@ -17800,6 +17818,7 @@ class TerminalView {
       };
 
       ws.onerror = (err) => {
+        this.isConnecting = false;
         if (this.activeSessionToken !== sessionCorrelation) return;
         this.isReady = false;
         this._setStatus('error', 'WebSocket Transport Error', '#ef4444');
@@ -17809,6 +17828,7 @@ class TerminalView {
       };
 
       ws.onclose = (event) => {
+        this.isConnecting = false;
         if (this.activeSessionToken !== sessionCorrelation) return;
         this.isReady = false;
         const reason = event.reason ? ` (${event.reason})` : '';
@@ -17819,6 +17839,7 @@ class TerminalView {
       };
 
     } catch (err) {
+      this.isConnecting = false;
       this.isReady = false;
       this._setStatus('error', `Connection Failed: ${err.message}`, '#ef4444');
       if (this.term) {
@@ -17828,6 +17849,7 @@ class TerminalView {
   }
 
   disconnect() {
+    this.isConnecting = false;
     this.isReady = false;
     if (this.activeWs) {
       try {

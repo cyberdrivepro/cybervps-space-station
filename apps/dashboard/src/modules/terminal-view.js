@@ -298,6 +298,9 @@ class TerminalView {
       return;
     }
 
+    if (this.isConnecting) return;
+    this.isConnecting = true;
+
     const profilePref = document.getElementById('term-profile-select')?.value || 'auto';
     const shellPref = document.getElementById('term-shell-select')?.value || 'auto';
 
@@ -356,6 +359,7 @@ class TerminalView {
       this.activeWs = ws;
 
       ws.onopen = () => {
+        this.isConnecting = false;
         if (this.activeSessionToken !== sessionCorrelation) return;
         this._setStatus('connecting', 'Bridge established · Initializing shell...', '#00f0ff');
         const sessEl = document.getElementById('term-session-id');
@@ -444,6 +448,7 @@ class TerminalView {
       };
 
       ws.onerror = (err) => {
+        this.isConnecting = false;
         if (this.activeSessionToken !== sessionCorrelation) return;
         this.isReady = false;
         this._setStatus('error', 'WebSocket Transport Error', '#ef4444');
@@ -453,6 +458,7 @@ class TerminalView {
       };
 
       ws.onclose = (event) => {
+        this.isConnecting = false;
         if (this.activeSessionToken !== sessionCorrelation) return;
         this.isReady = false;
         const reason = event.reason ? ` (${event.reason})` : '';
@@ -463,6 +469,7 @@ class TerminalView {
       };
 
     } catch (err) {
+      this.isConnecting = false;
       this.isReady = false;
       this._setStatus('error', `Connection Failed: ${err.message}`, '#ef4444');
       if (this.term) {
@@ -472,6 +479,7 @@ class TerminalView {
   }
 
   disconnect() {
+    this.isConnecting = false;
     this.isReady = false;
     if (this.activeWs) {
       try {

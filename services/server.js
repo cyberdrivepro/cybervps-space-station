@@ -7950,6 +7950,23 @@ wssRelay.on('connection', (ws, request) => {
           db.appStreams.delete(sId);
         }
       }
+      for (const [tId, tSess] of db.terminalSessions.entries()) {
+        if (tSess.machine_id === machineId) {
+          if (tSess.shellStartTimer) {
+            clearTimeout(tSess.shellStartTimer);
+            tSess.shellStartTimer = null;
+          }
+          if (tSess.wsBrowser && tSess.wsBrowser.readyState === WebSocket.OPEN) {
+            tSess.wsBrowser.send(JSON.stringify({
+              type: 'status',
+              status: 'disconnected',
+              error: `Host machine '${machineId}' disconnected from Space Station control plane.`
+            }));
+            try { tSess.wsBrowser.close(1001, 'Host disconnected'); } catch (_) {}
+          }
+          db.terminalSessions.delete(tId);
+        }
+      }
     }
   });
 });
@@ -8718,16 +8735,29 @@ function handleAgentMessage(ws, msg) {
 
   else if (type === 'TerminalReady') {
     const sess = db.terminalSessions.get(payload.session_id);
-    if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
-      sess.wsBrowser.send(JSON.stringify({ type: 'ready', ...payload }));
+    if (sess) {
+      sess.ready = true;
+      if (sess.shellStartTimer) {
+        clearTimeout(sess.shellStartTimer);
+        sess.shellStartTimer = null;
+      }
+      if (sess.wsBrowser && sess.wsBrowser.readyState === WebSocket.OPEN) {
+        sess.wsBrowser.send(JSON.stringify({ type: 'ready', ...payload }));
+      }
     }
     return { success: true };
   }
 
   else if (type === 'TerminalExit') {
     const sess = db.terminalSessions.get(payload.session_id);
-    if (sess && sess.wsBrowser.readyState === WebSocket.OPEN) {
-      sess.wsBrowser.send(JSON.stringify({ type: 'exit', ...payload }));
+    if (sess) {
+      if (sess.shellStartTimer) {
+        clearTimeout(sess.shellStartTimer);
+        sess.shellStartTimer = null;
+      }
+      if (sess.wsBrowser && sess.wsBrowser.readyState === WebSocket.OPEN) {
+        sess.wsBrowser.send(JSON.stringify({ type: 'exit', ...payload }));
+      }
     }
     return { success: true };
   }
