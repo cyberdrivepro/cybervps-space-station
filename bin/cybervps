@@ -646,20 +646,54 @@ async function handleServerCommand() {
     } catch (_) {}
 
   } else if (subCmd === 'stop') {
+    let stopped = false;
+    if (process.platform === 'linux') {
+      try {
+        execSync('systemctl --user stop cybervps-server.service', { stdio: 'ignore' });
+        stopped = true;
+      } catch (_) {}
+      try {
+        execSync('systemctl stop cybervps-server.service', { stdio: 'ignore' });
+        stopped = true;
+      } catch (_) {}
+    }
     if (fs.existsSync(PID_FILE)) {
       const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
       if (isPidRunning(pid)) {
         try { process.kill(pid, 'SIGTERM'); } catch (_) {}
-        console.log(`✅ Stopped Control Plane server (PID: ${pid}).`);
-      } else {
-        console.log(`[*] Server PID ${pid} was not running.`);
+        stopped = true;
       }
       try { fs.unlinkSync(PID_FILE); } catch (_) {}
+    }
+    if (stopped) {
+      console.log(`✅ Stopped Control Plane server.`);
     } else {
-      console.log('ℹ️  No server PID file found.');
+      console.log('ℹ️  No running Control Plane server found.');
     }
 
   } else if (subCmd === 'restart') {
+    if (process.platform === 'linux') {
+      let restarted = false;
+      try {
+        const uStat = execSync('systemctl --user is-active cybervps-server.service', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        if (uStat === 'active') {
+          execSync('systemctl --user restart cybervps-server.service', { stdio: 'inherit' });
+          console.log(`✅ Restarted Control Plane server (systemd user service).`);
+          restarted = true;
+        }
+      } catch (_) {}
+      if (!restarted) {
+        try {
+          const sStat = execSync('systemctl is-active cybervps-server.service', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+          if (sStat === 'active') {
+            execSync('systemctl restart cybervps-server.service', { stdio: 'inherit' });
+            console.log(`✅ Restarted Control Plane server (systemd system service).`);
+            restarted = true;
+          }
+        } catch (_) {}
+      }
+      if (restarted) return;
+    }
     args[1] = 'stop';
     await handleServerCommand();
     await new Promise(r => setTimeout(r, 1000));
@@ -732,11 +766,47 @@ WantedBy=default.target
     console.log('================================================================');
     let sPid = null;
     let isRunning = false;
+    let serviceType = '';
     if (fs.existsSync(PID_FILE)) {
       sPid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
       isRunning = isPidRunning(sPid);
+      if (isRunning) serviceType = 'background PID';
     }
-    console.log(`[Status]      ${isRunning ? `RUNNING (PID: ${sPid}) ✅` : 'STOPPED 🔴'}`);
+    if (!isRunning && process.platform === 'linux') {
+      try {
+        const uStat = execSync('systemctl --user is-active cybervps-server.service', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        if (uStat === 'active') {
+          isRunning = true;
+          serviceType = 'systemd user service';
+          try {
+            sPid = parseInt(execSync('systemctl --user show --property MainPID --value cybervps-server.service', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 10);
+          } catch (_) {}
+        }
+      } catch (_) {}
+      if (!isRunning) {
+        try {
+          const sStat = execSync('systemctl is-active cybervps-server.service', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+          if (sStat === 'active') {
+            isRunning = true;
+            serviceType = 'systemd system service';
+            try {
+              sPid = parseInt(execSync('systemctl show --property MainPID --value cybervps-server.service', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 10);
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+    }
+    if (!isRunning) {
+      try {
+        const ping = await fetchJson(`http://127.0.0.1:${port}/health`, 600);
+        if (ping && ping.statusCode === 200) {
+          isRunning = true;
+          serviceType = 'listening process';
+        }
+      } catch (_) {}
+    }
+
+    console.log(`[Status]      ${isRunning ? `RUNNING (PID: ${sPid || 'active'}${serviceType ? `, ${serviceType}` : ''}) ✅` : 'STOPPED 🔴'}`);
     console.log(`[Port]        ${port}`);
     console.log(`[Local URL]   http://127.0.0.1:${port}`);
 
