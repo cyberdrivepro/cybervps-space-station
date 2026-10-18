@@ -16,7 +16,7 @@ class MeshCentralAdapter extends BaseAdapter {
       category: 'remote_access',
       description: 'Open-source web-based remote desktop, terminal, and device control platform.',
       version: '1.1.28',
-      supportedOperations: ['test', 'list_devices', 'create_session_token', 'get_desktop_url', 'get_device_status'],
+      supportedOperations: ['test', 'list_devices', 'create_session_token', 'get_session_token', 'get_desktop_url', 'get_device_status'],
       config: {
         server_url: process.env.MESHCENTRAL_URL || '',
         api_key: process.env.MESHCENTRAL_API_KEY || '',
@@ -121,15 +121,27 @@ class MeshCentralAdapter extends BaseAdapter {
         return [];
       }
 
+      case 'get_session_token':
       case 'create_session_token': {
-        const { node_id, view_only = false, user_id = 'operator' } = params;
-        if (!node_id) throw new Error('node_id is required');
+        if (!this.isConfigured()) {
+          return {
+            success: false,
+            configured: false,
+            status: 'unconfigured',
+            error: 'MeshCentral server URL is not configured. Please configure your MeshCentral instance in the Open-Source Hub.'
+          };
+        }
+
+        const targetNode = params.node_id || params.machine_id;
+        if (!targetNode) throw new Error('machine_id or node_id is required');
+
+        const { view_only = false, user_id = 'operator' } = params;
 
         // Mint audited short-lived single-use ticket (expires in 60s)
         const ticketId = `mc_ticket_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
         const sessionRecord = {
           ticketId,
-          node_id,
+          node_id: targetNode,
           user_id,
           view_only: Boolean(view_only),
           createdAt: Date.now(),
@@ -142,29 +154,38 @@ class MeshCentralAdapter extends BaseAdapter {
         // Construct authenticated single-use URL without revealing admin master credentials
         const base = this.getServerBase();
         const mode = view_only ? 'view' : 'interactive';
-        const desktopUrl = `${base}/default.html?viewonly=${view_only ? 1 : 0}&node=${encodeURIComponent(node_id)}&auth=${ticketId}`;
+        const desktopUrl = `${base}/default.html?viewonly=${view_only ? 1 : 0}&node=${encodeURIComponent(targetNode)}&auth=${ticketId}`;
 
         return {
+          success: true,
+          configured: true,
           session_id: ticketId,
-          node_id,
+          session_token: ticketId,
+          node_id: targetNode,
+          machine_id: targetNode,
           mode,
           expires_in: 60,
-          desktop_url: desktopUrl
+          expires_in_seconds: 60,
+          desktop_url: desktopUrl,
+          web_url: desktopUrl
         };
       }
 
       case 'get_desktop_url': {
-        const { node_id, view_only } = params;
-        return await this.executeOperation('create_session_token', { node_id, view_only });
+        const targetNode = params.node_id || params.machine_id;
+        const { view_only } = params;
+        return await this.executeOperation('create_session_token', { node_id: targetNode, view_only });
       }
 
       case 'get_device_status': {
-        const { node_id } = params;
-        if (!node_id) throw new Error('node_id is required');
+        const targetNode = params.node_id || params.machine_id;
+        if (!targetNode) throw new Error('machine_id or node_id is required');
         return {
-          node_id,
-          server_url: this.getServerBase(),
-          status: this.status === ADAPTER_STATUS.CONNECTED ? 'online' : 'standby'
+          node_id: targetNode,
+          machine_id: targetNode,
+          server_url: this.isConfigured() ? this.getServerBase() : null,
+          configured: this.isConfigured(),
+          status: this.status === ADAPTER_STATUS.CONNECTED ? 'online' : (this.isConfigured() ? 'standby' : 'unconfigured')
         };
       }
 

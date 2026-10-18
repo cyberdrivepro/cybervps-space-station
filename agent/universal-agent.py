@@ -5205,14 +5205,68 @@ class CyberVPSAgent:
                 from ctypes import wintypes
                 user32 = ctypes.windll.user32
                 gdi32 = ctypes.windll.gdi32
+                kernel32 = ctypes.windll.kernel32
+
+                # Attach to interactive window station and desktop
+                try:
+                    user32.OpenWindowStationW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL, wintypes.DWORD]
+                    user32.OpenWindowStationW.restype = wintypes.HANDLE
+                    user32.SetProcessWindowStation.argtypes = [wintypes.HANDLE]
+                    user32.SetProcessWindowStation.restype = wintypes.BOOL
+                    user32.OpenDesktopW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                    user32.OpenDesktopW.restype = wintypes.HANDLE
+                    user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
+                    user32.SetThreadDesktop.restype = wintypes.BOOL
+
+                    hWs = user32.OpenWindowStationW("winsta0", False, 0x37F)
+                    if hWs:
+                        user32.SetProcessWindowStation(hWs)
+                    hDesk = user32.OpenDesktopW("default", 0, False, 0x1FF)
+                    if hDesk:
+                        user32.SetThreadDesktop(hDesk)
+                except Exception:
+                    pass
+
+                # Check Session 0 Isolation
+                current_session = wintypes.DWORD(0)
+                try:
+                    current_pid = kernel32.GetCurrentProcessId()
+                    kernel32.ProcessIdToSessionId(current_pid, ctypes.byref(current_session))
+                    active_session = kernel32.WTSGetActiveConsoleSessionId()
+                except Exception:
+                    active_session = 0xFFFFFFFF
 
                 w = user32.GetSystemMetrics(0) # SM_CXSCREEN
                 h = user32.GetSystemMetrics(1) # SM_CYSCREEN
+
+                # Detect session 0 isolation when service has no interactive display surface
+                if current_session.value == 0 and active_session != 0 and active_session != 0xFFFFFFFF:
+                    hScreenDC = user32.GetDC(None)
+                    if not hScreenDC or w <= 0 or h <= 0:
+                        if hScreenDC:
+                            user32.ReleaseDC(None, hScreenDC)
+                        return {
+                            "success": False,
+                            "status": "session_0_isolated",
+                            "session_id": current_session.value,
+                            "active_console_session": active_session,
+                            "error": f"Windows Session 0 Isolation: Background agent is running as a SYSTEM service in Session 0 while active console is Session {active_session}. Session 0 cannot directly capture Session {active_session} display. Use 1-Click RDP Bridge or run the agent in the active user console session."
+                        }
+                    user32.ReleaseDC(None, hScreenDC)
+
                 if w <= 0 or h <= 0:
                     w, h = 1920, 1080
 
                 hScreenDC = user32.GetDC(None)
                 if not hScreenDC:
+                    if current_session.value == 0:
+                        return {
+                            "success": False,
+                            "status": "session_0_isolated",
+                            "session_id": current_session.value,
+                            "active_console_session": active_session,
+                            "error": f"Windows Session 0 Isolation: Unable to acquire desktop DC handle from Session 0 (Active user console is Session {active_session}). Use 1-Click RDP Bridge or launch agent in user session."
+                        }
                     return {"success": False, "status": "permission_denied", "error": "Unable to acquire desktop DC handle."}
 
                 memDC = gdi32.CreateCompatibleDC(hScreenDC)
@@ -5220,7 +5274,19 @@ class CyberVPSAgent:
                 oldBmp = gdi32.SelectObject(memDC, hBmp)
 
                 # Capture full desktop (SRCCOPY = 0x00CC0020)
-                gdi32.BitBlt(memDC, 0, 0, w, h, hScreenDC, 0, 0, 0x00CC0020)
+                blt_ok = gdi32.BitBlt(memDC, 0, 0, w, h, hScreenDC, 0, 0, 0x00CC0020)
+                if not blt_ok and current_session.value == 0:
+                    gdi32.SelectObject(memDC, oldBmp)
+                    gdi32.DeleteObject(hBmp)
+                    gdi32.DeleteDC(memDC)
+                    user32.ReleaseDC(None, hScreenDC)
+                    return {
+                        "success": False,
+                        "status": "session_0_isolated",
+                        "session_id": current_session.value,
+                        "active_console_session": active_session,
+                        "error": f"Windows Session 0 Isolation: BitBlt failed to read display surface from Session 0. Use 1-Click RDP Bridge or run agent in active user session {active_session}."
+                    }
 
                 # Draw real-time hardware cursor
                 try:
@@ -5238,11 +5304,9 @@ class CyberVPSAgent:
                 b64_data = self._encode_hbitmap_to_jpeg(hBmp, quality=quality)
                 fmt = "jpeg"
 
-                # Fallback to PIL if GDI+ was not available
+                # Fallback to DIBits / PIL / pure raw BMP if GDI+ was not available
                 if not b64_data:
                     try:
-                        from PIL import Image
-                        import io
                         class BITMAPINFOHEADER(ctypes.Structure):
                             _fields_ = [('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
                                         ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
@@ -5254,12 +5318,30 @@ class CyberVPSAgent:
                         bmi.biHeight = -h
                         bmi.biPlanes = 1
                         bmi.biBitCount = 32
-                        buf = ctypes.create_string_buffer(w * h * 4)
+                        bmi.biCompression = 0
+                        buf_size = w * h * 4
+                        buf = ctypes.create_string_buffer(buf_size)
                         gdi32.GetDIBits(memDC, hBmp, 0, h, buf, ctypes.byref(bmi), 0)
-                        img = Image.frombuffer('RGBA', (w, h), buf.raw, 'raw', 'BGRA', 0, 1)
-                        out_io = io.BytesIO()
-                        img.convert('RGB').save(out_io, format='JPEG', quality=quality)
-                        b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
+                        raw_bytes = buf.raw
+
+                        try:
+                            from PIL import Image
+                            import io
+                            img = Image.frombuffer('RGBA', (w, h), raw_bytes, 'raw', 'BGRA', 0, 1)
+                            out_io = io.BytesIO()
+                            img.convert('RGB').save(out_io, format='JPEG', quality=quality)
+                            b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
+                            fmt = "jpeg"
+                        except Exception:
+                            import struct
+                            file_size = 54 + (w * h * 3)
+                            bmp_hdr = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
+                            dib_hdr = struct.pack('<IIIHHIIIIII', 40, w, h, 1, 24, 0, w * h * 3, 2835, 2835, 0, 0)
+                            rgb_bytes = bytearray(w * h * 3)
+                            for i in range(w * h):
+                                rgb_bytes[i*3 : i*3+3] = raw_bytes[i*4 : i*4+3]
+                            b64_data = base64.b64encode(bmp_hdr + dib_hdr + rgb_bytes).decode('ascii')
+                            fmt = "bmp"
                     except Exception:
                         pass
 
@@ -5671,6 +5753,8 @@ class CyberVPSAgent:
                     time.sleep(1.0)
                     if pid and not self.is_pid_alive(pid):
                         break
+                elif res.get("status") in ["session_0_isolated", "permission_denied", "no_display"]:
+                    time.sleep(2.0)
 
             elapsed = time.time() - t0
             frame_budget = 1.0 / max(1, curr_fps)

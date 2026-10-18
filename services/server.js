@@ -3124,6 +3124,18 @@ const server = http.createServer(async (req, res) => {
         });
 
         const files = db.pillarProtectedFiles.get(machine_id) || [];
+        if (files.length === 0) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            machine_id,
+            verified_count: 0,
+            tampered_count: 0,
+            error: 'No files registered under Obsidian Pillar on this machine. Protect a file first.'
+          }));
+          return;
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
@@ -3220,6 +3232,7 @@ const server = http.createServer(async (req, res) => {
       success: true,
       total: providers.length,
       data: providers,
+      providers: providers,
       summary: integrationRegistry.getHubSummary()
     }));
     return;

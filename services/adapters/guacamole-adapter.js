@@ -16,7 +16,7 @@ class GuacamoleAdapter extends BaseAdapter {
       category: 'remote_access',
       description: 'Clientless remote desktop gateway supporting RDP, VNC, and SSH via HTML5.',
       version: '1.5.4',
-      supportedOperations: ['test', 'list_connections', 'create_connection', 'mint_client_token', 'delete_connection'],
+      supportedOperations: ['test', 'list_connections', 'create_connection', 'mint_client_token', 'get_connection_token', 'delete_connection'],
       config: {
         server_url: process.env.GUACAMOLE_URL || '',
         username: process.env.GUACAMOLE_USER || 'guacadmin',
@@ -159,13 +159,27 @@ class GuacamoleAdapter extends BaseAdapter {
         };
       }
 
+      case 'get_connection_token':
       case 'mint_client_token': {
-        const { connection_id } = params;
-        if (!connection_id) throw new Error('connection_id is required');
+        if (!this.isConfigured()) {
+          return {
+            success: false,
+            configured: false,
+            status: 'unconfigured',
+            error: 'Apache Guacamole server URL, username, or password is not configured. Please configure Guacamole in the Open-Source Hub.'
+          };
+        }
+
+        const connId = params.connection_id || params.machine_id;
+        if (!connId) throw new Error('connection_id or machine_id is required');
+
         const token = await this.authenticate();
-        const clientUrl = `${this.getServerBase()}/#/client/${encodeURIComponent(connection_id)}?token=${token}`;
+        const clientUrl = `${this.getServerBase()}/#/client/${encodeURIComponent(connId)}?token=${token}`;
         return {
-          connection_id,
+          success: true,
+          configured: true,
+          connection_id: connId,
+          machine_id: params.machine_id || connId,
           token,
           client_url: clientUrl,
           expires_in: 300

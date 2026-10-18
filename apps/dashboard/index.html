@@ -5345,7 +5345,10 @@
       const selectDesktop = document.getElementById('desktop-machine-select');
       const selectSec = document.getElementById('security-machine-select');
 
-      const modalOpts = appState.machines.map(m => `<option value="${m.id}">${escapeHtml(m.friendly_name || m.hostname || m.id)} (${m.os || 'Linux'})</option>`).join('');
+      const modalOpts = appState.machines.map(m => {
+        const ipTag = m.virtual_ip ? ` (${m.virtual_ip})` : '';
+        return `<option value="${m.id}">${escapeHtml(m.friendly_name || m.hostname || m.id)}${ipTag} (${m.os || 'Linux'})</option>`;
+      }).join('');
       if (selectModal) {
         const cur = selectModal.value;
         selectModal.innerHTML = modalOpts || '<option value="">No machines available</option>';
@@ -5356,7 +5359,8 @@
         const isOnline = m.status === 'online';
         const icon = isOnline ? '🟢' : '⚪';
         const statusText = isOnline ? 'ONLINE' : 'OFFLINE';
-        return `<option value="${m.id}">${icon} ${escapeHtml(m.friendly_name || m.hostname || m.id)} [${statusText} - ${m.os || 'Linux'}]</option>`;
+        const ipTag = m.virtual_ip ? ` (${m.virtual_ip})` : (m.public_ip ? ` (${m.public_ip})` : ` (${m.id.slice(0, 8)})`);
+        return `<option value="${m.id}">${icon} ${escapeHtml(m.friendly_name || m.hostname || m.id)}${ipTag} [${statusText} - ${m.os || 'Linux'}]</option>`;
       }).join('');
 
       [selectTerm, selectDetails, selectFm, selectSvc, selectDesktop, selectSec].forEach(sel => {
@@ -6534,7 +6538,21 @@
         return;
       }
 
+      // Selected Device First: If target machine changed, immediately terminate prior live stream and reset external engine sessions
+      if (webDesktopState.machineId && webDesktopState.machineId !== machineId) {
+        stopWebRemoteDesktop(true);
+        const meshIframe = document.getElementById('meshcentral-iframe');
+        if (meshIframe) { meshIframe.style.display = 'none'; meshIframe.src = 'about:blank'; }
+        const meshStandby = document.getElementById('meshcentral-standby');
+        if (meshStandby) meshStandby.style.display = 'block';
+        const guacIframe = document.getElementById('guacamole-iframe');
+        if (guacIframe) { guacIframe.style.display = 'none'; guacIframe.src = 'about:blank'; }
+        const guacStandby = document.getElementById('guacamole-standby');
+        if (guacStandby) guacStandby.style.display = 'block';
+      }
+
       currentDesktopState.machineId = machineId;
+      webDesktopState.machineId = machineId;
       const m = appState.machines.find(x => x.id === machineId);
       const hostLabel = m ? (m.friendly_name || m.hostname || m.id) : machineId;
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
@@ -7249,10 +7267,12 @@
           const badge = document.getElementById('desktop-ws-state-badge');
           if (badge) {
             badge.className = 'badge badge-cyan';
-            badge.innerText = 'Connected';
+            badge.innerText = 'Relay Linked';
           }
           const dot = document.getElementById('desktop-ws-status-indicator');
-          if (dot) dot.style.background = 'var(--status-success)';
+          if (dot) dot.style.background = 'var(--accent-cyan)';
+          const loadingDesc = document.getElementById('desktop-ws-loading-desc');
+          if (loadingDesc) loadingDesc.innerText = 'Relay connected. Waiting for host desktop frame...';
 
           // Start RTT Ping
           webDesktopState.lastPingSent = performance.now();
@@ -7307,6 +7327,15 @@
       if (msg.type === 'stage') {
         if (msg.stage === 'ws_connected') {
           webDesktopState.streamId = msg.stream_id;
+          const loadingDesc = document.getElementById('desktop-ws-loading-desc');
+          if (loadingDesc) loadingDesc.innerText = 'Relay stream ready. Requesting host agent capture worker...';
+        } else if (msg.stage === 'agent_notified') {
+          const loadingDesc = document.getElementById('desktop-ws-loading-desc');
+          if (loadingDesc) {
+            loadingDesc.innerText = msg.agent_online
+              ? 'Agent notified. Awaiting hardware desktop frame...'
+              : 'Target host is currently offline or reconnecting...';
+          }
         }
         return;
       }
@@ -7314,8 +7343,18 @@
       if (msg.type === 'status') {
         if (msg.status === 'unauthorized') {
           showWebDesktopError('Unauthorized: ' + (msg.error || 'Token expired'));
+        } else if (msg.status === 'session_0_isolated') {
+          showWebDesktopError(msg.error || 'Windows Session 0 Isolation: Background service cannot capture Session 1 display directly. Use 1-Click RDP Bridge or run agent in active user session.', 'Windows Session 0 Isolation Detected');
+        } else if (msg.status === 'permission_denied') {
+          showWebDesktopError(msg.error || 'Permission Denied: Unable to acquire display context.', 'Display Access Denied');
+        } else if (msg.status === 'capture_encode_failed') {
+          showWebDesktopError(msg.error || 'Capture Failure: Unable to encode desktop frame buffer.', 'Capture Encoding Failed');
+        } else if (msg.status === 'no_display') {
+          showWebDesktopError(msg.error || 'Display Unavailable: No active X11/Wayland or physical display found.', 'Headless Host Display');
         } else if (msg.status === 'error' || msg.status === 'disconnected') {
           showWebDesktopError(msg.error || 'Host agent disconnected');
+        } else if (msg.error) {
+          showWebDesktopError(msg.error);
         }
         return;
       }
@@ -7468,11 +7507,22 @@
       }
     }
 
-    function showWebDesktopError(message) {
+    function showWebDesktopError(message, title = 'Session Initialization Failed') {
       setWebDesktopUiState('error');
       updateWebDesktopConnectButton(false);
+      const titleEl = document.getElementById('desktop-ws-error-title');
+      if (titleEl) titleEl.innerText = title;
       const desc = document.getElementById('desktop-ws-error-desc');
-      if (desc) desc.innerText = message;
+      if (desc) {
+        if (message.includes('Session 0 Isolation') || message.includes('session_0_isolated')) {
+          desc.innerHTML = `${escapeHtml(message)}<div style="margin-top:1rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
+            <button class="btn btn-secondary" style="font-size:0.76rem;" onclick="downloadRdpLauncher('rdp')">⚡ 1-Click RDP Bridge</button>
+            <button class="btn btn-secondary" style="font-size:0.76rem;" onclick="downloadRdpConfig()">📥 .rdp File</button>
+          </div>`;
+        } else {
+          desc.innerText = message;
+        }
+      }
       showToast(message, 'error');
     }
 
@@ -8676,7 +8726,7 @@
         const res = await apiRequest('/api/v1/integrations');
         if (res.ok && res.data) {
           const payload = res.data;
-          const providers = payload.providers || [];
+          const providers = Array.isArray(payload) ? payload : (payload.providers || payload.data || []);
           window.__integrationsCache = providers;
 
           // Update summary KPI counters
