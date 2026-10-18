@@ -143,7 +143,17 @@ class TunnelManager {
     // 3. Launch cloudflared tunnel
     console.log(`[*] Starting Cloudflare Quick Tunnel using ${cloudflaredBin}...`);
     return new Promise((resolve, reject) => {
-      const child = spawn(cloudflaredBin, ['tunnel', '--url', `http://127.0.0.1:${this.port}`], {
+      let settled = false;
+      let timeoutHandle = null;
+
+      // Use --protocol http2 to avoid UDP QUIC blockages on cloud VMs/containers
+      // Use --no-autoupdate to avoid hang on update checks
+      const child = spawn(cloudflaredBin, [
+        'tunnel',
+        '--protocol', 'http2',
+        '--no-autoupdate',
+        '--url', `http://127.0.0.1:${this.port}`
+      ], {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
@@ -151,14 +161,25 @@ class TunnelManager {
       let discoveredUrl = null;
       let errorLog = '';
 
-      const urlRegex = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/i;
+      // Must NOT match https://api.trycloudflare.com (printed in cloudflared logs)
+      const urlRegex = /https:\/\/(?!api\.)([a-zA-Z0-9-]+\.trycloudflare\.com)/i;
+
+      const cleanup = () => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = null;
+        }
+      };
 
       const onData = (data) => {
+        if (settled) return;
         const text = data.toString();
         errorLog += text;
         const match = text.match(urlRegex);
         if (match && !discoveredUrl) {
           discoveredUrl = match[0];
+          settled = true;
+          cleanup();
           console.log(`[+] Cloudflare Quick Tunnel established: ${discoveredUrl}`);
           resolve({
             provider: 'cloudflare',
@@ -172,20 +193,31 @@ class TunnelManager {
       child.stderr.on('data', onData);
 
       child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this.activeChild = null;
         reject(err);
       });
 
       child.on('exit', (code) => {
-        if (!discoveredUrl) {
-          reject(new Error(`cloudflared exited with code ${code}. Log: ${errorLog.slice(-300)}`));
-        }
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this.activeChild = null;
+        reject(new Error(`cloudflared exited with code ${code}. Log: ${errorLog.slice(-300)}`));
       });
 
       // 15-second timeout for quick tunnel creation
-      setTimeout(() => {
-        if (!discoveredUrl) {
-          reject(new Error('Cloudflare tunnel URL acquisition timed out.'));
-        }
+      timeoutHandle = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        try {
+          child.kill('SIGTERM');
+        } catch (_) {}
+        this.activeChild = null;
+        reject(new Error('Cloudflare tunnel URL acquisition timed out.'));
       }, 15000);
     });
   }
@@ -243,6 +275,9 @@ class TunnelManager {
       }
 
       console.log('[*] Testing Pinggy SSH tunnel fallback...');
+      let settled = false;
+      let timeoutHandle = null;
+
       const child = spawn('ssh', [
         '-o', 'StrictHostKeyChecking=no',
         '-o', 'ServerAliveInterval=30',
@@ -255,11 +290,21 @@ class TunnelManager {
       let discoveredUrl = null;
       const urlRegex = /https:\/\/[a-zA-Z0-9-]+\.(a\.pinggy\.link|pinggy\.link|free\.pinggy\.link)/i;
 
+      const cleanup = () => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = null;
+        }
+      };
+
       const onData = (data) => {
+        if (settled) return;
         const text = data.toString();
         const match = text.match(urlRegex);
         if (match && !discoveredUrl) {
           discoveredUrl = match[0];
+          settled = true;
+          cleanup();
           console.log(`[+] Pinggy tunnel established: ${discoveredUrl}`);
           resolve({
             provider: 'pinggy',
@@ -272,12 +317,31 @@ class TunnelManager {
       child.stdout.on('data', onData);
       child.stderr.on('data', onData);
 
-      child.on('exit', (code) => {
-        if (!discoveredUrl) reject(new Error(`Pinggy ssh exited with code ${code}`));
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this.activeChild = null;
+        reject(err);
       });
 
-      setTimeout(() => {
-        if (!discoveredUrl) reject(new Error('Pinggy tunnel timeout'));
+      child.on('exit', (code) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this.activeChild = null;
+        reject(new Error(`Pinggy ssh exited with code ${code}`));
+      });
+
+      timeoutHandle = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        try {
+          child.kill('SIGTERM');
+        } catch (_) {}
+        this.activeChild = null;
+        reject(new Error('Pinggy tunnel timeout'));
       }, 10000);
     });
   }

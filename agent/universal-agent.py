@@ -34,6 +34,12 @@ import hmac
 import hashlib
 import binascii
 
+def _iso_now():
+    try:
+        return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    except Exception:
+        return _iso_now()
+
 # Guard against None stdio streams on Windows (e.g. under pythonw or windowless subsystems)
 if sys.stdout is None:
     try:
@@ -702,7 +708,7 @@ class CyberVPSAgent:
         self.backend_pool = []
         if self.server_url:
             self.backend_pool.append(self.server_url)
-        for def_b in ["https://cybervps-space-station.up.railway.app"]:
+        for def_b in ["http://127.0.0.1:8080", "https://cybervps-space-station.up.railway.app"]:
             if def_b not in self.backend_pool:
                 self.backend_pool.append(def_b)
         self.backend_index = 0
@@ -909,6 +915,21 @@ class CyberVPSAgent:
                         data = json.load(f)
                         if isinstance(data, list):
                             for u in data:
+                                u_clean = str(u).strip().rstrip("/")
+                                if u_clean and "cybervps-render-control" not in u_clean and u_clean not in self.backend_pool:
+                                    self.backend_pool.append(u_clean)
+            except Exception:
+                pass
+            try:
+                cfg_file = os.path.join(c_dir, "config.json")
+                if os.path.exists(cfg_file):
+                    with open(cfg_file, "r", encoding="utf-8") as f:
+                        cfg_data = json.load(f)
+                        if isinstance(cfg_data, dict):
+                            s_list = cfg_data.get("server_urls") or []
+                            if cfg_data.get("server_url"):
+                                s_list.append(cfg_data.get("server_url"))
+                            for u in s_list:
                                 u_clean = str(u).strip().rstrip("/")
                                 if u_clean and "cybervps-render-control" not in u_clean and u_clean not in self.backend_pool:
                                     self.backend_pool.append(u_clean)
@@ -1167,7 +1188,7 @@ class CyberVPSAgent:
             "path_exists": dir_exists,
             "verification_status": ver_status,
             "verification_reason": ver_reason,
-            "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+            "last_heartbeat": _iso_now(),
             "ports_detected": []
         }
 
@@ -1208,7 +1229,7 @@ class CyberVPSAgent:
                     "path_exists": ssh_exists,
                     "verification_status": "verified_on_disk" if ssh_exists else "port_listener_detected",
                     "verification_reason": "Listening on port 22; physical binary confirmed." if ssh_exists else "Listening on port 22.",
-                    "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                    "last_heartbeat": _iso_now(),
                     "ports_detected": [22]
                 })
         except Exception:
@@ -1247,7 +1268,7 @@ class CyberVPSAgent:
                         "path_exists": True,
                         "verification_status": "verified_on_disk",
                         "verification_reason": "RDP Listener active on port 3389; Windows TermService verified.",
-                        "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                        "last_heartbeat": _iso_now(),
                         "ports_detected": [3389]
                     })
             except Exception:
@@ -1285,7 +1306,7 @@ class CyberVPSAgent:
                     "path_exists": True,
                     "verification_status": "verified_on_disk",
                     "verification_reason": "Docker engine binary / socket discovered on host filesystem.",
-                    "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                    "last_heartbeat": _iso_now(),
                     "ports_detected": [2375]
                 })
         except Exception:
@@ -1324,7 +1345,7 @@ class CyberVPSAgent:
                         "path_exists": True,
                         "verification_status": "port_listener_detected",
                         "verification_reason": f"Active listener detected on TCP port {web_port}.",
-                        "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                        "last_heartbeat": _iso_now(),
                         "ports_detected": [web_port]
                     })
                     break
@@ -1366,7 +1387,7 @@ class CyberVPSAgent:
                                 "path_exists": exists,
                                 "verification_status": "verified_on_disk" if exists else "missing_path",
                                 "verification_reason": f"Verified on host filesystem: '{inst}'." if exists else f"Path '{inst}' not found on disk.",
-                                "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                                "last_heartbeat": _iso_now(),
                                 "ports_detected": cb.get("ports_detected", [])
                             })
         except Exception:
@@ -1481,7 +1502,7 @@ class CyberVPSAgent:
                         "path_exists": True,
                         "verification_status": "verified_on_disk",
                         "verification_reason": f"Physical installation verified at '{canon_c}'.",
-                        "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                        "last_heartbeat": _iso_now(),
                         "ports_detected": []
                     })
         except Exception:
@@ -6609,7 +6630,7 @@ class CyberVPSAgent:
                 "machine_id": self.machine_id,
                 "hostname": socket.gethostname(),
                 "inventory": inventory,
-                "scanned_at": datetime.datetime.utcnow().isoformat() + "Z"
+                "scanned_at": _iso_now()
             }
         })
 

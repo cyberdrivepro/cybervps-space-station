@@ -579,7 +579,7 @@ async function handleStatus() {
 }
 
 async function handleServerCommand() {
-  const subCmd = args[1] || 'status';
+  const subCmd = (args[1] || 'status').toLowerCase();
   const port = process.env.PORT || '8080';
   const serverPath = path.join(APP_DIR, 'services', 'server.js');
 
@@ -588,26 +588,189 @@ async function handleServerCommand() {
       const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
       if (isPidRunning(pid)) {
         console.log(`⚠️  Control Plane server already running (PID: ${pid}) on port ${port}.`);
+        console.log(`👉 Local Dashboard:   http://localhost:${port}`);
+        console.log(`👉 Inspect logs with: cybervps server logs`);
         return;
       }
     }
     console.log(`[*] Starting Central Control Plane on port ${port}...`);
     const env = { ...process.env, PORT: port, CYBERVPS_LOG_FILE: LOG_FILE };
-    const child = spawn(process.execPath, [serverPath], { cwd: APP_DIR, env, detached: true, stdio: 'ignore' });
+
+    let outFd;
+    try {
+      outFd = fs.openSync(LOG_FILE, 'a');
+    } catch (_) {
+      outFd = 'ignore';
+    }
+
+    const child = spawn(process.execPath, [serverPath], {
+      cwd: APP_DIR,
+      env,
+      detached: true,
+      stdio: ['ignore', outFd, outFd]
+    });
     child.unref();
     fs.writeFileSync(PID_FILE, String(child.pid), 'utf8');
     console.log(`✅ Control Plane server active (PID: ${child.pid}) on port ${port}.`);
+    console.log(`👉 Local Dashboard:   http://localhost:${port}`);
+    console.log(`👉 Inspect logs with: cybervps server logs`);
+
+    // Proactively register 127.0.0.1 in local agent config and restart agent if needed
+    try {
+      const cfg = loadConfig();
+      const localUrl = `http://127.0.0.1:${port}`;
+      let updated = false;
+      if (!cfg.server_urls) {
+        cfg.server_urls = [cfg.server_url || 'https://cybervps-space-station.up.railway.app'];
+      }
+      if (!cfg.server_urls.includes(localUrl)) {
+        cfg.server_urls.unshift(localUrl);
+        updated = true;
+      }
+      if (cfg.server_url !== localUrl) {
+        cfg.server_url = localUrl;
+        updated = true;
+      }
+      if (updated) {
+        saveConfig(cfg);
+        console.log(`[*] Configured local agent to connect to ${localUrl} for ultra-fast local mesh.`);
+        if (fs.existsSync(AGENT_PID_FILE)) {
+          const aPid = parseInt(fs.readFileSync(AGENT_PID_FILE, 'utf8').trim(), 10);
+          if (isPidRunning(aPid)) {
+            console.log(`[*] Restarting local agent to attach to local Control Plane...`);
+            handleStop();
+            setTimeout(() => handleStart(true), 1200);
+          }
+        }
+      }
+    } catch (_) {}
+
   } else if (subCmd === 'stop') {
     if (fs.existsSync(PID_FILE)) {
       const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
       if (isPidRunning(pid)) {
         try { process.kill(pid, 'SIGTERM'); } catch (_) {}
         console.log(`✅ Stopped Control Plane server (PID: ${pid}).`);
+      } else {
+        console.log(`[*] Server PID ${pid} was not running.`);
       }
-      fs.unlinkSync(PID_FILE);
+      try { fs.unlinkSync(PID_FILE); } catch (_) {}
+    } else {
+      console.log('ℹ️  No server PID file found.');
     }
+
+  } else if (subCmd === 'restart') {
+    args[1] = 'stop';
+    await handleServerCommand();
+    await new Promise(r => setTimeout(r, 1000));
+    args[1] = 'start';
+    await handleServerCommand();
+
+  } else if (subCmd === 'logs') {
+    if (!fs.existsSync(LOG_FILE)) {
+      console.log(`No server log found at ${LOG_FILE}`);
+      return;
+    }
+    const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n');
+    console.log(`=== Recent Server Logs (${LOG_FILE}) ===`);
+    console.log(lines.slice(-35).join('\n'));
+
+  } else if (subCmd === 'service' || subCmd === 'install-service') {
+    if (process.platform === 'linux') {
+      const serviceName = 'cybervps-server.service';
+      const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+      const nodeBin = process.execPath;
+      const serverJs = path.join(APP_DIR, 'services', 'server.js');
+
+      const serviceContent = `[Unit]
+Description=CyberVPS Space Station Control Plane Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${APP_DIR}
+Environment="PORT=${port}"
+Environment="NODE_ENV=production"
+ExecStart=${nodeBin} ${serverJs}
+Restart=always
+RestartSec=5
+StandardOutput=append:${LOG_FILE}
+StandardError=append:${LOG_FILE}
+
+[Install]
+WantedBy=default.target
+`;
+
+      if (isRoot) {
+        const servicePath = `/etc/systemd/system/${serviceName}`;
+        fs.writeFileSync(servicePath, serviceContent, 'utf8');
+        try {
+          execSync('systemctl daemon-reload && systemctl enable --now cybervps-server.service', { stdio: 'inherit' });
+          console.log(`✅ Systemd system service installed and activated: ${servicePath}`);
+        } catch (e) {
+          console.error(`❌ Failed to activate systemd service: ${e.message}`);
+        }
+      } else {
+        const userDir = path.join(os.homedir(), '.config', 'systemd', 'user');
+        if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+        const servicePath = path.join(userDir, serviceName);
+        fs.writeFileSync(servicePath, serviceContent, 'utf8');
+        try {
+          execSync('systemctl --user daemon-reload && systemctl --user enable --now cybervps-server.service', { stdio: 'inherit' });
+          console.log(`✅ Systemd user service installed and activated: ${servicePath}`);
+        } catch (e) {
+          console.log(`⚠️  Could not activate via systemctl --user: ${e.message}`);
+        }
+      }
+    } else {
+      console.log(`[!] Automated service installation is supported on Linux systemd hosts.`);
+    }
+
+  } else if (subCmd === 'status') {
+    console.log('================================================================');
+    console.log('🛰️  CYBERVPS SPACE STATION CONTROL PLANE STATUS');
+    console.log('================================================================');
+    let sPid = null;
+    let isRunning = false;
+    if (fs.existsSync(PID_FILE)) {
+      sPid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+      isRunning = isPidRunning(sPid);
+    }
+    console.log(`[Status]      ${isRunning ? `RUNNING (PID: ${sPid}) ✅` : 'STOPPED 🔴'}`);
+    console.log(`[Port]        ${port}`);
+    console.log(`[Local URL]   http://127.0.0.1:${port}`);
+
+    if (isRunning) {
+      const health = await fetchJson(`http://127.0.0.1:${port}/health`, 2000);
+      if (health && health.statusCode === 200) {
+        console.log(`[Health]      HEALTHY (HTTP 200) ✅`);
+        console.log(`[Active Nodes] ${health.data && health.data.active_machines !== undefined ? health.data.active_machines : 'N/A'}`);
+      } else {
+        console.log(`[Health]      Not responding on HTTP port ${port} ⚠️`);
+      }
+
+      const tunnelInfo = await fetchJson(`http://127.0.0.1:${port}/api/v1/network/tunnel`, 2000);
+      if (tunnelInfo && tunnelInfo.data && tunnelInfo.data.public_url && !tunnelInfo.data.public_url.includes('127.0.0.1')) {
+        console.log(`[Public Tunnel] ${tunnelInfo.data.public_url} (${tunnelInfo.data.provider}) 🌐`);
+        console.log(`\n👉 Connect Dashboard:`);
+        console.log(`   https://cyberdrivepro.github.io/cybervps-space-station/?backend=${encodeURIComponent(tunnelInfo.data.public_url)}`);
+      } else {
+        console.log(`\n👉 Local Dashboard:`);
+        console.log(`   http://localhost:${port}`);
+        console.log(`   https://cyberdrivepro.github.io/cybervps-space-station/?backend=http://localhost:${port}`);
+      }
+    }
+    console.log('================================================================');
   } else {
-    console.log(`Usage: cybervps server [start|stop]`);
+    console.log(`Usage: cybervps server <command>
+Commands:
+  start           Start Control Plane in background
+  stop            Stop running Control Plane
+  restart         Restart Control Plane
+  status          Show Control Plane health, port, and public URLs
+  logs            View real-time Control Plane execution logs
+  install-service Install 24/7 systemd background service on this machine
+`);
   }
 }
 

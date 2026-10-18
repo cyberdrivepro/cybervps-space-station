@@ -8,8 +8,26 @@
 
 set -e
 
-SERVER_URL="${1:-${CYBERVPS_SERVER:-https://cybervps-space-station.up.railway.app}}"
+SERVER_URL="${1:-${CYBERVPS_SERVER:-}}"
 TOKEN="${CYBERVPS_TOKEN:-cvps_enroll_master_token}"
+
+# Auto-probe active local control plane first for instant 0ms latency
+LOCAL_SERVER_URL="http://127.0.0.1:${PORT:-8080}"
+IS_LOCAL_SERVER_ACTIVE=0
+if command -v curl >/dev/null 2>&1; then
+  if curl -s --max-time 1 "${LOCAL_SERVER_URL}/health" 2>/dev/null | grep -q '"status"'; then
+    IS_LOCAL_SERVER_ACTIVE=1
+  fi
+fi
+
+if [ -z "${SERVER_URL}" ]; then
+  if [ "$IS_LOCAL_SERVER_ACTIVE" -eq 1 ]; then
+    SERVER_URL="${LOCAL_SERVER_URL}"
+    echo "[+] Detected active local Control Plane at ${LOCAL_SERVER_URL} (Ultra-Fast Local Mode)"
+  else
+    SERVER_URL="https://cybervps-space-station.up.railway.app"
+  fi
+fi
 
 REPO_URL="https://github.com/cyberdrivepro/cybervps-space-station.git"
 TARBALL_URL="https://github.com/cyberdrivepro/cybervps-space-station/archive/refs/heads/main.tar.gz"
@@ -341,6 +359,7 @@ cat <<EOF > "${CONFIG_FILE}"
   "server_url": "${SERVER_URL}",
   "server_urls": [
     "${SERVER_URL}",
+    "${LOCAL_SERVER_URL}",
     "https://cybervps-space-station.up.railway.app"
   ],
   "token": "${TOKEN}",
@@ -357,6 +376,7 @@ cat <<EOF > "${CONFIG_FILE}"
   "server_url": "${SERVER_URL}",
   "server_urls": [
     "${SERVER_URL}",
+    "${LOCAL_SERVER_URL}",
     "https://cybervps-space-station.up.railway.app"
   ],
   "token": "${TOKEN}",
@@ -376,20 +396,29 @@ echo "[*] Configuration written to ${CONFIG_FILE} (Ghost Mode Active)"
 chmod +x "${INSTALL_DIR}/bin/cybervps"* 2>/dev/null || true
 ln -sf "${INSTALL_DIR}/bin/cybervps" "${BIN_DIR}/cybervps" 2>/dev/null || true
 
-# Symlink into system-wide standard PATH locations if root or writable
+# Symlink into system-wide standard PATH locations if root, writable, or via passwordless sudo
 if [ "$(id -u 2>/dev/null)" = "0" ] || [ -w "/usr/local/bin" ]; then
   mkdir -p /usr/local/bin 2>/dev/null || true
   ln -sf "${INSTALL_DIR}/bin/cybervps" "/usr/local/bin/cybervps" 2>/dev/null || true
+elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+  sudo mkdir -p /usr/local/bin 2>/dev/null || true
+  sudo ln -sf "${INSTALL_DIR}/bin/cybervps" "/usr/local/bin/cybervps" 2>/dev/null || true
 fi
 if [ "$(id -u 2>/dev/null)" = "0" ] || [ -w "/usr/bin" ]; then
   ln -sf "${INSTALL_DIR}/bin/cybervps" "/usr/bin/cybervps" 2>/dev/null || true
 fi
 
-# Append to all present and writable shell rc files
-for rc in "${HOME:-}/.bashrc" "${HOME:-}/.zshrc" "${HOME:-}/.profile"; do
+# Link to ~/.local/bin standard path
+if [ -n "${HOME:-}" ]; then
+  mkdir -p "${HOME}/.local/bin" 2>/dev/null || true
+  ln -sf "${INSTALL_DIR}/bin/cybervps" "${HOME}/.local/bin/cybervps" 2>/dev/null || true
+fi
+
+# Append to all present and writable shell rc and env files (including .zshenv for non-interactive ssh)
+for rc in "${HOME:-}/.bashrc" "${HOME:-}/.zshrc" "${HOME:-}/.zshenv" "${HOME:-}/.profile"; do
   if [ -n "$rc" ] && [ -f "$rc" ] && [ -w "$rc" ]; then
     if ! grep -q "${BIN_DIR}" "$rc" 2>/dev/null; then
-      (echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "$rc") 2>/dev/null || true
+      (echo "export PATH=\"${BIN_DIR}:/usr/local/bin:\$PATH\"" >> "$rc") 2>/dev/null || true
     fi
   fi
 done
