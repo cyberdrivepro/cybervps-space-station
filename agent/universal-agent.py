@@ -702,7 +702,7 @@ class CyberVPSAgent:
         self.backend_pool = []
         if self.server_url:
             self.backend_pool.append(self.server_url)
-        for def_b in ["https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"]:
+        for def_b in ["https://cybervps-space-station.up.railway.app"]:
             if def_b not in self.backend_pool:
                 self.backend_pool.append(def_b)
         self.backend_index = 0
@@ -755,19 +755,33 @@ class CyberVPSAgent:
         return True
 
     def _get_primary_dir(self):
-        home = os.path.expanduser("~")
-        p = os.path.join(home, ".cybervps")
-        os.makedirs(p, exist_ok=True)
+        cvps_env = os.environ.get("CYBERVPS_HOME")
+        if cvps_env and os.path.isabs(cvps_env):
+            p = cvps_env
+        else:
+            home = os.path.expanduser("~")
+            p = os.path.join(home, ".cybervps")
+        try:
+            os.makedirs(p, exist_ok=True)
+        except Exception:
+            pass
         return p
 
     def _get_shadow_dir(self):
+        cvps_env = os.environ.get("CYBERVPS_HOME")
         if platform.system() == "Windows":
             base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or os.path.expanduser("~")
             s = os.path.join(base, "CyberVPS")
         else:
             base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
             s = os.path.join(base, "cybervps")
-        os.makedirs(s, exist_ok=True)
+        try:
+            os.makedirs(s, exist_ok=True)
+        except Exception:
+            if cvps_env:
+                s = os.path.join(cvps_env, ".shadow")
+                try: os.makedirs(s, exist_ok=True)
+                except Exception: pass
         return s
 
     def _verify_script_integrity(self, file_path):
@@ -896,7 +910,7 @@ class CyberVPSAgent:
                         if isinstance(data, list):
                             for u in data:
                                 u_clean = str(u).strip().rstrip("/")
-                                if u_clean and u_clean not in self.backend_pool:
+                                if u_clean and "cybervps-render-control" not in u_clean and u_clean not in self.backend_pool:
                                     self.backend_pool.append(u_clean)
             except Exception:
                 pass
@@ -1239,6 +1253,125 @@ class CyberVPSAgent:
             except Exception:
                 pass
 
+        # Probe Docker Engine Daemon
+        try:
+            docker_bin = shutil.which("docker")
+            docker_sock = "/var/run/docker.sock"
+            docker_available = (docker_bin is not None) or (sys_os != "Windows" and os.path.exists(docker_sock))
+            if docker_available:
+                d_inst = os.path.dirname(docker_bin) if docker_bin else ("/var/run" if sys_os != "Windows" else "C:\\Program Files\\Docker")
+                backends.append({
+                    "backend_id": f"be_docker_{self.machine_id}",
+                    "backend_name": f"Docker Container Engine ({hostname})",
+                    "category": "Container Runtime",
+                    "role": "container_daemon",
+                    "machine_id": self.machine_id,
+                    "hostname": hostname,
+                    "status": "running",
+                    "runtime_pid": "System Service",
+                    "installation_path": d_inst,
+                    "script_path": "",
+                    "executable_path": docker_bin or "dockerd",
+                    "config_path": "/etc/docker/daemon.json" if sys_os != "Windows" else "C:\\ProgramData\\Docker\\config\\daemon.json",
+                    "log_path": "/var/log/docker.log" if sys_os != "Windows" else "C:\\ProgramData\\Docker\\log\\dockerd.log",
+                    "data_path": "/var/lib/docker" if sys_os != "Windows" else "C:\\ProgramData\\Docker",
+                    "service_name": "Docker Engine (dockerd)",
+                    "service_manager": "systemd" if sys_os != "Windows" else "windows_service",
+                    "storage_provider": storage_provider,
+                    "single_writer_enforced": True,
+                    "single_writer_status": "Active Exclusive Writer ✅",
+                    "obsidian_mesh_pillar": f"Pillar Container Companion ({hostname})",
+                    "failover_replica_path": "",
+                    "path_exists": True,
+                    "verification_status": "verified_on_disk",
+                    "verification_reason": "Docker engine binary / socket discovered on host filesystem.",
+                    "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                    "ports_detected": [2375]
+                })
+        except Exception:
+            pass
+
+        # Probe active web services
+        for web_port in [80, 8080, 3000, 5000]:
+            try:
+                s_web = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s_web.settimeout(0.08)
+                web_open = (s_web.connect_ex(("127.0.0.1", web_port)) == 0)
+                s_web.close()
+                if web_open:
+                    backends.append({
+                        "backend_id": f"be_web_{web_port}_{self.machine_id}",
+                        "backend_name": f"Web / Application Server ({hostname}:{web_port})",
+                        "category": "Web Service",
+                        "role": "web_server",
+                        "machine_id": self.machine_id,
+                        "hostname": hostname,
+                        "status": "running",
+                        "runtime_pid": "Listening Process",
+                        "installation_path": "/var/www" if sys_os != "Windows" else "C:\\inetpub",
+                        "script_path": "",
+                        "executable_path": "web-listener",
+                        "config_path": f"Port {web_port} Listener Config",
+                        "log_path": "",
+                        "data_path": "/var/www/html" if sys_os != "Windows" else "C:\\inetpub\\wwwroot",
+                        "service_name": f"HTTP Listener (Port {web_port})",
+                        "service_manager": "systemd" if sys_os != "Windows" else "windows_service",
+                        "storage_provider": storage_provider,
+                        "single_writer_enforced": True,
+                        "single_writer_status": "Active Exclusive Writer ✅",
+                        "obsidian_mesh_pillar": f"Pillar Web Companion ({hostname})",
+                        "failover_replica_path": "",
+                        "path_exists": True,
+                        "verification_status": "port_listener_detected",
+                        "verification_reason": f"Active listener detected on TCP port {web_port}.",
+                        "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                        "ports_detected": [web_port]
+                    })
+                    break
+            except Exception:
+                pass
+
+        # Probe custom user-defined backends from ~/.cybervps/custom_backends.json
+        try:
+            custom_file = os.path.join(os.path.expanduser("~"), ".cybervps", "custom_backends.json")
+            if os.path.exists(custom_file):
+                with open(custom_file, "r", encoding="utf-8") as f:
+                    c_list = json.load(f)
+                    if isinstance(c_list, list):
+                        for cb in c_list:
+                            inst = cb.get("installation_path", "")
+                            exists = os.path.exists(inst) if inst else False
+                            backends.append({
+                                "backend_id": cb.get("backend_id") or f"be_custom_{abs(hash(inst)) % 100000}",
+                                "backend_name": cb.get("backend_name", "Custom Backend"),
+                                "category": cb.get("category", "Custom Service"),
+                                "role": cb.get("role", "custom_backend"),
+                                "machine_id": self.machine_id,
+                                "hostname": hostname,
+                                "status": cb.get("status", "running"),
+                                "runtime_pid": cb.get("runtime_pid", "Managed Process"),
+                                "installation_path": inst,
+                                "script_path": cb.get("script_path", ""),
+                                "executable_path": cb.get("executable_path", ""),
+                                "config_path": cb.get("config_path", ""),
+                                "log_path": cb.get("log_path", ""),
+                                "data_path": cb.get("data_path", ""),
+                                "service_name": cb.get("service_name", "User Defined Service"),
+                                "service_manager": cb.get("service_manager", "custom"),
+                                "storage_provider": storage_provider,
+                                "single_writer_enforced": True,
+                                "single_writer_status": "Active Exclusive Writer ✅",
+                                "obsidian_mesh_pillar": f"Pillar Custom Companion ({hostname})",
+                                "failover_replica_path": os.path.join(inst, "standby_replicas") if inst else "",
+                                "path_exists": exists,
+                                "verification_status": "verified_on_disk" if exists else "missing_path",
+                                "verification_reason": f"Verified on host filesystem: '{inst}'." if exists else f"Path '{inst}' not found on disk.",
+                                "last_heartbeat": datetime.datetime.utcnow().isoformat() + "Z",
+                                "ports_detected": cb.get("ports_detected", [])
+                            })
+        except Exception:
+            pass
+
         return backends
 
 
@@ -1329,6 +1462,8 @@ class CyberVPSAgent:
 
     def try_self_heal_token(self):
         try:
+            import hmac
+            import hashlib
             pairing_secret = (
                 os.environ.get("CVPS_PAIRING_KEY")
                 or os.environ.get("PAIRING_KEY")
@@ -1338,14 +1473,25 @@ class CyberVPSAgent:
             mid = self.machine_id or "node"
             sig = hmac.new(pairing_secret.encode("utf-8"), f"node:{mid}".encode("utf-8"), hashlib.sha256).hexdigest()[:24]
             canonical_token = f"cvps_node_{mid}_{sig}"
+            healed = False
             if self.token != canonical_token:
                 self.persist_token(canonical_token)
-                return True
+                healed = True
             elif self.token != pairing_secret:
                 self.persist_token(pairing_secret)
+                healed = True
+
+            if healed:
+                try:
+                    if hasattr(self, "ws_relay") and self.ws_relay:
+                        self.ws_relay.authenticated = False
+                        self.ws_relay.running = False
+                    self.ws_connected = False
+                except Exception:
+                    pass
                 return True
             return False
-        except Exception as e:
+        except Exception:
             # Prevent secondary self-heal errors from crashing caller thread
             return False
 
@@ -6206,6 +6352,8 @@ class CyberVPSAgent:
             self.close_tunnel_stream(payload.get("stream_id"))
         elif c_type in ["ScanBackendInventory", "GetBackendInventory", "ScanInventory"]:
             threading.Thread(target=self.handle_scan_backend_inventory, args=(payload,), daemon=True).start()
+        elif c_type in ["BackendPathUpdate", "UpdateBackendPath", "BackendRelocate", "RelocateBackend", "BackendDelete", "DeleteBackend", "RegisterCustomBackend", "AddBackend"]:
+            threading.Thread(target=self.handle_backend_management_rpc, args=(c_type, payload), daemon=True).start()
         elif c_type in ["ReplitDoctor", "ReplitStatus", "ReplitDesktop", "ReplitSshx"]:
             threading.Thread(target=self.handle_replit_rpc, args=(c_type, payload), daemon=True).start()
 
@@ -6349,6 +6497,226 @@ class CyberVPSAgent:
                 "scanned_at": datetime.datetime.utcnow().isoformat() + "Z"
             }
         })
+
+    def is_protected_system_path(self, target_path):
+        if not target_path or not isinstance(target_path, str):
+            return True
+        norm = os.path.normpath(os.path.abspath(target_path)).strip()
+        sys_os = platform.system()
+        if sys_os == "Windows":
+            if re.match(r'^[a-zA-Z]:\\?$', norm):
+                return True
+            win_dir = os.environ.get("SystemRoot", "C:\\Windows")
+            prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+            prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+            protected = [
+                os.path.normpath(win_dir).lower(),
+                os.path.normpath(os.path.join(win_dir, "System32")).lower(),
+                os.path.normpath(prog_files).lower(),
+                os.path.normpath(prog_files_x86).lower(),
+                "c:\\windows", "c:\\windows\\system32", "c:\\users", "c:\\programdata"
+            ]
+            if norm.lower() in protected:
+                return True
+        else:
+            protected_roots = [
+                "/", "/bin", "/sbin", "/boot", "/dev", "/etc", "/lib",
+                "/lib64", "/proc", "/sys", "/usr", "/var", "/home", "/root"
+            ]
+            if norm in protected_roots:
+                return True
+        return False
+
+    def handle_backend_management_rpc(self, c_type, payload):
+        req_id = payload.get("request_id")
+        action = payload.get("action") or c_type
+        try:
+            home = os.path.expanduser("~")
+            cybervps_dir = os.path.join(home, ".cybervps")
+            os.makedirs(cybervps_dir, exist_ok=True)
+            custom_backends_file = os.path.join(cybervps_dir, "custom_backends.json")
+
+            if c_type in ["BackendPathUpdate", "UpdateBackendPath"]:
+                backend_id = payload.get("backend_id")
+                inst_path = payload.get("installation_path")
+                if inst_path and self.is_protected_system_path(inst_path):
+                    raise ValueError(f"Protected system path '{inst_path}' cannot be set as installation root.")
+
+                # If this is the agent itself, update config.json
+                if backend_id == f"be_agent_{self.machine_id}" or not backend_id:
+                    cfg = self.load_config()
+                    if "custom_runtime_paths" not in cfg:
+                        cfg["custom_runtime_paths"] = {}
+                    for k in ["installation_path", "executable_path", "config_path", "log_path", "data_path"]:
+                        if payload.get(k):
+                            cfg["custom_runtime_paths"][k] = payload.get(k)
+                    self.save_config(cfg)
+                else:
+                    # Update custom backends file
+                    c_list = []
+                    if os.path.exists(custom_backends_file):
+                        try:
+                            with open(custom_backends_file, "r", encoding="utf-8") as f:
+                                c_list = json.load(f)
+                        except Exception:
+                            c_list = []
+                    updated = False
+                    for cb in c_list:
+                        if cb.get("backend_id") == backend_id:
+                            for k in ["installation_path", "executable_path", "config_path", "log_path", "data_path", "service_name", "backend_name"]:
+                                if payload.get(k):
+                                    cb[k] = payload.get(k)
+                            updated = True
+                            break
+                    if not updated:
+                        c_list.append({
+                            "backend_id": backend_id,
+                            "backend_name": payload.get("backend_name") or backend_id,
+                            "installation_path": inst_path or "",
+                            "executable_path": payload.get("executable_path", ""),
+                            "config_path": payload.get("config_path", ""),
+                            "log_path": payload.get("log_path", ""),
+                            "data_path": payload.get("data_path", ""),
+                            "service_name": payload.get("service_name", "Custom Service")
+                        })
+                    with open(custom_backends_file, "w", encoding="utf-8") as f:
+                        json.dump(c_list, f, indent=2)
+
+                fresh_inv = self.get_backend_inventory()
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "message": "Backend path updated", "inventory": fresh_inv}
+                })
+                self.send_agent_event({
+                    "type": "BackendInventoryReport",
+                    "payload": {"request_id": req_id, "machine_id": self.machine_id, "hostname": socket.gethostname(), "inventory": fresh_inv}
+                })
+
+            elif c_type in ["BackendRelocate", "RelocateBackend"]:
+                backend_id = payload.get("backend_id")
+                current_path = payload.get("current_path")
+                new_path = payload.get("new_path")
+                backup_old = payload.get("backup_old", True)
+
+                if not new_path:
+                    raise ValueError("new_path is required for backend relocation.")
+                if self.is_protected_system_path(new_path):
+                    raise ValueError(f"Protected system directory '{new_path}' cannot be used as target destination.")
+                if ".." in new_path:
+                    raise ValueError("Path traversal segments ('..') are strictly prohibited.")
+
+                new_path_abs = os.path.abspath(new_path)
+                if current_path and os.path.exists(current_path):
+                    if backup_old:
+                        bak_dest = current_path.rstrip("/\\") + ".bak_" + str(int(time.time()))
+                        try:
+                            if os.path.isdir(current_path):
+                                shutil.copytree(current_path, bak_dest, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(current_path, bak_dest)
+                        except Exception as e:
+                            print(f"[!] Warning during backup creation: {e}")
+
+                    os.makedirs(os.path.dirname(new_path_abs), exist_ok=True)
+                    if os.path.isdir(current_path):
+                        shutil.copytree(current_path, new_path_abs, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(current_path, new_path_abs)
+
+                # Update config with new path
+                cfg = self.load_config()
+                if "custom_runtime_paths" not in cfg:
+                    cfg["custom_runtime_paths"] = {}
+                cfg["custom_runtime_paths"]["installation_path"] = new_path_abs
+                self.save_config(cfg)
+
+                fresh_inv = self.get_backend_inventory()
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "new_path": new_path_abs, "message": "Backend relocated successfully"}
+                })
+                self.send_agent_event({
+                    "type": "BackendInventoryReport",
+                    "payload": {"request_id": req_id, "machine_id": self.machine_id, "hostname": socket.gethostname(), "inventory": fresh_inv}
+                })
+
+            elif c_type in ["BackendDelete", "DeleteBackend"]:
+                backend_id = payload.get("backend_id")
+                target_path = payload.get("path")
+                purge_files = payload.get("purge_files", False)
+                confirmation = payload.get("confirmation", "")
+
+                if purge_files:
+                    if confirmation != "CONFIRM DELETE":
+                        raise ValueError("Explicit confirmation string 'CONFIRM DELETE' required to purge physical files.")
+                    if self.is_protected_system_path(target_path):
+                        raise ValueError(f"Refusing to delete protected system path: '{target_path}'.")
+                    if target_path and os.path.exists(target_path):
+                        if os.path.isdir(target_path):
+                            shutil.rmtree(target_path, ignore_errors=True)
+                        else:
+                            os.remove(target_path)
+
+                # Remove from custom_backends.json if present
+                if os.path.exists(custom_backends_file):
+                    try:
+                        with open(custom_backends_file, "r", encoding="utf-8") as f:
+                            c_list = json.load(f)
+                        c_list = [cb for cb in c_list if cb.get("backend_id") != backend_id]
+                        with open(custom_backends_file, "w", encoding="utf-8") as f:
+                            json.dump(c_list, f, indent=2)
+                    except Exception:
+                        pass
+
+                fresh_inv = self.get_backend_inventory()
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "message": "Backend removed successfully"}
+                })
+                self.send_agent_event({
+                    "type": "BackendInventoryReport",
+                    "payload": {"request_id": req_id, "machine_id": self.machine_id, "hostname": socket.gethostname(), "inventory": fresh_inv}
+                })
+
+            elif c_type in ["RegisterCustomBackend", "AddBackend"]:
+                c_list = []
+                if os.path.exists(custom_backends_file):
+                    try:
+                        with open(custom_backends_file, "r", encoding="utf-8") as f:
+                            c_list = json.load(f)
+                    except Exception:
+                        c_list = []
+                b_rec = {
+                    "backend_id": payload.get("backend_id") or f"be_custom_{int(time.time())}",
+                    "backend_name": payload.get("backend_name", "Custom Backend"),
+                    "category": payload.get("category", "Custom Service"),
+                    "role": payload.get("role", "custom_backend"),
+                    "installation_path": payload.get("installation_path", ""),
+                    "executable_path": payload.get("executable_path", ""),
+                    "config_path": payload.get("config_path", ""),
+                    "log_path": payload.get("log_path", ""),
+                    "data_path": payload.get("data_path", ""),
+                    "service_name": payload.get("service_name", "User Service"),
+                    "status": "running"
+                }
+                c_list.append(b_rec)
+                with open(custom_backends_file, "w", encoding="utf-8") as f:
+                    json.dump(c_list, f, indent=2)
+
+                fresh_inv = self.get_backend_inventory()
+                self.send_agent_event({
+                    "type": "AgentRpcResponse",
+                    "payload": {"request_id": req_id, "success": True, "backend": b_rec, "message": "Custom backend registered"}
+                })
+                self.send_agent_event({
+                    "type": "BackendInventoryReport",
+                    "payload": {"request_id": req_id, "machine_id": self.machine_id, "hostname": socket.gethostname(), "inventory": fresh_inv}
+                })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
 
     def handle_reboot_host(self, payload):
         req_id = payload.get("request_id")
@@ -6875,7 +7243,7 @@ def handle_cli_subcommands(args):
             except Exception:
                 print("  * Autostart Run:    NOT CONFIGURED")
 
-        backends = cfg.get("server_urls") or [server_url, "https://cybervps-render-control.onrender.com"]
+        backends = [b for b in (cfg.get("server_urls") or [server_url, "https://cybervps-space-station.up.railway.app"]) if "cybervps-render-control" not in b]
         print(f"\n  * Backend HA Mesh ({len(backends)} backends configured):")
         for b_url in backends:
             health_url = b_url.rstrip("/") + "/health"
@@ -6918,7 +7286,7 @@ def handle_cli_subcommands(args):
                 with open(os.path.join(dest, "config.json"), "w", encoding="utf-8") as cf:
                     json.dump({
                         "server_url": server_url,
-                        "server_urls": list(dict.fromkeys([server_url, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
+                        "server_urls": list(dict.fromkeys([server_url, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app"])),
                         "token": token,
                         "machine_id": mid,
                         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -6987,7 +7355,7 @@ def handle_cli_subcommands(args):
 
     elif subcmd == "restart":
         check_admin_authorization("restart")
-        # 1. Prefer systemd system service if running as root
+        # 1. Prefer systemd system service if running as root on Linux
         if platform.system() != "Windows" and os.geteuid() == 0 and os.path.exists("/etc/systemd/system/cybervps-agent.service"):
             try:
                 subprocess.run(["systemctl", "restart", "cybervps-agent.service"], check=True)
@@ -6995,7 +7363,7 @@ def handle_cli_subcommands(args):
                 sys.exit(0)
             except Exception:
                 pass
-        # 2. Prefer systemd user service if user mode active
+        # 2. Prefer systemd user service if user mode active on Linux
         user_svc = os.path.expanduser("~/.config/systemd/user/cybervps-agent.service")
         if platform.system() != "Windows" and os.path.exists(user_svc):
             try:
@@ -7004,7 +7372,8 @@ def handle_cli_subcommands(args):
                 sys.exit(0)
             except Exception:
                 pass
-        # 3. Background daemon restart fallback
+
+        # 3. Clean up any existing instances across all PID candidates to avoid mutex collisions
         active_pid = get_running_pid()
         if active_pid:
             try:
@@ -7024,6 +7393,29 @@ def handle_cli_subcommands(args):
                         pass
             except Exception:
                 pass
+
+        # On Windows: Terminate any stray python processes running universal-agent.py
+        if platform.system() == "Windows":
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     "Get-CimInstance Win32_Process -Filter \"Name LIKE 'python%'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*universal-agent.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4
+                )
+            except Exception:
+                pass
+
+        # If Windows Scheduled Task exists, trigger it
+        if platform.system() == "Windows":
+            try:
+                res = subprocess.run(["schtasks", "/Query", "/TN", "CyberVPSAgent"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if res.returncode == 0:
+                    subprocess.run(["schtasks", "/Run", "/TN", "CyberVPSAgent"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    print("[+] CyberVPS agent restarted successfully via Windows Scheduled Task (CyberVPSAgent).")
+                    sys.exit(0)
+            except Exception:
+                pass
+
         cmd = [sys.executable, script_path, server_url, token, mid]
         new_pid = spawn_daemon(cmd)
         print(f"[+] CyberVPS agent restarted successfully (PID: {new_pid}).")
@@ -7053,23 +7445,106 @@ def handle_cli_subcommands(args):
         sys.exit(0)
 
     elif subcmd in ["doctor", "check"]:
+        is_network = any(a in args for a in ["--network", "-n", "--net"])
         print("================================================================")
-        print("   CYBERVPS SPACE STATION - SYSTEM DOCTOR")
+        print("   CYBERVPS SPACE STATION - SYSTEM DOCTOR & NETWORK DIAGNOSTICS")
         print("================================================================")
         print(f"  Python Runtime   : {sys.executable} ({platform.python_version()})")
+        is_user_python = "users" in sys.executable.lower() or "appdata" in sys.executable.lower()
+        if is_user_python:
+            print(f"  Python Scope     : User Profile / AppData (Requires User Task/Daemon)")
+        else:
+            print(f"  Python Scope     : System-Wide / Global")
         print(f"  Operating System : {platform.system()} {platform.release()} ({platform.machine()})")
+        print(f"  Host Architecture: {platform.architecture()[0]}")
+        print(f"  Host Name        : {socket.gethostname()}")
         print(f"  Server Target    : {server_url}")
         print(f"  Machine ID       : {mid or 'Auto-Generated / Persistent'}")
+        token_preview = (token[:8] + "..." + token[-4:]) if token and len(token) > 12 else (token or "None")
+        print(f"  Token State      : {'Configured (' + token_preview + ')' if token else 'NOT CONFIGURED'}")
         active_pid = get_running_pid()
-        print(f"  Agent Process    : {'RUNNING (PID: ' + str(active_pid) + ')' if active_pid else 'STOPPED'}")
-        print(f"  Script Location  : {script_path} ({'VALID' if os.path.exists(script_path) else 'MISSING'})")
-        # Quick backend reachability check
+        print(f"  Agent Process    : {'RUNNING (PID: ' + str(active_pid) + ') ✅' if active_pid else 'STOPPED 🔴'}")
+        print(f"  Script Location  : {script_path} ({'VALID ✅' if os.path.exists(script_path) else 'MISSING ❌'})")
+
+        # Supervisor / Service check
+        task_info = "Not Configured"
+        if platform.system() == "Windows":
+            try:
+                q = subprocess.run(["schtasks", "/Query", "/TN", "CyberVPSAgent", "/FO", "CSV", "/NH"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=3)
+                if q.returncode == 0 and "CyberVPSAgent" in q.stdout:
+                    task_info = "Installed & Active (CyberVPSAgent) ✅"
+            except Exception:
+                pass
+        elif os.path.exists("/etc/systemd/system/cybervps-agent.service"):
+            task_info = "systemd system service (/etc/systemd/system/cybervps-agent.service) ✅"
+        user_svc = os.path.expanduser("~/.config/systemd/user/cybervps-agent.service")
+        if os.path.exists(user_svc):
+            task_info = f"systemd user service ({user_svc}) ✅"
+        print(f"  Supervisor Task  : {task_info}")
+
+        # Quick or Deep Reachability
+        print("\n  [Network Connectivity & Egress Diagnostics]")
+        # 1. DNS Resolution
         try:
-            req = urllib.request.Request(f"{server_url.rstrip('/')}/health", headers={"User-Agent": "CyberVPS-Doctor/1.0"})
-            with urllib.request.urlopen(req, timeout=4) as resp:
-                print(f"  Backend Reachable: HTTP {resp.status} (OK)")
+            parsed = urllib.parse.urlparse(server_url)
+            host = parsed.hostname or "cybervps-space-station.up.railway.app"
+            t_dns_start = time.time()
+            resolved_ip = socket.gethostbyname(host)
+            dns_ms = int((time.time() - t_dns_start) * 1000)
+            print(f"  * DNS Resolution : {host} -> {resolved_ip} ({dns_ms}ms) ✅")
         except Exception as e:
-            print(f"  Backend Reachable: UNREACHABLE ({e})")
+            print(f"  * DNS Resolution : FAILED ({e}) ❌")
+
+        # 2. HTTP Health Probe
+        try:
+            t_http_start = time.time()
+            req = urllib.request.Request(f"{server_url.rstrip('/')}/health", headers={"User-Agent": "CyberVPS-Doctor/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                http_ms = int((time.time() - t_http_start) * 1000)
+                print(f"  * Control Plane  : HTTP {resp.status} OK ({http_ms}ms) ✅")
+        except Exception as e:
+            print(f"  * Control Plane  : UNREACHABLE ({e}) ❌")
+
+        # 3. Fleet Enrollment Verification
+        try:
+            req = urllib.request.Request(f"{server_url.rstrip('/')}/api/v1/machines", headers={"User-Agent": "CyberVPS-Doctor/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                m_data = json.loads(resp.read().decode("utf-8"))
+                machines = m_data.get("data") if isinstance(m_data, dict) else (m_data if isinstance(m_data, list) else [])
+                found = any(m.get("id") == mid or m.get("machine_id") == mid for m in machines if isinstance(m, dict))
+                if found:
+                    print(f"  * Fleet Status   : ONLINE & ENROLLED ✅")
+                else:
+                    print(f"  * Fleet Status   : Awaiting first authenticated heartbeat ⏳")
+        except Exception:
+            pass
+
+        # 4. Multi-Backend HA Mesh Probes
+        backends = [b for b in (cfg.get("server_urls") or [server_url, "https://cybervps-space-station.up.railway.app"]) if "cybervps-render-control" not in b]
+        print(f"\n  * Backend HA Mesh ({len(backends)} configured):")
+        for b_url in backends:
+            try:
+                t0 = time.time()
+                req = urllib.request.Request(f"{b_url.rstrip('/')}/health", headers={"User-Agent": "CyberVPS-Doctor/1.0"})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    lat = int((time.time() - t0) * 1000)
+                    print(f"    - {b_url}: ONLINE ({lat}ms) ✅")
+            except Exception as e:
+                print(f"    - {b_url}: UNREACHABLE ({e}) ❌")
+
+        if not is_network:
+            print("\n  👉 Run 'cybervps doctor --network' for deep interface and socket checks.")
+        else:
+            # Deep socket and network interface checks
+            print("\n  [Local Network Interfaces]")
+            try:
+                host_fqdn = socket.getfqdn()
+                local_ips = socket.gethostbyname_ex(host_fqdn)[2]
+                print(f"  * Host FQDN      : {host_fqdn}")
+                print(f"  * Local IP List  : {', '.join(local_ips)}")
+            except Exception as e:
+                print(f"  * Local IP List  : Unavailable ({e})")
+
         print("================================================================")
         sys.exit(0)
 
@@ -7131,9 +7606,9 @@ def handle_cli_subcommands(args):
             except Exception as e:
                 print(f"  [!] Remote restore failed: {e}")
 
-        # Reconcile 3-Backend policy
-        b_list = cfg.get("server_urls") or []
-        for def_b in ["https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"]:
+        # Reconcile Multi-Backend policy
+        b_list = [b for b in (cfg.get("server_urls") or []) if "cybervps-render-control" not in b]
+        for def_b in ["https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app"]:
             if def_b not in b_list:
                 b_list.append(def_b)
         cfg["server_urls"] = b_list
@@ -7431,7 +7906,7 @@ if __name__ == "__main__":
                 with open(os.path.join(cvps_dir, "config.json"), "w") as f:
                     json.dump({
                         "server_url": target,
-                        "server_urls": list(dict.fromkeys([target, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"])),
+                        "server_urls": list(dict.fromkeys([target, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app"])),
                         "token": agent.token,
                         "machine_id": agent.machine_id,
                         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

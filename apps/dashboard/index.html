@@ -1316,7 +1316,8 @@
                 <option value="cluster">All Cluster Backends</option>
               </select>
               <input type="text" id="backend-inventory-search" class="form-control" placeholder="Search path, backend, service..." style="font-size:0.8rem; padding:0.35rem 0.6rem; max-width:220px;" oninput="filterBackendInventory()">
-              <button class="btn btn-primary" onclick="scanSelectedMachineInventory()" style="font-size:0.8rem; padding:0.35rem 0.75rem;" title="Ask running agent to physically inspect local paths">🔍 Scan Machine</button>
+              <button class="btn btn-primary" onclick="openAddBackendModal()" style="font-size:0.8rem; padding:0.35rem 0.75rem;" title="Register a new backend or custom installation">➕ Add Backend</button>
+              <button class="btn btn-secondary" onclick="scanSelectedMachineInventory()" style="font-size:0.8rem; padding:0.35rem 0.75rem;" title="Ask running agent or cluster to inspect local paths">🔍 Scan Machine</button>
               <button class="btn btn-secondary" onclick="refreshBackendInventory()" style="font-size:0.8rem; padding:0.35rem 0.65rem;">🔄 Refresh</button>
               <button class="btn btn-secondary" onclick="exportBackendInventoryJson()" style="font-size:0.8rem; padding:0.35rem 0.65rem;">📥 Export JSON</button>
             </div>
@@ -2798,6 +2799,194 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeFmUploadModal()">Cancel</button>
         <button class="btn btn-primary" id="btn-submit-upload" onclick="submitFmUpload()">⬆️ Start Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: EDIT BACKEND PATHS -->
+  <div id="modal-edit-backend-path" class="modal-backdrop">
+    <div class="modal" style="max-width:540px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">✏️ Edit Physical Backend Paths</strong>
+        <button class="btn-icon" onclick="closeEditBackendPathsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-backend-id">
+        <input type="hidden" id="edit-backend-machine-id">
+        <div class="form-group">
+          <label class="form-label">Backend Identifier</label>
+          <div id="edit-backend-id-display" style="font-family:var(--font-mono); font-size:0.85rem; color:var(--accent-cyan); padding:0.4rem 0.6rem; background:rgba(0,0,0,0.3); border-radius:4px;"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Backend Friendly Name</label>
+          <input type="text" id="edit-backend-name" class="form-control" placeholder="e.g. Production Web Daemon">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Physical Installation Root Directory</label>
+          <input type="text" id="edit-backend-install-path" class="form-control" placeholder="e.g. /opt/cybervps/agent or C:\CyberVPS\Agent">
+          <span style="font-size:0.75rem; color:var(--text-muted);">Root directory where this service's files reside. Single-writer invariant is enforced.</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Executable Binary Path</label>
+          <input type="text" id="edit-backend-exec-path" class="form-control" placeholder="e.g. /usr/bin/python3 or python.exe">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Configuration File Path</label>
+          <input type="text" id="edit-backend-config-path" class="form-control" placeholder="e.g. /opt/cybervps/agent/config.json">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Log File Path</label>
+          <input type="text" id="edit-backend-log-path" class="form-control" placeholder="e.g. /var/log/cybervps.log">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Data / Storage Directory Path</label>
+          <input type="text" id="edit-backend-data-path" class="form-control" placeholder="e.g. /var/lib/cybervps/data">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Service Manager Name</label>
+          <input type="text" id="edit-backend-service-name" class="form-control" placeholder="e.g. systemd (cybervps-agent.service)">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeEditBackendPathsModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitEditBackendPaths()">💾 Save Path Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: RELOCATE BACKEND DIRECTORY -->
+  <div id="modal-relocate-backend" class="modal-backdrop">
+    <div class="modal" style="max-width:540px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">🚚 Relocate Backend Installation</strong>
+        <button class="btn-icon" onclick="closeRelocateBackendModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="relocate-backend-id">
+        <input type="hidden" id="relocate-backend-machine-id">
+        <div class="form-group">
+          <label class="form-label">Target Backend</label>
+          <div id="relocate-backend-title-display" style="font-weight:600; color:var(--text-primary); font-size:0.9rem;"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Current Physical Path</label>
+          <input type="text" id="relocate-backend-current-path" class="form-control" readonly style="opacity:0.8;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">New Destination Path</label>
+          <input type="text" id="relocate-backend-new-path" class="form-control" placeholder="e.g. /data/cybervps/agent or D:\CyberVPS\Agent">
+          <span style="font-size:0.75rem; color:var(--text-muted);">Must be an absolute path. Protected OS roots (/, C:\Windows, etc.) are strictly disallowed.</span>
+        </div>
+        <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem;">
+          <input type="checkbox" id="relocate-backend-backup" checked style="accent-color:var(--accent-cyan); width:16px; height:16px;">
+          <label for="relocate-backend-backup" style="font-size:0.8rem; color:var(--text-secondary); cursor:pointer;">Keep safety backup copy of original directory before moving</label>
+        </div>
+        <div style="margin-top:0.75rem; padding:0.6rem 0.8rem; border-radius:4px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); font-size:0.75rem; color:var(--status-warning);">
+          ⚠️ Single-Writer Invariant: The destination path will be atomically registered in the cluster ownership registry. If another backend claims this path, the relocation will be safely blocked.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeRelocateBackendModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitRelocateBackend()">🚀 Relocate Backend</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: DELETE / UNINSTALL BACKEND -->
+  <div id="modal-delete-backend" class="modal-backdrop">
+    <div class="modal" style="max-width:540px;">
+      <div class="modal-header">
+        <strong style="color:var(--status-danger); font-size:1rem;">🗑️ Delete or Uninstall Backend</strong>
+        <button class="btn-icon" onclick="closeDeleteBackendModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="delete-backend-id">
+        <input type="hidden" id="delete-backend-machine-id">
+        <input type="hidden" id="delete-backend-path">
+        <div class="form-group">
+          <label class="form-label">Backend to Remove</label>
+          <div id="delete-backend-display" style="font-weight:600; color:var(--text-primary); font-size:0.9rem;"></div>
+          <div id="delete-backend-path-display" style="font-family:var(--font-mono); font-size:0.78rem; color:var(--text-muted); margin-top:2px;"></div>
+        </div>
+        <div class="form-group" style="margin-top:0.75rem;">
+          <label class="form-label">Deletion Mode</label>
+          <div style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.25rem;">
+            <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; cursor:pointer;">
+              <input type="radio" name="delete-mode-radio" value="unregister" checked onchange="toggleDeleteConfirmationUi(this.value)">
+              <span><strong>Unregister from Inventory only (Safe)</strong> — leaves physical files intact on host.</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; cursor:pointer;">
+              <input type="radio" name="delete-mode-radio" value="purge" onchange="toggleDeleteConfirmationUi(this.value)">
+              <span style="color:var(--status-danger);"><strong>Purge physical files from disk (Destructive)</strong> — deletes files in installation folder.</span>
+            </label>
+          </div>
+        </div>
+        <div id="delete-confirmation-box" style="display:none; margin-top:1rem; padding:0.75rem; border-radius:4px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3);">
+          <div style="color:var(--status-danger); font-weight:600; font-size:0.82rem; margin-bottom:0.4rem;">⚠️ Physical purge confirmation required</div>
+          <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.5rem;">To verify you intend to permanently delete all files in this installation directory, type <code>CONFIRM DELETE</code> below:</div>
+          <input type="text" id="delete-confirm-input" class="form-control" placeholder="Type CONFIRM DELETE" oninput="validateDeleteConfirmation()">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeDeleteBackendModal()">Cancel</button>
+        <button class="btn btn-danger" id="btn-confirm-delete-backend" onclick="submitDeleteBackend()">Delete Backend</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ADD CUSTOM BACKEND -->
+  <div id="modal-add-backend" class="modal-backdrop">
+    <div class="modal" style="max-width:540px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">➕ Register New Backend Service</strong>
+        <button class="btn-icon" onclick="closeAddBackendModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Host Machine</label>
+          <select id="add-backend-machine-select" class="form-control"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Backend Service Name</label>
+          <input type="text" id="add-backend-name" class="form-control" placeholder="e.g. Nginx Web Gateway, PostgreSQL, Redis">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Category</label>
+          <select id="add-backend-category" class="form-control">
+            <option value="Web Service">Web Service</option>
+            <option value="Database">Database Service</option>
+            <option value="Custom Agent">Custom Agent</option>
+            <option value="Container Runtime">Container Runtime</option>
+            <option value="Desktop Service">Desktop Service</option>
+            <option value="System Service">System Service</option>
+            <option value="Microservice">Microservice</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Physical Installation Directory</label>
+          <input type="text" id="add-backend-install-path" class="form-control" placeholder="e.g. /etc/nginx or C:\nginx">
+          <span style="font-size:0.75rem; color:var(--text-muted);">Physical filesystem root on host. Strict single-writer invariant enforced.</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Executable Binary Path (Optional)</label>
+          <input type="text" id="add-backend-exec-path" class="form-control" placeholder="e.g. /usr/sbin/nginx">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Config File Path (Optional)</label>
+          <input type="text" id="add-backend-config-path" class="form-control" placeholder="e.g. /etc/nginx/nginx.conf">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Log File Path (Optional)</label>
+          <input type="text" id="add-backend-log-path" class="form-control" placeholder="e.g. /var/log/nginx/error.log">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Data Directory (Optional)</label>
+          <input type="text" id="add-backend-data-path" class="form-control" placeholder="e.g. /var/www/html">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAddBackendModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddBackend()">➕ Register Backend</button>
       </div>
     </div>
   </div>
@@ -7017,10 +7206,56 @@
     let currentBackendList = [];
     let currentClusterBackends = [];
 
-    function onBackendScopeChanged() {
+    async function onBackendScopeChanged() {
       const scope = document.getElementById('backend-inventory-scope')?.value || 'machine';
-      const listToRender = (scope === 'cluster') ? currentClusterBackends : currentBackendList;
-      displayBackendInventoryCards(listToRender);
+      if (scope === 'cluster') {
+        await loadClusterBackends();
+      } else {
+        if (currentBackendList && currentBackendList.length > 0) {
+          displayBackendInventoryCards(currentBackendList);
+        } else if (appState.selectedMachineId) {
+          await loadDeviceDetails(appState.selectedMachineId);
+        } else if (appState.machines && appState.machines.length > 0) {
+          await loadDeviceDetails(appState.machines[0].id);
+        } else {
+          await loadClusterBackends();
+        }
+      }
+    }
+
+    async function loadClusterBackends() {
+      const container = document.getElementById('backend-inventory-list');
+      if (container) {
+        container.innerHTML = '<div style="text-align:center; padding:2rem; color:var(--text-muted);"><span class="spinner"></span> Loading cluster backend inventory...</div>';
+      }
+      try {
+        const res = await apiRequest('/api/v1/backends/inventory');
+        if (res.ok && res.data) {
+          currentClusterBackends = res.data.inventory || [];
+          displayBackendInventoryCards(currentClusterBackends);
+          const writerBadge = document.getElementById('obsidian-ring-writer-badge');
+          if (writerBadge) writerBadge.innerText = `${currentClusterBackends.length} Cluster Backends`;
+        } else {
+          const err = res.error || 'Failed to fetch cluster backends';
+          if (container) {
+            container.innerHTML = `
+              <div style="text-align:center; padding:2rem; color:var(--status-danger); background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:6px;">
+                ⚠️ <strong>Error loading backends:</strong> ${escapeHtml(err)}<br/>
+                <button class="btn btn-secondary btn-sm" onclick="loadClusterBackends()" style="margin-top:0.75rem;">🔄 Retry</button>
+              </div>
+            `;
+          }
+        }
+      } catch (err) {
+        if (container) {
+          container.innerHTML = `
+            <div style="text-align:center; padding:2rem; color:var(--status-danger); background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:6px;">
+              ⚠️ <strong>Connection error:</strong> ${escapeHtml(err.message)}<br/>
+              <button class="btn btn-secondary btn-sm" onclick="loadClusterBackends()" style="margin-top:0.75rem;">🔄 Retry</button>
+            </div>
+          `;
+        }
+      }
     }
 
     function renderBackendInventory(machineBackends, clusterBackends, machineId) {
@@ -7057,7 +7292,11 @@
       if (filtered.length === 0) {
         container.innerHTML = `
           <div style="text-align:center; padding:2rem; color:var(--text-muted); background:var(--bg-card); border-radius:6px; border:1px dashed var(--border-color);">
-            No backend installations match your criteria. Click "🔍 Scan Machine" to discover local services or switch scope to "All Cluster Backends".
+            No backend installations found matching your criteria.<br/>
+            <div style="margin-top:0.75rem; display:flex; gap:0.5rem; justify-content:center;">
+              <button class="btn btn-primary btn-sm" onclick="openAddBackendModal()">➕ Register Custom Backend</button>
+              <button class="btn btn-secondary btn-sm" onclick="scanSelectedMachineInventory()">🔍 Scan Backends</button>
+            </div>
           </div>
         `;
         return;
@@ -7096,9 +7335,12 @@
                   Backend ID: <code style="color:var(--accent-cyan);">${escapeHtml(b.backend_id)}</code> • Host: <strong>${escapeHtml(b.hostname || b.machine_id)}</strong>
                 </div>
               </div>
-              <div style="display:flex; gap:0.4rem;">
-                <button class="btn btn-secondary btn-sm" onclick="copyBackendPath('${escapeJs(instPath)}')" title="Copy Installation Directory Path" style="font-size:0.72rem; padding:0.25rem 0.5rem;">📋 Copy Root</button>
-                <button class="btn btn-primary btn-sm" onclick="inspectBackendPath('${escapeJs(instPath)}')" title="Open in File Manager" style="font-size:0.72rem; padding:0.25rem 0.5rem;">📁 Inspect in Files</button>
+              <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                <button class="btn btn-secondary btn-sm" onclick="openEditBackendPathsModal('${escapeJs(b.backend_id)}', '${escapeJs(b.machine_id)}')" title="Edit Backend Paths" style="font-size:0.72rem; padding:0.25rem 0.5rem;">✏️ Edit Paths</button>
+                <button class="btn btn-secondary btn-sm" onclick="openRelocateBackendModal('${escapeJs(b.backend_id)}', '${escapeJs(b.machine_id)}', '${escapeJs(instPath)}', '${escapeJs(b.backend_name || b.backend_id)}')" title="Relocate Directory" style="font-size:0.72rem; padding:0.25rem 0.5rem;">🚚 Relocate</button>
+                <button class="btn btn-danger btn-sm" onclick="openDeleteBackendModal('${escapeJs(b.backend_id)}', '${escapeJs(b.machine_id)}', '${escapeJs(instPath)}', '${escapeJs(b.backend_name || b.backend_id)}')" title="Delete or Uninstall Backend" style="font-size:0.72rem; padding:0.25rem 0.5rem;">🗑️ Delete</button>
+                <button class="btn btn-secondary btn-sm" onclick="copyBackendPath('${escapeJs(instPath)}')" title="Copy Root" style="font-size:0.72rem; padding:0.25rem 0.5rem;">📋 Copy</button>
+                <button class="btn btn-primary btn-sm" onclick="inspectBackendPath('${escapeJs(instPath)}')" title="Inspect in Files" style="font-size:0.72rem; padding:0.25rem 0.5rem;">📁 Files</button>
               </div>
             </div>
 
@@ -7181,9 +7423,17 @@
     }
 
     async function scanSelectedMachineInventory() {
+      const scope = document.getElementById('backend-inventory-scope')?.value || 'machine';
       const mId = appState.selectedMachineId;
-      if (!mId) {
-        showToast('Please select a target machine first', 'warning');
+      if (scope === 'cluster' || !mId) {
+        showToast('Initiating cluster-wide backend scan across all nodes...', 'info');
+        const res = await apiRequest('/api/v1/backends/scan', { method: 'POST' });
+        if (res.ok) {
+          showToast(res.data.message || 'Scan dispatched', 'success');
+          setTimeout(() => loadClusterBackends(), 1500);
+        } else {
+          showToast('Failed to trigger scan: ' + res.error, 'error');
+        }
         return;
       }
       showToast(`Initiating physical backend inventory scan on ${mId}...`, 'info');
@@ -7199,10 +7449,13 @@
     }
 
     async function refreshBackendInventory() {
+      showToast('Refreshing backend inventory...', 'info');
       if (appState.selectedMachineId) {
         await loadDeviceDetails(appState.selectedMachineId);
-        showToast('Backend inventory refreshed', 'success');
+      } else {
+        await loadClusterBackends();
       }
+      showToast('Backend inventory refreshed', 'success');
     }
 
     function copyBackendPath(pathStr) {
@@ -7247,6 +7500,244 @@
       a.click();
       URL.revokeObjectURL(url);
       showToast('Backend inventory exported as JSON', 'success');
+    }
+
+    // Modal Interaction Handlers for Backend Management
+    function openEditBackendPathsModal(backendId, machineId) {
+      const all = [...currentBackendList, ...currentClusterBackends];
+      const b = all.find(x => x.backend_id === backendId) || {};
+      document.getElementById('edit-backend-id').value = backendId;
+      document.getElementById('edit-backend-machine-id').value = machineId || b.machine_id || 'control-plane-host';
+      document.getElementById('edit-backend-id-display').innerText = `${backendId} (${machineId || b.machine_id || 'control-plane-host'})`;
+      document.getElementById('edit-backend-name').value = b.backend_name || '';
+      document.getElementById('edit-backend-install-path').value = b.installation_path || '';
+      document.getElementById('edit-backend-exec-path').value = b.executable_path || '';
+      document.getElementById('edit-backend-config-path').value = b.config_path || '';
+      document.getElementById('edit-backend-log-path').value = b.log_path || '';
+      document.getElementById('edit-backend-data-path').value = b.data_path || '';
+      document.getElementById('edit-backend-service-name').value = b.service_name || '';
+      document.getElementById('modal-edit-backend-path').classList.add('active');
+    }
+
+    function closeEditBackendPathsModal() {
+      document.getElementById('modal-edit-backend-path').classList.remove('active');
+    }
+
+    async function submitEditBackendPaths() {
+      const backendId = document.getElementById('edit-backend-id').value;
+      const machineId = document.getElementById('edit-backend-machine-id').value;
+      const payload = {
+        action: 'update_path',
+        backend_id: backendId,
+        machine_id: machineId,
+        backend_name: document.getElementById('edit-backend-name').value.trim(),
+        installation_path: document.getElementById('edit-backend-install-path').value.trim(),
+        executable_path: document.getElementById('edit-backend-exec-path').value.trim(),
+        config_path: document.getElementById('edit-backend-config-path').value.trim(),
+        log_path: document.getElementById('edit-backend-log-path').value.trim(),
+        data_path: document.getElementById('edit-backend-data-path').value.trim(),
+        service_name: document.getElementById('edit-backend-service-name').value.trim()
+      };
+
+      showToast('Saving backend paths...', 'info');
+      const res = await apiRequest('/api/v1/backends/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        showToast('Backend paths updated successfully', 'success');
+        closeEditBackendPathsModal();
+        await refreshBackendInventory();
+      } else {
+        showToast('Error updating backend: ' + res.error, 'error');
+      }
+    }
+
+    function openRelocateBackendModal(backendId, machineId, currentPath, backendName) {
+      document.getElementById('relocate-backend-id').value = backendId;
+      document.getElementById('relocate-backend-machine-id').value = machineId || 'control-plane-host';
+      document.getElementById('relocate-backend-title-display').innerText = `${backendName || backendId} (${machineId || 'host'})`;
+      document.getElementById('relocate-backend-current-path').value = currentPath || '';
+      document.getElementById('relocate-backend-new-path').value = '';
+      document.getElementById('relocate-backend-backup').checked = true;
+      document.getElementById('modal-relocate-backend').classList.add('active');
+    }
+
+    function closeRelocateBackendModal() {
+      document.getElementById('modal-relocate-backend').classList.remove('active');
+    }
+
+    async function submitRelocateBackend() {
+      const backendId = document.getElementById('relocate-backend-id').value;
+      const machineId = document.getElementById('relocate-backend-machine-id').value;
+      const currentPath = document.getElementById('relocate-backend-current-path').value;
+      const newPath = document.getElementById('relocate-backend-new-path').value.trim();
+      const backupOld = document.getElementById('relocate-backend-backup').checked;
+
+      if (!newPath) {
+        showToast('Please provide a new destination path', 'warning');
+        return;
+      }
+
+      showToast('Relocating backend installation...', 'info');
+      const res = await apiRequest('/api/v1/backends/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'relocate',
+          backend_id: backendId,
+          machine_id: machineId,
+          current_path: currentPath,
+          new_path: newPath,
+          backup_old: backupOld
+        })
+      });
+
+      if (res.ok) {
+        showToast('Backend relocated successfully to ' + newPath, 'success');
+        closeRelocateBackendModal();
+        await refreshBackendInventory();
+      } else {
+        showToast('Relocation error: ' + res.error, 'error');
+      }
+    }
+
+    function openDeleteBackendModal(backendId, machineId, currentPath, backendName) {
+      document.getElementById('delete-backend-id').value = backendId;
+      document.getElementById('delete-backend-machine-id').value = machineId || 'control-plane-host';
+      document.getElementById('delete-backend-path').value = currentPath || '';
+      document.getElementById('delete-backend-display').innerText = `${backendName || backendId}`;
+      document.getElementById('delete-backend-path-display').innerText = `Path: ${currentPath || 'N/A'}`;
+      document.querySelector('input[name="delete-mode-radio"][value="unregister"]').checked = true;
+      toggleDeleteConfirmationUi('unregister');
+      document.getElementById('delete-confirm-input').value = '';
+      document.getElementById('modal-delete-backend').classList.add('active');
+    }
+
+    function closeDeleteBackendModal() {
+      document.getElementById('modal-delete-backend').classList.remove('active');
+    }
+
+    function toggleDeleteConfirmationUi(mode) {
+      const box = document.getElementById('delete-confirmation-box');
+      const btn = document.getElementById('btn-confirm-delete-backend');
+      if (mode === 'purge') {
+        if (box) box.style.display = 'block';
+        if (btn) btn.disabled = true;
+      } else {
+        if (box) box.style.display = 'none';
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function validateDeleteConfirmation() {
+      const val = (document.getElementById('delete-confirm-input')?.value || '').trim();
+      const btn = document.getElementById('btn-confirm-delete-backend');
+      if (btn) btn.disabled = (val !== 'CONFIRM DELETE');
+    }
+
+    async function submitDeleteBackend() {
+      const backendId = document.getElementById('delete-backend-id').value;
+      const machineId = document.getElementById('delete-backend-machine-id').value;
+      const targetPath = document.getElementById('delete-backend-path').value;
+      const mode = document.querySelector('input[name="delete-mode-radio"]:checked')?.value || 'unregister';
+      const purgeFiles = (mode === 'purge');
+      const confirmation = document.getElementById('delete-confirm-input')?.value || '';
+
+      if (purgeFiles && confirmation !== 'CONFIRM DELETE') {
+        showToast('Type CONFIRM DELETE to authorize purge', 'warning');
+        return;
+      }
+
+      showToast('Removing backend...', 'info');
+      const res = await apiRequest('/api/v1/backends/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete',
+          backend_id: backendId,
+          machine_id: machineId,
+          path: targetPath,
+          purge_files: purgeFiles,
+          confirmation
+        })
+      });
+
+      if (res.ok) {
+        showToast('Backend deleted successfully', 'success');
+        closeDeleteBackendModal();
+        await refreshBackendInventory();
+      } else {
+        showToast('Delete error: ' + res.error, 'error');
+      }
+    }
+
+    function openAddBackendModal() {
+      const select = document.getElementById('add-backend-machine-select');
+      if (select) {
+        const options = [
+          `<option value="control-plane-host">Primary Control Plane (Local Host)</option>`,
+          ...(appState.machines || []).map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.friendly_name || m.hostname || m.id)} (${escapeHtml(m.os || 'Host')})</option>`)
+        ];
+        select.innerHTML = options.join('');
+        if (appState.selectedMachineId) {
+          select.value = appState.selectedMachineId;
+        }
+      }
+      document.getElementById('add-backend-name').value = '';
+      document.getElementById('add-backend-install-path').value = '';
+      document.getElementById('add-backend-exec-path').value = '';
+      document.getElementById('add-backend-config-path').value = '';
+      document.getElementById('add-backend-log-path').value = '';
+      document.getElementById('add-backend-data-path').value = '';
+      document.getElementById('modal-add-backend').classList.add('active');
+    }
+
+    function closeAddBackendModal() {
+      document.getElementById('modal-add-backend').classList.remove('active');
+    }
+
+    async function submitAddBackend() {
+      const machineId = document.getElementById('add-backend-machine-select').value;
+      const name = document.getElementById('add-backend-name').value.trim();
+      const category = document.getElementById('add-backend-category').value;
+      const installPath = document.getElementById('add-backend-install-path').value.trim();
+      const execPath = document.getElementById('add-backend-exec-path').value.trim();
+      const configPath = document.getElementById('add-backend-config-path').value.trim();
+      const logPath = document.getElementById('add-backend-log-path').value.trim();
+      const dataPath = document.getElementById('add-backend-data-path').value.trim();
+
+      if (!name || !installPath) {
+        showToast('Please enter both Backend Name and Installation Path', 'warning');
+        return;
+      }
+
+      showToast('Registering custom backend...', 'info');
+      const res = await apiRequest('/api/v1/backends/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'add',
+          machine_id: machineId,
+          backend_name: name,
+          category,
+          installation_path: installPath,
+          executable_path: execPath,
+          config_path: configPath,
+          log_path: logPath,
+          data_path: dataPath
+        })
+      });
+
+      if (res.ok) {
+        showToast('Custom backend registered successfully', 'success');
+        closeAddBackendModal();
+        await refreshBackendInventory();
+      } else {
+        showToast('Registration error: ' + res.error, 'error');
+      }
     }
 
     function hashStringJs(str) {
@@ -12411,9 +12902,12 @@ class PathRegistryView {
 
       <!-- Tab 0: Physical Backend Inventory & Real OS Paths -->
       <div id="tab-inventory" class="tab-content card">
-        <div class="table-controls" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <div class="table-controls" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
           <input type="text" id="inventory-search" placeholder="Search physical paths, backend names, hosts or executables..." onkeyup="PathRegistryView.filterInventoryTable()" style="width:100%; max-width:400px; padding:0.5rem; border-radius:4px; border:1px solid #334155; background:#0f172a; color:#f8fafc;" />
-          <span style="font-size:0.85rem; color:#94a3b8;" id="inventory-count-label">0 backends registered</span>
+          <div style="display:flex; align-items:center; gap:0.75rem;">
+            <button class="btn btn-primary btn-sm" onclick="PathRegistryView.openAddBackend()">➕ Add Backend</button>
+            <span style="font-size:0.85rem; color:#94a3b8;" id="inventory-count-label">0 backends registered</span>
+          </div>
         </div>
         <table class="data-table" style="width:100%; border-collapse:collapse;">
           <thead>
@@ -12489,17 +12983,33 @@ class PathRegistryView {
     const inventoryCount = document.getElementById('inventory-count-label');
 
     try {
-      const api = window.stationApp.api;
+      const api = window.stationApp ? window.stationApp.api : null;
+      if (!api) {
+        if (inventoryBody) inventoryBody.innerHTML = '<tr><td colspan="8" class="text-center text-warning" style="padding:1.5rem;">API client not ready yet. <button class="btn btn-secondary btn-sm" onclick="PathRegistryView.refresh()">🔄 Retry</button></td></tr>';
+        return;
+      }
       
-      // Load both paths registry and backend inventory in parallel
-      const [pathsRes, invRes] = await Promise.all([
-        api.request('/api/v1/registry/paths').catch(() => ({ records: [], conflicts: [] })),
-        api.request('/api/v1/backends/paths').catch(() => ({ inventory: [], conflicts: [] }))
-      ]);
+      // Load both paths registry and backend inventory in parallel with proper error tracking
+      let pathsRes = { records: [], conflicts: [] };
+      let invRes = { inventory: [], conflicts: [] };
+      let pathsError = null;
+      let invError = null;
 
-      const paths = pathsRes.records || [];
-      const conflicts = invRes.conflicts || pathsRes.conflicts || [];
-      const inventory = invRes.inventory || [];
+      try {
+        pathsRes = await api.request('/api/v1/registry/paths');
+      } catch (e) {
+        pathsError = e;
+      }
+
+      try {
+        invRes = await api.request('/api/v1/backends/paths');
+      } catch (e) {
+        invError = e;
+      }
+
+      const paths = (pathsRes && pathsRes.records) || [];
+      const conflicts = (invRes && invRes.conflicts) || (pathsRes && pathsRes.conflicts) || [];
+      const inventory = (invRes && invRes.inventory) || [];
 
       // Render Conflicts if any
       if (conflicts.length > 0) {
@@ -12509,13 +13019,13 @@ class PathRegistryView {
           conflictsList.innerHTML = conflicts.map(c => `
             <div class="conflict-item border-fail" style="background:#ef444415; border:1px solid #ef444450; padding:0.75rem; border-radius:4px; margin-bottom:0.5rem; display:flex; justify-content:space-between; align-items:center;">
               <div>
-                <strong>Path:</strong> <code>${c.canonical_path}</code> on <strong>${c.machine_id}</strong><br/>
-                <strong>Existing Owner:</strong> <span class="badge" style="background:#3b82f630; color:#60a5fa;">${c.existing_owner_backend}</span> vs 
-                <strong>Competing Claim:</strong> <span class="badge" style="background:#ef444430; color:#f87171;">${c.competing_owner_backend}</span>
+                <strong>Path:</strong> <code>${escapeHtmlSafe(c.canonical_path)}</code> on <strong>${escapeHtmlSafe(c.machine_id)}</strong><br/>
+                <strong>Existing Owner:</strong> <span class="badge" style="background:#3b82f630; color:#60a5fa;">${escapeHtmlSafe(c.existing_owner_backend)}</span> vs 
+                <strong>Competing Claim:</strong> <span class="badge" style="background:#ef444430; color:#f87171;">${escapeHtmlSafe(c.competing_owner_backend)}</span>
               </div>
               <div class="conflict-actions" style="display:flex; gap:0.5rem;">
-                <button class="btn-sm btn-primary" onclick="PathRegistryView.resolveConflict('${c.conflict_id}', 'keep_existing')">Keep Existing</button>
-                <button class="btn-sm btn-danger" onclick="PathRegistryView.resolveConflict('${c.conflict_id}', 'accept_competing')">Reassign</button>
+                <button class="btn-sm btn-primary" onclick="PathRegistryView.resolveConflict('${escapeJsSafe(c.conflict_id)}', 'keep_existing')">Keep Existing</button>
+                <button class="btn-sm btn-danger" onclick="PathRegistryView.resolveConflict('${escapeJsSafe(c.conflict_id)}', 'accept_competing')">Reassign</button>
               </div>
             </div>
           `).join('');
@@ -12536,12 +13046,12 @@ class PathRegistryView {
                   ${item.is_control_plane ? '👑 Ender Core' : `💎 Pillar #${item.pillar_index}`}
                 </strong>
                 <span class="badge" style="font-size:0.7rem; background:${item.status === 'online' ? '#10b98125' : '#ef444425'}; color:${item.status === 'online' ? '#34d399' : '#f87171'};">
-                  ● ${item.status}
+                  ● ${escapeHtmlSafe(item.status)}
                 </span>
               </div>
-              <div style="font-size:0.75rem; color:#e2e8f0; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${item.backend_name}</div>
-              <div style="font-size:0.7rem; color:#94a3b8; font-family:monospace; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${item.canonical_path}">
-                ${item.canonical_path}
+              <div style="font-size:0.75rem; color:#e2e8f0; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${escapeHtmlSafe(item.backend_name)}</div>
+              <div style="font-size:0.7rem; color:#94a3b8; font-family:monospace; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${escapeHtmlSafe(item.canonical_path)}">
+                ${escapeHtmlSafe(item.canonical_path)}
               </div>
             </div>
           `).join('');
@@ -12551,14 +13061,16 @@ class PathRegistryView {
       // Render Tab 0: Physical Backend Inventory
       if (inventoryCount) inventoryCount.innerText = `${inventory.length} backends registered`;
       if (inventoryBody) {
-        if (inventory.length === 0) {
-          inventoryBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted" style="padding:1.5rem;">No active backends discovered in fleet.</td></tr>';
+        if (invError) {
+          inventoryBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger" style="padding:1.5rem;">⚠️ Failed to load backend inventory: ${escapeHtmlSafe(invError.message || String(invError))} <button class="btn btn-secondary btn-sm" onclick="PathRegistryView.refresh()" style="margin-left:0.5rem;">🔄 Retry</button></td></tr>`;
+        } else if (inventory.length === 0) {
+          inventoryBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted" style="padding:2rem;">No active backends registered in fleet.<br/><div style="margin-top:0.75rem;"><button class="btn btn-primary btn-sm" onclick="PathRegistryView.openAddBackend()">➕ Register Custom Backend</button> <button class="btn btn-secondary btn-sm" onclick="PathRegistryView.runReconciliationScan()" style="margin-left:0.5rem;">🔍 Scan Fleet</button></div></td></tr>`;
         } else {
           inventoryBody.innerHTML = inventory.map(b => `
             <tr class="inv-row" style="border-bottom:1px solid #1e293b; font-size:0.85rem;">
               <td style="padding:0.75rem 0.5rem;">
-                <div style="font-weight:600; color:#f8fafc;">${b.backend_name}</div>
-                <small style="color:#94a3b8; font-family:monospace;">${b.backend_id} (${b.machine_id})</small>
+                <div style="font-weight:600; color:#f8fafc;">${escapeHtmlSafe(b.backend_name || b.backend_id)}</div>
+                <small style="color:#94a3b8; font-family:monospace;">${escapeHtmlSafe(b.backend_id)} (${escapeHtmlSafe(b.machine_id)})</small>
               </td>
               <td style="padding:0.75rem 0.5rem;">
                 <span class="badge" style="background:#7c3aed25; color:#c084fc; border:1px solid #7c3aed50;">
@@ -12567,26 +13079,28 @@ class PathRegistryView {
               </td>
               <td style="padding:0.75rem 0.5rem;">
                 <code style="background:#020617; padding:0.2rem 0.4rem; border-radius:3px; color:#38bdf8; font-size:0.8rem; word-break:break-all;">
-                  ${b.canonical_path}
+                  ${escapeHtmlSafe(b.canonical_path || b.installation_path || 'N/A')}
                 </code>
               </td>
               <td style="padding:0.75rem 0.5rem;">
-                <div style="font-family:monospace; font-size:0.75rem; color:#cbd5e1;">${b.executable_path}</div>
-                <small style="color:#94a3b8;">PID: <strong>${b.runtime_pid || 'N/A'}</strong></small>
+                <div style="font-family:monospace; font-size:0.75rem; color:#cbd5e1;">${escapeHtmlSafe(b.executable_path || 'N/A')}</div>
+                <small style="color:#94a3b8;">PID: <strong>${escapeHtmlSafe(String(b.runtime_pid || 'N/A'))}</strong></small>
               </td>
               <td style="padding:0.75rem 0.5rem;">
-                <div style="font-family:monospace; font-size:0.75rem; color:#94a3b8;">data: ${b.data_path || 'N/A'}</div>
+                <div style="font-family:monospace; font-size:0.75rem; color:#94a3b8;">data: ${escapeHtmlSafe(b.data_path || 'N/A')}</div>
               </td>
               <td style="padding:0.75rem 0.5rem;">
-                <span class="status-pill status-${b.status.toLowerCase()}">
-                  ● ${b.status}
+                <span class="status-pill status-${(b.status || 'unknown').toLowerCase()}">
+                  ● ${escapeHtmlSafe(b.status || 'unknown')}
                 </span>
               </td>
               <td style="padding:0.75rem 0.5rem;">
                 <span style="color:#10b981; font-weight:600; font-size:0.8rem;">✓ 1 Host / Path</span>
               </td>
-              <td style="padding:0.75rem 0.5rem;">
-                <button class="btn-sm" onclick="PathRegistryView.inspectBackend('${b.backend_id}')" style="padding:2px 8px; font-size:0.75rem;">Inspect</button>
+              <td style="padding:0.75rem 0.5rem; white-space:nowrap;">
+                <button class="btn-sm" onclick="PathRegistryView.openEditBackend('${escapeJsSafe(b.backend_id)}', '${escapeJsSafe(b.machine_id)}')" style="padding:2px 6px; font-size:0.75rem; margin-right:3px;">✏️ Edit</button>
+                <button class="btn-sm" onclick="PathRegistryView.openRelocateBackend('${escapeJsSafe(b.backend_id)}', '${escapeJsSafe(b.machine_id)}', '${escapeJsSafe(b.canonical_path || b.installation_path)}', '${escapeJsSafe(b.backend_name || b.backend_id)}')" style="padding:2px 6px; font-size:0.75rem; margin-right:3px;">🚚 Move</button>
+                <button class="btn-sm btn-danger" onclick="PathRegistryView.openDeleteBackend('${escapeJsSafe(b.backend_id)}', '${escapeJsSafe(b.machine_id)}', '${escapeJsSafe(b.canonical_path || b.installation_path)}', '${escapeJsSafe(b.backend_name || b.backend_id)}')" style="padding:2px 6px; font-size:0.75rem;">🗑️ Delete</button>
               </td>
             </tr>
           `).join('');
@@ -12732,9 +13246,97 @@ class PathRegistryView {
     }
   }
 
+  static openEditBackend(backendId, machineId) {
+    if (typeof window !== 'undefined' && typeof window.openEditBackendPathsModal === 'function') {
+      window.openEditBackendPathsModal(backendId, machineId);
+    } else {
+      const newPath = prompt(`Enter new canonical installation path for backend ${backendId}:`);
+      if (!newPath) return;
+      this.submitBackendAction({ action: 'update_path', backend_id: backendId, machine_id: machineId, installation_path: newPath });
+    }
+  }
+
+  static openRelocateBackend(backendId, machineId, currentPath, backendName) {
+    if (typeof window !== 'undefined' && typeof window.openRelocateBackendModal === 'function') {
+      window.openRelocateBackendModal(backendId, machineId, currentPath, backendName);
+    } else {
+      const newPath = prompt(`Relocate backend ${backendName || backendId} from [${currentPath}] to new destination path:`);
+      if (!newPath) return;
+      this.submitBackendAction({ action: 'relocate', backend_id: backendId, machine_id: machineId, current_path: currentPath, new_path: newPath, backup_old: true });
+    }
+  }
+
+  static openDeleteBackend(backendId, machineId, currentPath, backendName) {
+    if (typeof window !== 'undefined' && typeof window.openDeleteBackendModal === 'function') {
+      window.openDeleteBackendModal(backendId, machineId, currentPath, backendName);
+    } else {
+      if (!confirm(`Are you sure you want to delete backend [${backendName || backendId}]?`)) return;
+      const purge = confirm('Do you also want to PURGE the physical files from disk? Cancel = unregister metadata only.');
+      let confirmation = '';
+      if (purge) {
+        confirmation = prompt('Type CONFIRM DELETE to authorize physical file purge:');
+        if (confirmation !== 'CONFIRM DELETE') {
+          alert('Purge aborted: exact confirmation phrase not matched.');
+          return;
+        }
+      }
+      this.submitBackendAction({ action: 'delete', backend_id: backendId, machine_id: machineId, path: currentPath, purge_files: purge, confirmation });
+    }
+  }
+
+  static openAddBackend(machineId) {
+    if (typeof window !== 'undefined' && typeof window.openAddBackendModal === 'function') {
+      window.openAddBackendModal();
+    } else {
+      const name = prompt('Enter backend name:');
+      if (!name) return;
+      const installPath = prompt('Enter installation directory path:');
+      if (!installPath) return;
+      this.submitBackendAction({ action: 'add', machine_id: machineId || 'control-plane-host', backend_name: name, installation_path: installPath });
+    }
+  }
+
+  static copyPath(p) {
+    if (!p) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(p);
+      alert('Copied to clipboard: ' + p);
+    } else {
+      prompt('Copy path:', p);
+    }
+  }
+
+  static async submitBackendAction(payload) {
+    try {
+      const api = window.stationApp?.api || (typeof apiClient !== 'undefined' ? apiClient : null);
+      if (!api) {
+        alert('API client not available');
+        return;
+      }
+      const res = await api.request('/api/v1/backends/manage', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      alert(`Success: ${res.message || 'Operation completed'}`);
+      PathRegistryView.loadRegistryData();
+    } catch (err) {
+      alert(`Backend operation failed: ${err.message}`);
+    }
+  }
+
   static refresh() {
     PathRegistryView.loadRegistryData();
   }
+}
+
+function escapeHtmlSafe(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function escapeJsSafe(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 if (typeof window !== 'undefined') {

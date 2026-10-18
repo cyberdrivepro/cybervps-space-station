@@ -702,22 +702,53 @@ async function handleDoctor() {
     console.log(`[Python]      Python 3 NOT detected (Excluding WindowsApps placeholder) ❌`);
   }
 
-  // Outbound Egress Checks
-  console.log('[Network] Checking outbound HTTPS reachability...');
+  // Outbound Egress & DNS Checks
+  const isNetMode = args.includes('--network') || args.includes('-n') || args.includes('--net');
+  console.log('[Network] Checking outbound HTTPS reachability & DNS...');
+  const dns = require('dns');
   const checkUrl = (u) => new Promise(r => {
     try {
       const parsed = new URL(u);
-      const req = https.get({ hostname: parsed.hostname, path: '/', timeout: 4000 }, (res) => r(res.statusCode));
-      req.on('error', () => r(null));
-      req.on('timeout', () => { req.destroy(); r(null); });
-    } catch (_) { r(null); }
+      const t0 = Date.now();
+      const req = https.get({ hostname: parsed.hostname, path: parsed.pathname || '/', timeout: 4000 }, (res) => r({ code: res.statusCode, ms: Date.now() - t0 }));
+      req.on('error', (e) => r({ error: e.message }));
+      req.on('timeout', () => { req.destroy(); r({ error: 'Timeout' }); });
+    } catch (e) { r({ error: e.message }); }
   });
 
-  const ghStatus = await checkUrl('https://github.com');
-  console.log(`[Egress] GitHub HTTPS:    ${ghStatus ? 'REACHABLE ✅' : 'UNREACHABLE ❌'}`);
+  const ghRes = await checkUrl('https://github.com');
+  console.log(`[Egress] GitHub HTTPS:    ${ghRes && ghRes.code ? `REACHABLE (${ghRes.code} OK, ${ghRes.ms}ms) ✅` : 'UNREACHABLE ❌'}`);
 
-  const rwStatus = await checkUrl('https://cybervps-space-station.up.railway.app/health');
-  console.log(`[Egress] Railway Backend: ${rwStatus ? 'REACHABLE (200 OK) ✅' : 'UNREACHABLE ❌'}`);
+  const rwRes = await checkUrl('https://cybervps-space-station.up.railway.app/health');
+  console.log(`[Egress] Railway Backend: ${rwRes && rwRes.code === 200 ? `REACHABLE (200 OK, ${rwRes.ms}ms) ✅` : 'UNREACHABLE ❌'}`);
+
+  const cfg = loadConfig();
+  const backends = (cfg.server_urls || [cfg.server_url || 'https://cybervps-space-station.up.railway.app'])
+    .filter(u => !u.includes('cybervps-render-control'));
+
+  console.log(`\n[Backend HA Mesh] (${backends.length} backends configured):`);
+  for (const b of backends) {
+    const res = await checkUrl(`${b.replace(/\/+$/, '')}/health`);
+    if (res && res.code === 200) {
+      console.log(`  - ${b}: ONLINE (${res.ms}ms) ✅`);
+    } else {
+      console.log(`  - ${b}: UNREACHABLE (${res && res.error ? res.error : 'HTTP ' + (res ? res.code : 'Fail')}) ❌`);
+    }
+  }
+
+  if (isNetMode) {
+    console.log('\n[Local Network Interfaces]');
+    const ifaces = os.networkInterfaces();
+    for (const [name, addrs] of Object.entries(ifaces)) {
+      for (const a of addrs || []) {
+        if (!a.internal) {
+          console.log(`  * ${name} (${a.family}): ${a.address}`);
+        }
+      }
+    }
+  } else {
+    console.log("\n👉 Run 'cybervps doctor --network' for interface details.");
+  }
 
   console.log('\n✅ Diagnostic scan complete.');
   console.log('================================================================');
@@ -757,8 +788,9 @@ function handleUninstall() {
 
   if (process.platform === 'win32') {
     try {
+      execSync('schtasks /Delete /TN "CyberVPSAgent" /F', { stdio: 'ignore' });
       execSync('schtasks /Delete /TN "CyberVPS-Space-Station-Agent" /F', { stdio: 'ignore' });
-      console.log('[*] Removed Windows Scheduled Task.');
+      console.log('[*] Removed Windows Scheduled Tasks.');
     } catch (_) {}
     try {
       execSync('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v CyberVPS-Agent /f', { stdio: 'ignore' });

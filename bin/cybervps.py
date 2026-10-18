@@ -406,26 +406,92 @@ def cmd_logs():
         print(f"[!] Could not read logs: {e}")
 
 
-def cmd_doctor():
+def cmd_doctor(args=None):
+    if args is None:
+        args = sys.argv[2:] if len(sys.argv) > 2 else []
+    is_network = any(a in args for a in ["--network", "-n", "--net"])
     print("================================================================")
-    print("   CYBERVPS SPACE STATION - SYSTEM DOCTOR")
+    print("   CYBERVPS SPACE STATION - SYSTEM DOCTOR & NETWORK DIAGNOSTICS")
     print("================================================================")
     print(f"  Python Runtime   : {sys.executable} ({platform.python_version()})")
+    is_user_python = "users" in sys.executable.lower() or "appdata" in sys.executable.lower()
+    if is_user_python:
+        print(f"  Python Scope     : User Profile / AppData (Requires User Task/Daemon)")
+    else:
+        print(f"  Python Scope     : System-Wide / Global")
     print(f"  Operating System : {platform.system()} {platform.release()} ({platform.machine()})")
     print(f"  Host Architecture: {platform.architecture()[0]}")
     cfg = load_config()
-    print(f"  Config Server    : {cfg.get('server_url')}")
+    server_url = cfg.get("server_url", "https://cybervps-space-station.up.railway.app")
+    print(f"  Config Server    : {server_url}")
     print(f"  Config Machine   : {cfg.get('machine_id')}")
     token = cfg.get("token", "")
-    print(f"  Token State      : {'CONFIGURED (' + token[:8] + '...)' if token else 'NOT CONFIGURED'}")
+    token_preview = (token[:8] + "..." + token[-4:]) if token and len(token) > 12 else (token or "None")
+    print(f"  Token State      : {'CONFIGURED (' + token_preview + ')' if token else 'NOT CONFIGURED'}")
     script = get_agent_script()
-    print(f"  Agent Script     : {'FOUND' if os.path.exists(script) else 'MISSING'} ({script})")
+    print(f"  Agent Script     : {'FOUND ✅' if os.path.exists(script) else 'MISSING ❌'} ({script})")
+
+    # Supervisor / Task check
+    task_info = "Not Configured"
+    if platform.system() == "Windows":
+        try:
+            q = subprocess.run(["schtasks", "/Query", "/TN", "CyberVPSAgent", "/FO", "CSV", "/NH"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=3)
+            if q.returncode == 0 and "CyberVPSAgent" in q.stdout:
+                task_info = "Installed & Active (CyberVPSAgent) ✅"
+        except Exception:
+            pass
+    elif os.path.exists("/etc/systemd/system/cybervps-agent.service"):
+        task_info = "systemd system service (/etc/systemd/system/cybervps-agent.service) ✅"
+    user_svc = os.path.expanduser("~/.config/systemd/user/cybervps-agent.service")
+    if os.path.exists(user_svc):
+        task_info = f"systemd user service ({user_svc}) ✅"
+    print(f"  Supervisor Task  : {task_info}")
+
+    # Outbound Egress & DNS Checks
+    print("\n  [Network Connectivity & Egress Diagnostics]")
     try:
-        req = urllib.request.Request(f"{cfg.get('server_url').rstrip('/')}/health", headers={"User-Agent": "CyberVPS-Doctor/1.0"})
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            print(f"  Backend Reachable: HTTP {resp.status} (OK)")
+        from urllib.parse import urlparse
+        host = urlparse(server_url).hostname or "cybervps-space-station.up.railway.app"
+        t_dns = time.time()
+        resolved_ip = socket.gethostbyname(host)
+        dns_ms = int((time.time() - t_dns) * 1000)
+        print(f"  * DNS Resolution : {host} -> {resolved_ip} ({dns_ms}ms) ✅")
     except Exception as e:
-        print(f"  Backend Reachable: UNREACHABLE ({e})")
+        print(f"  * DNS Resolution : FAILED ({e}) ❌")
+
+    try:
+        t_http = time.time()
+        req = urllib.request.Request(f"{server_url.rstrip('/')}/health", headers={"User-Agent": "CyberVPS-Doctor/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            http_ms = int((time.time() - t_http) * 1000)
+            print(f"  * Control Plane  : HTTP {resp.status} OK ({http_ms}ms) ✅")
+    except Exception as e:
+        print(f"  * Control Plane  : UNREACHABLE ({e}) ❌")
+
+    backends = [b for b in (cfg.get("server_urls") or [server_url, "https://cybervps-space-station.up.railway.app"]) if "cybervps-render-control" not in b]
+    print(f"\n  * Backend HA Mesh ({len(backends)} configured):")
+    for b_url in backends:
+        try:
+            t0 = time.time()
+            req = urllib.request.Request(f"{b_url.rstrip('/')}/health", headers={"User-Agent": "CyberVPS-Doctor/1.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                lat = int((time.time() - t0) * 1000)
+                print(f"    - {b_url}: ONLINE ({lat}ms) ✅")
+        except Exception as e:
+            print(f"    - {b_url}: UNREACHABLE ({e}) ❌")
+
+    if not is_network:
+        print("\n  👉 Run 'cybervps doctor --network' for deep interface and socket checks.")
+    else:
+        print("\n  [Local Network Interfaces]")
+        try:
+            host_fqdn = socket.getfqdn()
+            local_ips = socket.gethostbyname_ex(host_fqdn)[2]
+            print(f"  * Host FQDN      : {host_fqdn}")
+            print(f"  * Local IP List  : {', '.join(local_ips)}")
+        except Exception as e:
+            print(f"  * Local IP List  : Unavailable ({e})")
+
     print("================================================================")
 
 
@@ -633,7 +699,7 @@ def main():
     elif command in ["version", "-v", "--version"]:
         print(f"CyberVPS Space Station v{VERSION} ({platform.system().lower()}-{platform.machine().lower()})")
     elif command in ["doctor", "check"]:
-        cmd_doctor()
+        cmd_doctor(cmd_args)
     elif command in ["replit", "lab"]:
         cmd_replit(cmd_args)
     elif command in ["help", "--help", "-h"]:

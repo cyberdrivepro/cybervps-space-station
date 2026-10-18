@@ -105,7 +105,7 @@ chmod +x "$CVPS_DIR/doctor.sh" 2>/dev/null || true
 cat <<EOF > "$CVPS_DIR/config.json"
 {
   "server_url": "$SERVER_URL",
-  "server_urls": ["$SERVER_URL", "https://cybervps-space-station.up.railway.app", "https://cybervps-render-control.onrender.com"],
+  "server_urls": ["$SERVER_URL", "https://cybervps-space-station.up.railway.app"],
   "token": "$TOKEN",
   "machine_id": "$MACHINE_ID",
   "updated_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

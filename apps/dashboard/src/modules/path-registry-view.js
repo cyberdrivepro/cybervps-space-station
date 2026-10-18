@@ -68,9 +68,12 @@ class PathRegistryView {
 
       <!-- Tab 0: Physical Backend Inventory & Real OS Paths -->
       <div id="tab-inventory" class="tab-content card">
-        <div class="table-controls" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <div class="table-controls" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
           <input type="text" id="inventory-search" placeholder="Search physical paths, backend names, hosts or executables..." onkeyup="PathRegistryView.filterInventoryTable()" style="width:100%; max-width:400px; padding:0.5rem; border-radius:4px; border:1px solid #334155; background:#0f172a; color:#f8fafc;" />
-          <span style="font-size:0.85rem; color:#94a3b8;" id="inventory-count-label">0 backends registered</span>
+          <div style="display:flex; align-items:center; gap:0.75rem;">
+            <button class="btn btn-primary btn-sm" onclick="PathRegistryView.openAddBackend()">➕ Add Backend</button>
+            <span style="font-size:0.85rem; color:#94a3b8;" id="inventory-count-label">0 backends registered</span>
+          </div>
         </div>
         <table class="data-table" style="width:100%; border-collapse:collapse;">
           <thead>
@@ -146,17 +149,33 @@ class PathRegistryView {
     const inventoryCount = document.getElementById('inventory-count-label');
 
     try {
-      const api = window.stationApp.api;
+      const api = window.stationApp ? window.stationApp.api : null;
+      if (!api) {
+        if (inventoryBody) inventoryBody.innerHTML = '<tr><td colspan="8" class="text-center text-warning" style="padding:1.5rem;">API client not ready yet. <button class="btn btn-secondary btn-sm" onclick="PathRegistryView.refresh()">🔄 Retry</button></td></tr>';
+        return;
+      }
       
-      // Load both paths registry and backend inventory in parallel
-      const [pathsRes, invRes] = await Promise.all([
-        api.request('/api/v1/registry/paths').catch(() => ({ records: [], conflicts: [] })),
-        api.request('/api/v1/backends/paths').catch(() => ({ inventory: [], conflicts: [] }))
-      ]);
+      // Load both paths registry and backend inventory in parallel with proper error tracking
+      let pathsRes = { records: [], conflicts: [] };
+      let invRes = { inventory: [], conflicts: [] };
+      let pathsError = null;
+      let invError = null;
 
-      const paths = pathsRes.records || [];
-      const conflicts = invRes.conflicts || pathsRes.conflicts || [];
-      const inventory = invRes.inventory || [];
+      try {
+        pathsRes = await api.request('/api/v1/registry/paths');
+      } catch (e) {
+        pathsError = e;
+      }
+
+      try {
+        invRes = await api.request('/api/v1/backends/paths');
+      } catch (e) {
+        invError = e;
+      }
+
+      const paths = (pathsRes && pathsRes.records) || [];
+      const conflicts = (invRes && invRes.conflicts) || (pathsRes && pathsRes.conflicts) || [];
+      const inventory = (invRes && invRes.inventory) || [];
 
       // Render Conflicts if any
       if (conflicts.length > 0) {
@@ -166,13 +185,13 @@ class PathRegistryView {
           conflictsList.innerHTML = conflicts.map(c => `
             <div class="conflict-item border-fail" style="background:#ef444415; border:1px solid #ef444450; padding:0.75rem; border-radius:4px; margin-bottom:0.5rem; display:flex; justify-content:space-between; align-items:center;">
               <div>
-                <strong>Path:</strong> <code>${c.canonical_path}</code> on <strong>${c.machine_id}</strong><br/>
-                <strong>Existing Owner:</strong> <span class="badge" style="background:#3b82f630; color:#60a5fa;">${c.existing_owner_backend}</span> vs 
-                <strong>Competing Claim:</strong> <span class="badge" style="background:#ef444430; color:#f87171;">${c.competing_owner_backend}</span>
+                <strong>Path:</strong> <code>${escapeHtmlSafe(c.canonical_path)}</code> on <strong>${escapeHtmlSafe(c.machine_id)}</strong><br/>
+                <strong>Existing Owner:</strong> <span class="badge" style="background:#3b82f630; color:#60a5fa;">${escapeHtmlSafe(c.existing_owner_backend)}</span> vs 
+                <strong>Competing Claim:</strong> <span class="badge" style="background:#ef444430; color:#f87171;">${escapeHtmlSafe(c.competing_owner_backend)}</span>
               </div>
               <div class="conflict-actions" style="display:flex; gap:0.5rem;">
-                <button class="btn-sm btn-primary" onclick="PathRegistryView.resolveConflict('${c.conflict_id}', 'keep_existing')">Keep Existing</button>
-                <button class="btn-sm btn-danger" onclick="PathRegistryView.resolveConflict('${c.conflict_id}', 'accept_competing')">Reassign</button>
+                <button class="btn-sm btn-primary" onclick="PathRegistryView.resolveConflict('${escapeJsSafe(c.conflict_id)}', 'keep_existing')">Keep Existing</button>
+                <button class="btn-sm btn-danger" onclick="PathRegistryView.resolveConflict('${escapeJsSafe(c.conflict_id)}', 'accept_competing')">Reassign</button>
               </div>
             </div>
           `).join('');
@@ -193,12 +212,12 @@ class PathRegistryView {
                   ${item.is_control_plane ? '👑 Ender Core' : `💎 Pillar #${item.pillar_index}`}
                 </strong>
                 <span class="badge" style="font-size:0.7rem; background:${item.status === 'online' ? '#10b98125' : '#ef444425'}; color:${item.status === 'online' ? '#34d399' : '#f87171'};">
-                  ● ${item.status}
+                  ● ${escapeHtmlSafe(item.status)}
                 </span>
               </div>
-              <div style="font-size:0.75rem; color:#e2e8f0; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${item.backend_name}</div>
-              <div style="font-size:0.7rem; color:#94a3b8; font-family:monospace; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${item.canonical_path}">
-                ${item.canonical_path}
+              <div style="font-size:0.75rem; color:#e2e8f0; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${escapeHtmlSafe(item.backend_name)}</div>
+              <div style="font-size:0.7rem; color:#94a3b8; font-family:monospace; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${escapeHtmlSafe(item.canonical_path)}">
+                ${escapeHtmlSafe(item.canonical_path)}
               </div>
             </div>
           `).join('');
@@ -208,14 +227,16 @@ class PathRegistryView {
       // Render Tab 0: Physical Backend Inventory
       if (inventoryCount) inventoryCount.innerText = `${inventory.length} backends registered`;
       if (inventoryBody) {
-        if (inventory.length === 0) {
-          inventoryBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted" style="padding:1.5rem;">No active backends discovered in fleet.</td></tr>';
+        if (invError) {
+          inventoryBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger" style="padding:1.5rem;">⚠️ Failed to load backend inventory: ${escapeHtmlSafe(invError.message || String(invError))} <button class="btn btn-secondary btn-sm" onclick="PathRegistryView.refresh()" style="margin-left:0.5rem;">🔄 Retry</button></td></tr>`;
+        } else if (inventory.length === 0) {
+          inventoryBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted" style="padding:2rem;">No active backends registered in fleet.<br/><div style="margin-top:0.75rem;"><button class="btn btn-primary btn-sm" onclick="PathRegistryView.openAddBackend()">➕ Register Custom Backend</button> <button class="btn btn-secondary btn-sm" onclick="PathRegistryView.runReconciliationScan()" style="margin-left:0.5rem;">🔍 Scan Fleet</button></div></td></tr>`;
         } else {
           inventoryBody.innerHTML = inventory.map(b => `
             <tr class="inv-row" style="border-bottom:1px solid #1e293b; font-size:0.85rem;">
               <td style="padding:0.75rem 0.5rem;">
-                <div style="font-weight:600; color:#f8fafc;">${b.backend_name}</div>
-                <small style="color:#94a3b8; font-family:monospace;">${b.backend_id} (${b.machine_id})</small>
+                <div style="font-weight:600; color:#f8fafc;">${escapeHtmlSafe(b.backend_name || b.backend_id)}</div>
+                <small style="color:#94a3b8; font-family:monospace;">${escapeHtmlSafe(b.backend_id)} (${escapeHtmlSafe(b.machine_id)})</small>
               </td>
               <td style="padding:0.75rem 0.5rem;">
                 <span class="badge" style="background:#7c3aed25; color:#c084fc; border:1px solid #7c3aed50;">
@@ -224,26 +245,28 @@ class PathRegistryView {
               </td>
               <td style="padding:0.75rem 0.5rem;">
                 <code style="background:#020617; padding:0.2rem 0.4rem; border-radius:3px; color:#38bdf8; font-size:0.8rem; word-break:break-all;">
-                  ${b.canonical_path}
+                  ${escapeHtmlSafe(b.canonical_path || b.installation_path || 'N/A')}
                 </code>
               </td>
               <td style="padding:0.75rem 0.5rem;">
-                <div style="font-family:monospace; font-size:0.75rem; color:#cbd5e1;">${b.executable_path}</div>
-                <small style="color:#94a3b8;">PID: <strong>${b.runtime_pid || 'N/A'}</strong></small>
+                <div style="font-family:monospace; font-size:0.75rem; color:#cbd5e1;">${escapeHtmlSafe(b.executable_path || 'N/A')}</div>
+                <small style="color:#94a3b8;">PID: <strong>${escapeHtmlSafe(String(b.runtime_pid || 'N/A'))}</strong></small>
               </td>
               <td style="padding:0.75rem 0.5rem;">
-                <div style="font-family:monospace; font-size:0.75rem; color:#94a3b8;">data: ${b.data_path || 'N/A'}</div>
+                <div style="font-family:monospace; font-size:0.75rem; color:#94a3b8;">data: ${escapeHtmlSafe(b.data_path || 'N/A')}</div>
               </td>
               <td style="padding:0.75rem 0.5rem;">
-                <span class="status-pill status-${b.status.toLowerCase()}">
-                  ● ${b.status}
+                <span class="status-pill status-${(b.status || 'unknown').toLowerCase()}">
+                  ● ${escapeHtmlSafe(b.status || 'unknown')}
                 </span>
               </td>
               <td style="padding:0.75rem 0.5rem;">
                 <span style="color:#10b981; font-weight:600; font-size:0.8rem;">✓ 1 Host / Path</span>
               </td>
-              <td style="padding:0.75rem 0.5rem;">
-                <button class="btn-sm" onclick="PathRegistryView.inspectBackend('${b.backend_id}')" style="padding:2px 8px; font-size:0.75rem;">Inspect</button>
+              <td style="padding:0.75rem 0.5rem; white-space:nowrap;">
+                <button class="btn-sm" onclick="PathRegistryView.openEditBackend('${escapeJsSafe(b.backend_id)}', '${escapeJsSafe(b.machine_id)}')" style="padding:2px 6px; font-size:0.75rem; margin-right:3px;">✏️ Edit</button>
+                <button class="btn-sm" onclick="PathRegistryView.openRelocateBackend('${escapeJsSafe(b.backend_id)}', '${escapeJsSafe(b.machine_id)}', '${escapeJsSafe(b.canonical_path || b.installation_path)}', '${escapeJsSafe(b.backend_name || b.backend_id)}')" style="padding:2px 6px; font-size:0.75rem; margin-right:3px;">🚚 Move</button>
+                <button class="btn-sm btn-danger" onclick="PathRegistryView.openDeleteBackend('${escapeJsSafe(b.backend_id)}', '${escapeJsSafe(b.machine_id)}', '${escapeJsSafe(b.canonical_path || b.installation_path)}', '${escapeJsSafe(b.backend_name || b.backend_id)}')" style="padding:2px 6px; font-size:0.75rem;">🗑️ Delete</button>
               </td>
             </tr>
           `).join('');
@@ -389,9 +412,97 @@ class PathRegistryView {
     }
   }
 
+  static openEditBackend(backendId, machineId) {
+    if (typeof window !== 'undefined' && typeof window.openEditBackendPathsModal === 'function') {
+      window.openEditBackendPathsModal(backendId, machineId);
+    } else {
+      const newPath = prompt(`Enter new canonical installation path for backend ${backendId}:`);
+      if (!newPath) return;
+      this.submitBackendAction({ action: 'update_path', backend_id: backendId, machine_id: machineId, installation_path: newPath });
+    }
+  }
+
+  static openRelocateBackend(backendId, machineId, currentPath, backendName) {
+    if (typeof window !== 'undefined' && typeof window.openRelocateBackendModal === 'function') {
+      window.openRelocateBackendModal(backendId, machineId, currentPath, backendName);
+    } else {
+      const newPath = prompt(`Relocate backend ${backendName || backendId} from [${currentPath}] to new destination path:`);
+      if (!newPath) return;
+      this.submitBackendAction({ action: 'relocate', backend_id: backendId, machine_id: machineId, current_path: currentPath, new_path: newPath, backup_old: true });
+    }
+  }
+
+  static openDeleteBackend(backendId, machineId, currentPath, backendName) {
+    if (typeof window !== 'undefined' && typeof window.openDeleteBackendModal === 'function') {
+      window.openDeleteBackendModal(backendId, machineId, currentPath, backendName);
+    } else {
+      if (!confirm(`Are you sure you want to delete backend [${backendName || backendId}]?`)) return;
+      const purge = confirm('Do you also want to PURGE the physical files from disk? Cancel = unregister metadata only.');
+      let confirmation = '';
+      if (purge) {
+        confirmation = prompt('Type CONFIRM DELETE to authorize physical file purge:');
+        if (confirmation !== 'CONFIRM DELETE') {
+          alert('Purge aborted: exact confirmation phrase not matched.');
+          return;
+        }
+      }
+      this.submitBackendAction({ action: 'delete', backend_id: backendId, machine_id: machineId, path: currentPath, purge_files: purge, confirmation });
+    }
+  }
+
+  static openAddBackend(machineId) {
+    if (typeof window !== 'undefined' && typeof window.openAddBackendModal === 'function') {
+      window.openAddBackendModal();
+    } else {
+      const name = prompt('Enter backend name:');
+      if (!name) return;
+      const installPath = prompt('Enter installation directory path:');
+      if (!installPath) return;
+      this.submitBackendAction({ action: 'add', machine_id: machineId || 'control-plane-host', backend_name: name, installation_path: installPath });
+    }
+  }
+
+  static copyPath(p) {
+    if (!p) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(p);
+      alert('Copied to clipboard: ' + p);
+    } else {
+      prompt('Copy path:', p);
+    }
+  }
+
+  static async submitBackendAction(payload) {
+    try {
+      const api = window.stationApp?.api || (typeof apiClient !== 'undefined' ? apiClient : null);
+      if (!api) {
+        alert('API client not available');
+        return;
+      }
+      const res = await api.request('/api/v1/backends/manage', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      alert(`Success: ${res.message || 'Operation completed'}`);
+      PathRegistryView.loadRegistryData();
+    } catch (err) {
+      alert(`Backend operation failed: ${err.message}`);
+    }
+  }
+
   static refresh() {
     PathRegistryView.loadRegistryData();
   }
+}
+
+function escapeHtmlSafe(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function escapeJsSafe(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 if (typeof window !== 'undefined') {

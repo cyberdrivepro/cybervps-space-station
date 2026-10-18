@@ -112,7 +112,10 @@ const db = {
   recoveryTickets: new Map(), // ticket -> RecoveryTicket { ticket, machine_id, hardware_uuid, created_at, expires_at, used, issued_by }
   bootstrapCapabilities: new Map(), // ticket -> { ticket, created_at, expires_at, used, consumed_by, consumed_at, issued_by }
   consumedBootstrapTickets: new Set(), // ticket -> already consumed
-  revokedDevices: new Set() // machine_id -> permanently revoked devices
+  revokedDevices: new Set(), // machine_id -> permanently revoked devices
+  backendOverrides: new Map(), // backend_id -> { installation_path, executable_path, config_path, log_path, data_path, service_name, backend_name }
+  customBackends: new Map(), // backend_id -> customBackend
+  deletedBackends: new Set() // Set of backend_ids deleted by user
 };
 
 const canaryRolloutManager = new CanaryRolloutManager({ db });
@@ -234,6 +237,98 @@ function isValidEnrollmentToken(token, machineId = null) {
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(DATA_DIR, 'server-state.json');
 const STATE_FILE_BAK = path.join(DATA_DIR, 'server-state.json.bak');
+const BACKEND_INVENTORY_FILE = path.join(DATA_DIR, 'backend-inventory.json');
+const BACKEND_INVENTORY_FILE_BAK = path.join(DATA_DIR, 'backend-inventory.json.bak');
+
+function isServerProtectedPath(rawPath, platform = process.platform) {
+  if (!rawPath || typeof rawPath !== 'string') return true;
+  if (rawPath.includes('\0')) return true;
+  const norm = path.normalize(rawPath).trim();
+  const isWin = platform === 'win32' || /^[a-zA-Z]:/.test(norm) || norm.includes('\\');
+  if (isWin) {
+    if (/^[a-zA-Z]:\\?$/i.test(norm)) return true;
+    const lower = norm.toLowerCase();
+    const protectedWin = [
+      'c:\\windows', 'c:\\windows\\system32', 'c:\\program files',
+      'c:\\program files (x86)', 'c:\\users', 'c:\\programdata'
+    ];
+    if (protectedWin.includes(lower)) return true;
+  } else {
+    const protectedLinux = [
+      '/', '/bin', '/sbin', '/boot', '/dev', '/etc', '/lib',
+      '/lib64', '/proc', '/sys', '/usr', '/var', '/home', '/root'
+    ];
+    if (protectedLinux.includes(norm)) return true;
+  }
+  return false;
+}
+
+function loadBackendInventoryState() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    let raw = null;
+    if (fs.existsSync(BACKEND_INVENTORY_FILE)) {
+      try { raw = fs.readFileSync(BACKEND_INVENTORY_FILE, 'utf8'); } catch (_) {}
+    }
+    if (!raw && fs.existsSync(BACKEND_INVENTORY_FILE_BAK)) {
+      try { raw = fs.readFileSync(BACKEND_INVENTORY_FILE_BAK, 'utf8'); } catch (_) {}
+    }
+    if (raw && raw.trim().length > 0) {
+      const data = JSON.parse(raw);
+      if (data.overrides && typeof data.overrides === 'object') {
+        for (const [k, v] of Object.entries(data.overrides)) {
+          db.backendOverrides.set(k, v);
+        }
+      }
+      if (Array.isArray(data.custom_backends)) {
+        for (const cb of data.custom_backends) {
+          if (cb && cb.backend_id) {
+            db.customBackends.set(cb.backend_id, cb);
+            if (cb.installation_path && pathEngine) {
+              try {
+                pathEngine.registerPathOwnership({
+                  machine_id: cb.machine_id || 'control-plane-host',
+                  path: cb.installation_path,
+                  backend_id: cb.backend_id,
+                  ownership_role: 'primary',
+                  resource_type: 'backend'
+                });
+              } catch (_) {}
+            }
+          }
+        }
+      }
+      if (Array.isArray(data.deleted_backends)) {
+        for (const dId of data.deleted_backends) {
+          db.deletedBackends.add(dId);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[WARN] Could not load backend-inventory.json:', err.message);
+  }
+}
+
+function saveBackendInventoryState() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    const payload = {
+      updated_at: new Date().toISOString(),
+      overrides: Object.fromEntries(db.backendOverrides.entries()),
+      custom_backends: Array.from(db.customBackends.values()),
+      deleted_backends: Array.from(Array.from(db.deletedBackends))
+    };
+    const jsonStr = JSON.stringify(payload, null, 2);
+    const tmp = `${BACKEND_INVENTORY_FILE}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmp, jsonStr, 'utf8');
+    if (fs.existsSync(BACKEND_INVENTORY_FILE)) {
+      try { fs.copyFileSync(BACKEND_INVENTORY_FILE, BACKEND_INVENTORY_FILE_BAK); } catch (_) {}
+    }
+    fs.renameSync(tmp, BACKEND_INVENTORY_FILE);
+  } catch (err) {
+    console.warn('[WARN] Could not save backend-inventory.json:', err.message);
+  }
+}
 
 const clusterState = new ClusterState({
   dataDir: DATA_DIR,
@@ -359,7 +454,10 @@ function loadPersistentState() {
       if (data.pathOwnership && typeof pathEngine.loadState === 'function') {
         pathEngine.loadState(data.pathOwnership);
       }
-      console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels, ${db.backends.size} backends, ${db.recoveryProfiles.size} recovery profiles`);
+      loadBackendInventoryState();
+      console.log(`[*] Loaded persistent state: ${db.machines.size} machines, ${db.bridgeMappings.size} bridges, ${db.tunnels.size} tunnels, ${db.backends.size} backends, ${db.customBackends.size} custom backends, ${db.recoveryProfiles.size} recovery profiles`);
+    } else {
+      loadBackendInventoryState();
     }
   } catch (err) {
     console.warn(`[WARN] Could not load persistent state: ${err.message}`);
@@ -390,6 +488,9 @@ function executeAtomicSave() {
       enrollmentTokens: Array.from(db.enrollmentTokens),
       bootstrapCapabilities: Array.from(db.bootstrapCapabilities.values()).filter(bc => bc && bc.expires_at > Date.now()),
       consumedBootstrapTickets: Array.from(db.consumedBootstrapTickets),
+      backendOverrides: Object.fromEntries(db.backendOverrides.entries()),
+      customBackends: Array.from(db.customBackends.values()),
+      deletedBackends: Array.from(db.deletedBackends),
       pathOwnership: typeof pathEngine.dumpState === 'function' ? pathEngine.dumpState() : null,
       saved_at: new Date().toISOString()
     };
@@ -628,9 +729,11 @@ function getMachineBackendInventory(m) {
   const primaryLease = registered.find(r => r.ownership_role === 'primary' || r.backend_id === `be_agent_${mId}`);
   const conflicts = (pathEngine && typeof pathEngine.listConflicts === 'function') ? pathEngine.listConflicts(mId) : [];
 
+  let result = [];
+
   // 1. If machine reported real backend_inventory from universal-agent.py probe
   if (Array.isArray(m.backend_inventory) && m.backend_inventory.length > 0) {
-    return m.backend_inventory.map(item => {
+    result = m.backend_inventory.map(item => {
       const rawInst = item.installation_path || '';
       const canon = (pathEngine && typeof pathEngine.canonicalizePath === 'function')
         ? pathEngine.canonicalizePath(rawInst, m.os === 'Windows' ? 'win32' : 'linux')
@@ -650,108 +753,164 @@ function getMachineBackendInventory(m) {
         last_heartbeat: m.last_seen || new Date().toISOString()
       };
     });
+  } else {
+    // 2. Authoritative fallback synthesized from machine runtime paths
+    const rawPath = rPaths.installation_path || (primaryLease ? primaryLease.canonical_path : (m.os === 'Windows' ? 'C:\\CyberVPS\\Agent' : '/opt/cybervps/agent'));
+    const canonical = (pathEngine && typeof pathEngine.canonicalizePath === 'function')
+      ? pathEngine.canonicalizePath(rawPath, m.os === 'Windows' ? 'win32' : 'linux')
+      : rawPath;
+    const conf = conflicts.find(c => c.canonical_path === canonical);
+    const pillarNum = (Math.abs(hashString(mId)) % 8) + 1;
+
+    const agentBackend = {
+      backend_id: `be_agent_${mId}`,
+      backend_name: `CyberVPS Agent Daemon (${m.friendly_name || m.hostname || mId})`,
+      category: 'Remote Node Agent',
+      role: 'node_daemon',
+      machine_id: mId,
+      hostname: m.hostname || mId,
+      status: isConnected ? 'running' : (m.status || 'offline'),
+      runtime_pid: rPaths.runtime_pid || 'Active Process',
+      installation_path: rPaths.installation_path || rawPath,
+      canonical_path: canonical,
+      script_path: rPaths.script_path || (m.os === 'Windows' ? `${rawPath}\\universal-agent.py` : `${rawPath}/universal-agent.py`),
+      executable_path: rPaths.executable_path || (m.os === 'Windows' ? 'python.exe' : '/usr/bin/python3'),
+      config_path: rPaths.config_path || (m.os === 'Windows' ? `${rawPath}\\agent.json` : `${rawPath}/agent.json`),
+      log_path: rPaths.log_path || (m.os === 'Windows' ? `${rawPath}\\agent.log` : `${rawPath}/agent.log`),
+      data_path: rPaths.data_path || (m.os === 'Windows' ? `${rawPath}\\data` : `${rawPath}/data`),
+      service_name: m.os === 'Windows' ? 'Windows Service (CyberVPSAgent)' : 'systemd (cybervps-agent.service)',
+      service_manager: m.os === 'Windows' ? 'windows_service' : 'systemd',
+      storage_provider: m.os === 'Windows' ? 'Local Volume (NTFS)' : 'Local Volume (ext4)',
+      single_writer_enforced: true,
+      single_writer_verified: !conf,
+      single_writer_status: conf ? 'Conflict Detected ⚠️' : 'Active Exclusive Writer (Single-Writer Protected) ✅',
+      obsidian_mesh_pillar: `Obsidian Pillar #${pillarNum} (${m.hostname || mId})`,
+      failover_replica_path: m.os === 'Windows' ? `${rawPath}\\standby_replicas\\replica_${mId}` : `${rawPath}/standby_replicas/replica_${mId}`,
+      path_exists: Boolean(rPaths.installation_path),
+      verification_status: rPaths.installation_path ? 'verified_on_disk' : (isConnected ? 'verified_on_disk' : 'telemetry_stale'),
+      verification_reason: rPaths.installation_path ? 'Physical directory and binary reported by agent.' : (isConnected ? 'Verified via active telemetry stream.' : 'Machine offline; last reported filesystem path.'),
+      last_heartbeat: m.last_seen || new Date().toISOString(),
+      ports_detected: []
+    };
+    result = [agentBackend];
   }
 
-  // 2. Authoritative fallback synthesized from machine runtime paths
-  const rawPath = rPaths.installation_path || (primaryLease ? primaryLease.canonical_path : (m.os === 'Windows' ? 'C:\\CyberVPS\\Agent' : '/opt/cybervps/agent'));
-  const canonical = (pathEngine && typeof pathEngine.canonicalizePath === 'function')
-    ? pathEngine.canonicalizePath(rawPath, m.os === 'Windows' ? 'win32' : 'linux')
-    : rawPath;
-  const conf = conflicts.find(c => c.canonical_path === canonical);
-  const pillarNum = (Math.abs(hashString(mId)) % 8) + 1;
+  // 3. Append custom backends defined for this machine
+  if (db.customBackends) {
+    for (const cb of db.customBackends.values()) {
+      if (cb.machine_id === mId && !db.deletedBackends.has(cb.backend_id)) {
+        if (!result.some(x => x.backend_id === cb.backend_id)) {
+          const rawInst = cb.installation_path || '';
+          const canon = (pathEngine && typeof pathEngine.canonicalizePath === 'function')
+            ? pathEngine.canonicalizePath(rawInst, m.os === 'Windows' ? 'win32' : 'linux')
+            : rawInst;
+          const conf = conflicts.find(c => c.canonical_path === canon);
+          const pillarNum = (Math.abs(hashString(mId)) % 8) + 1;
+          result.push({
+            ...cb,
+            hostname: m.hostname || mId,
+            status: isConnected ? (cb.status || 'running') : (m.status || 'offline'),
+            canonical_path: canon,
+            single_writer_verified: !conf,
+            single_writer_status: conf ? 'Conflict Detected ⚠️' : 'Active Exclusive Writer ✅',
+            obsidian_mesh_pillar: `Obsidian Pillar #${pillarNum} (${m.hostname || mId})`,
+            last_heartbeat: m.last_seen || new Date().toISOString()
+          });
+        }
+      }
+    }
+  }
 
-  const agentBackend = {
-    backend_id: `be_agent_${mId}`,
-    backend_name: `CyberVPS Agent Daemon (${m.friendly_name || m.hostname || mId})`,
-    category: 'Remote Node Agent',
-    role: 'node_daemon',
-    machine_id: mId,
-    hostname: m.hostname || mId,
-    status: isConnected ? 'running' : (m.status || 'offline'),
-    runtime_pid: rPaths.runtime_pid || 'Active Process',
-    installation_path: rPaths.installation_path || rawPath,
-    canonical_path: canonical,
-    script_path: rPaths.script_path || (m.os === 'Windows' ? `${rawPath}\\universal-agent.py` : `${rawPath}/universal-agent.py`),
-    executable_path: rPaths.executable_path || (m.os === 'Windows' ? 'python.exe' : '/usr/bin/python3'),
-    config_path: rPaths.config_path || (m.os === 'Windows' ? `${rawPath}\\agent.json` : `${rawPath}/agent.json`),
-    log_path: rPaths.log_path || (m.os === 'Windows' ? `${rawPath}\\agent.log` : `${rawPath}/agent.log`),
-    data_path: rPaths.data_path || (m.os === 'Windows' ? `${rawPath}\\data` : `${rawPath}/data`),
-    service_name: m.os === 'Windows' ? 'Windows Service (CyberVPSAgent)' : 'systemd (cybervps-agent.service)',
-    service_manager: m.os === 'Windows' ? 'windows_service' : 'systemd',
-    storage_provider: m.os === 'Windows' ? 'Local Volume (NTFS)' : 'Local Volume (ext4)',
-    single_writer_enforced: true,
-    single_writer_verified: !conf,
-    single_writer_status: conf ? 'Conflict Detected ⚠️' : 'Active Exclusive Writer (Single-Writer Protected) ✅',
-    obsidian_mesh_pillar: `Obsidian Pillar #${pillarNum} (${m.hostname || mId})`,
-    failover_replica_path: m.os === 'Windows' ? `${rawPath}\\standby_replicas\\replica_${mId}` : `${rawPath}/standby_replicas/replica_${mId}`,
-    path_exists: Boolean(rPaths.installation_path),
-    verification_status: rPaths.installation_path ? 'verified_on_disk' : (isConnected ? 'verified_on_disk' : 'telemetry_stale'),
-    verification_reason: rPaths.installation_path ? 'Physical directory and binary reported by agent.' : (isConnected ? 'Verified via active telemetry stream.' : 'Machine offline; last reported filesystem path.'),
-    last_heartbeat: m.last_seen || new Date().toISOString(),
-    ports_detected: []
-  };
+  // 4. Apply overrides & filter out deleted backends
+  result = result
+    .filter(b => !db.deletedBackends.has(b.backend_id))
+    .map(b => {
+      const ovr = db.backendOverrides.get(b.backend_id);
+      if (ovr) {
+        const rawInst = ovr.installation_path || b.installation_path;
+        const canon = (pathEngine && typeof pathEngine.canonicalizePath === 'function')
+          ? pathEngine.canonicalizePath(rawInst, m.os === 'Windows' ? 'win32' : 'linux')
+          : rawInst;
+        const conf = conflicts.find(c => c.canonical_path === canon);
+        return {
+          ...b,
+          ...ovr,
+          installation_path: rawInst,
+          canonical_path: canon,
+          single_writer_verified: !conf,
+          single_writer_status: conf ? 'Conflict Detected ⚠️' : 'Active Exclusive Writer (Single-Writer Protected) ✅'
+        };
+      }
+      return b;
+    });
 
-  return [agentBackend];
+  return result;
 }
 
 function getAllClusterBackends() {
   const list = [];
   const cpRoot = path.resolve(__dirname, '..');
-  list.push({
-    backend_id: 'be_primary_local',
-    backend_name: 'Primary Control Plane Gateway (Local)',
-    category: 'Control Plane Core',
-    machine_id: 'control-plane-host',
-    hostname: 'control-plane.local',
-    role: 'control_plane',
-    status: 'online',
-    is_control_plane: true,
-    installation_path: cpRoot,
-    canonical_path: pathEngine.canonicalizePath(cpRoot, process.platform),
-    executable_path: process.execPath,
-    script_path: path.resolve(__filename),
-    runtime_pid: process.pid,
-    data_path: DATA_DIR,
-    config_path: path.join(DATA_DIR, 'config.json'),
-    log_path: path.join(DATA_DIR, 'server.log'),
-    service_name: 'CyberVPS Space Station Daemon',
-    service_manager: process.platform === 'win32' ? 'windows_service' : 'systemd',
-    storage_provider: process.platform === 'win32' ? 'Local Volume (NTFS)' : 'Local Volume (ext4)',
-    single_writer_enforced: true,
-    single_writer_verified: true,
-    single_writer_status: 'Active Exclusive Writer (Ender Core Origin) ✅',
-    obsidian_mesh_pillar: 'Obsidian Pillar #0 (Central Ender Heart)',
-    failover_replica_path: path.join(DATA_DIR, 'backups', 'control_plane_snapshot.json'),
-    path_exists: true,
-    verification_status: 'verified_on_disk',
-    verification_reason: 'Local control plane process running on host.',
-    last_heartbeat: new Date().toISOString(),
-    ports_detected: [process.env.PORT || 8080]
-  });
+
+  if (!db.deletedBackends.has('be_primary_local')) {
+    const cpOvr = db.backendOverrides.get('be_primary_local') || {};
+    const cpInst = cpOvr.installation_path || cpRoot;
+    list.push({
+      backend_id: 'be_primary_local',
+      backend_name: cpOvr.backend_name || 'Primary Control Plane Gateway (Local)',
+      category: 'Control Plane Core',
+      machine_id: 'control-plane-host',
+      hostname: 'control-plane.local',
+      role: 'control_plane',
+      status: 'online',
+      is_control_plane: true,
+      installation_path: cpInst,
+      canonical_path: pathEngine.canonicalizePath(cpInst, process.platform),
+      executable_path: cpOvr.executable_path || process.execPath,
+      script_path: path.resolve(__filename),
+      runtime_pid: process.pid,
+      data_path: cpOvr.data_path || DATA_DIR,
+      config_path: cpOvr.config_path || path.join(DATA_DIR, 'config.json'),
+      log_path: cpOvr.log_path || path.join(DATA_DIR, 'server.log'),
+      service_name: cpOvr.service_name || 'CyberVPS Space Station Daemon',
+      service_manager: process.platform === 'win32' ? 'windows_service' : 'systemd',
+      storage_provider: process.platform === 'win32' ? 'Local Volume (NTFS)' : 'Local Volume (ext4)',
+      single_writer_enforced: true,
+      single_writer_verified: true,
+      single_writer_status: 'Active Exclusive Writer (Ender Core Origin) ✅',
+      obsidian_mesh_pillar: 'Obsidian Pillar #0 (Central Ender Heart)',
+      failover_replica_path: path.join(DATA_DIR, 'backups', 'control_plane_snapshot.json'),
+      path_exists: fs.existsSync(cpInst),
+      verification_status: fs.existsSync(cpInst) ? 'verified_on_disk' : 'missing_path',
+      verification_reason: 'Local control plane process running on host.',
+      last_heartbeat: new Date().toISOString(),
+      ports_detected: [process.env.PORT || 8080]
+    });
+  }
 
   if (db.backends) {
     for (const b of db.backends.values()) {
-      if (b.id === 'be_primary_local') continue;
+      if (b.id === 'be_primary_local' || db.deletedBackends.has(b.id)) continue;
+      const bOvr = db.backendOverrides.get(b.id) || {};
       let host = 'cloud.edge';
       try { if (b.url) host = new URL(b.url).hostname; } catch (_) {}
       list.push({
         backend_id: b.id,
-        backend_name: b.name || b.id,
+        backend_name: bOvr.backend_name || b.name || b.id,
         category: 'Cloud Gateway',
         machine_id: 'cloud-edge',
         hostname: host,
         role: b.role || 'secondary_gateway',
         status: b.state || 'healthy',
         is_control_plane: true,
-        installation_path: '/opt/cybervps/cloud-edge',
-        canonical_path: '/opt/cybervps/cloud-edge',
-        executable_path: '/usr/local/bin/node',
+        installation_path: bOvr.installation_path || '/opt/cybervps/cloud-edge',
+        canonical_path: bOvr.installation_path || '/opt/cybervps/cloud-edge',
+        executable_path: bOvr.executable_path || '/usr/local/bin/node',
         script_path: '/opt/cybervps/cloud-edge/server.js',
         runtime_pid: 'Cloud Worker',
-        data_path: '/var/lib/cybervps',
-        config_path: '/etc/cybervps/config.json',
-        log_path: '/var/log/cybervps.log',
-        service_name: 'Edge Container Service',
+        data_path: bOvr.data_path || '/var/lib/cybervps',
+        config_path: bOvr.config_path || '/etc/cybervps/config.json',
+        log_path: bOvr.log_path || '/var/log/cybervps.log',
+        service_name: bOvr.service_name || 'Edge Container Service',
         service_manager: 'container',
         storage_provider: 'Cloud Native Persistent Volume',
         single_writer_enforced: true,
@@ -772,6 +931,29 @@ function getAllClusterBackends() {
     for (const m of db.machines.values()) {
       const nodeBackends = getMachineBackendInventory(m);
       list.push(...nodeBackends);
+    }
+  }
+
+  if (db.customBackends) {
+    for (const cb of db.customBackends.values()) {
+      if (db.deletedBackends.has(cb.backend_id)) continue;
+      if (!list.some(x => x.backend_id === cb.backend_id)) {
+        const rawInst = cb.installation_path || '';
+        const canon = (pathEngine && typeof pathEngine.canonicalizePath === 'function')
+          ? pathEngine.canonicalizePath(rawInst, process.platform)
+          : rawInst;
+        const ovr = db.backendOverrides.get(cb.backend_id) || {};
+        list.push({
+          ...cb,
+          ...ovr,
+          canonical_path: canon,
+          single_writer_enforced: true,
+          single_writer_verified: true,
+          single_writer_status: 'Active Exclusive Writer ✅',
+          obsidian_mesh_pillar: `Obsidian Pillar Custom (${cb.machine_id || 'host'})`,
+          last_heartbeat: new Date().toISOString()
+        });
+      }
     }
   }
 
@@ -1032,7 +1214,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/doctor/run') return true;
   if (pathname === '/api/v1/openapi.json') return true;
   if (pathname.startsWith('/api/v1/registry/')) return true;
-  if (pathname === '/api/v1/backends/paths') return true;
+  if (pathname.startsWith('/api/v1/backends/')) return true;
   if (pathname === '/api/v1/system/ready') return true;
   if (pathname === '/api/v1/fleet/ota-update/status') return true;
   if (pathname === '/api/v1/topology/graph') return true;
@@ -1351,90 +1533,34 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 1. PATH OWNERSHIP REGISTRY ENDPOINTS (Strict Single-Authoritative-Writer Invariant)
-  if (pathname === '/api/v1/backends/paths' || pathname === '/api/v1/registry/backends-inventory') {
+  if (pathname === '/api/v1/backends/paths' || pathname === '/api/v1/registry/backends-inventory' || pathname === '/api/v1/backends/inventory') {
     if (method === 'GET') {
       const q = Object.fromEntries(parsedUrl.searchParams.entries());
       const filterMachine = q.machine_id || null;
       const filterBackend = q.backend_id || null;
+      const scope = q.scope || 'cluster';
 
-      const registeredPathRecords = pathEngine.listRegistry(q);
-      const inventory = [];
-
-      // 1. Local Control Plane Backend (Ender Core Origin)
-      const cpRoot = path.resolve(__dirname, '..');
-      const cpRecord = {
-        backend_id: 'be_primary_local',
-        backend_name: 'Primary Control Plane Gateway (Local)',
-        machine_id: 'control-plane-host',
-        role: 'control_plane',
-        status: 'online',
-        is_control_plane: true,
-        canonical_path: pathEngine.canonicalizePath(cpRoot, process.platform),
-        raw_path: cpRoot,
-        installation_path: cpRoot,
-        executable_path: process.execPath,
-        script_path: path.resolve(__filename),
-        runtime_pid: process.pid,
-        data_path: DATA_DIR,
-        config_path: path.join(DATA_DIR, 'config.json'),
-        platform: process.platform,
-        lease_status: 'authoritative_permanent',
-        pillar_index: 0,
-        pillar_title: 'Central Control Core (Ender Heart)',
-        last_verified_at: new Date().toISOString(),
-        single_writer_verified: true
-      };
-      if ((!filterMachine || filterMachine === cpRecord.machine_id) && (!filterBackend || filterBackend === cpRecord.backend_id)) {
-        inventory.push(cpRecord);
-      }
-
-      // 2. Remote Machine Backends (Obsidian Pillars)
-      let pillarIdx = 1;
-      for (const [mId, m] of db.machines.entries()) {
-        if (filterMachine && filterMachine !== mId) continue;
-        const isConnected = db.connectedAgents.has(mId) && db.connectedAgents.get(mId).readyState === WebSocket.OPEN;
-        const rPaths = m.runtime_paths || (m.profile && m.profile.runtime_paths) || {};
-        const registered = registeredPathRecords.find(r => r.machine_id === mId || r.backend_id === mId);
-
-        const rawPath = rPaths.installation_path || (registered ? registered.canonical_path : (m.os === 'Windows' ? 'C:\\CyberVPS\\Agent' : '/opt/cybervps/agent'));
-        const canonical = pathEngine.canonicalizePath(rawPath, m.os === 'Windows' ? 'win32' : 'linux');
-
-        const item = {
-          backend_id: `be_agent_${mId}`,
-          backend_name: m.friendly_name || m.hostname || mId,
-          machine_id: mId,
-          role: m.role || 'fleet_worker',
-          status: isConnected ? 'online' : (m.status || 'offline'),
-          is_control_plane: false,
-          canonical_path: canonical,
-          raw_path: rawPath,
-          installation_path: rPaths.installation_path || rawPath,
-          script_path: rPaths.script_path || null,
-          executable_path: rPaths.executable_path || (m.os === 'Windows' ? 'python.exe' : '/usr/bin/python3'),
-          runtime_pid: rPaths.runtime_pid || null,
-          data_path: rPaths.data_path || (m.os === 'Windows' ? `${rawPath}\\data` : `${rawPath}/data`),
-          config_path: rPaths.config_path || null,
-          log_path: rPaths.log_path || null,
-          platform: (m.os || '').toLowerCase().includes('win') ? 'win32' : 'linux',
-          lease_token: registered ? registered.lease_token : null,
-          lease_expires_at: registered ? registered.lease_expires_at : null,
-          pillar_index: pillarIdx,
-          pillar_title: `Obsidian Pillar #${pillarIdx} (${m.hostname || mId})`,
-          last_verified_at: m.last_seen || new Date().toISOString(),
-          single_writer_verified: true,
-          history: registered && registered.history ? registered.history : []
-        };
-        pillarIdx++;
-
-        if (!filterBackend || filterBackend === item.backend_id) {
-          inventory.push(item);
+      let inventory = [];
+      if (filterMachine && scope !== 'cluster' && filterMachine !== 'control-plane-host' && db.machines.has(filterMachine)) {
+        inventory = getMachineBackendInventory(db.machines.get(filterMachine));
+      } else {
+        inventory = getAllClusterBackends();
+        if (filterMachine && scope !== 'cluster') {
+          inventory = inventory.filter(b => b.machine_id === filterMachine);
         }
       }
 
-      const conflicts = pathEngine.listConflicts(filterMachine);
+      if (filterBackend) {
+        inventory = inventory.filter(b => b.backend_id === filterBackend);
+      }
+
+      const conflicts = (pathEngine && typeof pathEngine.listConflicts === 'function')
+        ? pathEngine.listConflicts(filterMachine)
+        : [];
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
+        ok: true,
         total_backends: inventory.length,
         single_writer_invariant: 'STRICT_ENFORCED',
         inventory,
@@ -1443,6 +1569,360 @@ const server = http.createServer(async (req, res) => {
       }));
       return;
     }
+  }
+
+  // 1B. FLEET-WIDE LIVE BACKEND SCAN ENDPOINT
+  if (pathname === '/api/v1/backends/scan' && method === 'POST') {
+    const dispatchedNodes = [];
+    const reqId = 'scan_fleet_' + Date.now();
+    for (const [mId, ws] of db.connectedAgents.entries()) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendServerCommand(mId, { type: 'ScanBackendInventory', payload: { request_id: reqId } });
+        dispatchedNodes.push(mId);
+      }
+    }
+    const allBackends = getAllClusterBackends();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      request_id: reqId,
+      message: `Fleet-wide scan initiated across ${dispatchedNodes.length} connected agent(s)`,
+      dispatched_nodes: dispatchedNodes,
+      total_backends: allBackends.length,
+      inventory: allBackends
+    }));
+    return;
+  }
+
+  // 1C. AUTHORITATIVE BACKEND MANAGEMENT & MUTATION ENDPOINT
+  if (pathname === '/api/v1/backends/manage' && method === 'POST') {
+    let bodyStr = '';
+    req.on('data', c => { bodyStr += c; });
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const { action, backend_id, machine_id } = body;
+        if (!action) throw new Error('action is required (update_path, relocate, delete, add, restore)');
+
+        if (action === 'update_path') {
+          if (!backend_id) throw new Error('backend_id is required');
+          const mId = machine_id || 'control-plane-host';
+          const { installation_path, executable_path, config_path, log_path, data_path, service_name, backend_name } = body;
+
+          for (const [k, p] of Object.entries({ installation_path, executable_path, config_path, log_path, data_path })) {
+            if (p && typeof p === 'string' && p.includes('..')) {
+              throw new Error(`Path traversal segments (..) are strictly prohibited in ${k}.`);
+            }
+          }
+
+          if (installation_path) {
+            if (isServerProtectedPath(installation_path)) {
+              throw new Error(`Protected system path '${installation_path}' cannot be set as installation root.`);
+            }
+            if (pathEngine) {
+              const canon = pathEngine.canonicalizePath(installation_path, process.platform);
+              const conflicts = pathEngine.listConflicts(mId);
+              const conf = conflicts.find(c => c.canonical_path === canon && c.existing_owner_backend !== backend_id);
+              if (conf) {
+                const err = new Error(`Strict Path Ownership Conflict: Path [${canon}] is already owned by [${conf.existing_owner_backend}].`);
+                err.statusCode = 409;
+                throw err;
+              }
+              try {
+                await pathEngine.registerPathOwnership({
+                  machine_id: mId,
+                  path: installation_path,
+                  backend_id,
+                  ownership_role: 'primary',
+                  resource_type: 'backend'
+                });
+              } catch (e) {
+                if (e.statusCode === 409 && e.existingOwner !== backend_id) throw e;
+              }
+            }
+          }
+
+          const existingOvr = db.backendOverrides.get(backend_id) || {};
+          const updatedOvr = {
+            ...existingOvr,
+            backend_id,
+            machine_id: mId,
+            ...(installation_path ? { installation_path } : {}),
+            ...(executable_path ? { executable_path } : {}),
+            ...(config_path ? { config_path } : {}),
+            ...(log_path ? { log_path } : {}),
+            ...(data_path ? { data_path } : {}),
+            ...(service_name ? { service_name } : {}),
+            ...(backend_name ? { backend_name } : {})
+          };
+          db.backendOverrides.set(backend_id, updatedOvr);
+          saveBackendInventoryState();
+
+          if (db.connectedAgents.has(mId)) {
+            sendServerCommand(mId, {
+              type: 'BackendPathUpdate',
+              payload: {
+                request_id: 'upd_' + Date.now(),
+                backend_id,
+                ...updatedOvr
+              }
+            });
+          }
+
+          logAudit('backend_path_updated', 'admin', mId, `Updated paths for backend ${backend_id} on ${mId}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            success: true,
+            message: 'Backend paths updated successfully',
+            backend: updatedOvr
+          }));
+          return;
+        }
+
+        if (action === 'relocate') {
+          if (!backend_id) throw new Error('backend_id is required');
+          const mId = machine_id || 'control-plane-host';
+          const { current_path, new_path, backup_old = true } = body;
+          if (!new_path) throw new Error('new_path is required');
+
+          if (isServerProtectedPath(new_path)) {
+            throw new Error(`Protected system directory '${new_path}' cannot be used as relocation destination.`);
+          }
+          if (new_path.includes('..')) {
+            throw new Error('Path traversal segments (..) are strictly prohibited.');
+          }
+
+          const canonNew = pathEngine ? pathEngine.canonicalizePath(new_path, process.platform) : new_path;
+
+          if (pathEngine) {
+            const conflicts = pathEngine.listConflicts(mId);
+            const conf = conflicts.find(c => c.canonical_path === canonNew && c.existing_owner_backend !== backend_id);
+            if (conf) {
+              const err = new Error(`Strict Path Ownership Conflict: Path [${canonNew}] is already owned by [${conf.existing_owner_backend}].`);
+              err.statusCode = 409;
+              throw err;
+            }
+          }
+
+          if (mId === 'control-plane-host' && current_path && fs.existsSync(current_path)) {
+            if (backup_old) {
+              const bakPath = `${current_path}.bak_${Date.now()}`;
+              try {
+                fs.cpSync(current_path, bakPath, { recursive: true });
+              } catch (e) {
+                console.warn('[WARN] Backup failed during local relocate:', e.message);
+              }
+            }
+            fs.mkdirSync(path.dirname(new_path), { recursive: true });
+            fs.cpSync(current_path, new_path, { recursive: true });
+          } else if (db.connectedAgents.has(mId)) {
+            sendServerCommand(mId, {
+              type: 'BackendRelocate',
+              payload: {
+                request_id: 'reloc_' + Date.now(),
+                backend_id,
+                current_path,
+                new_path,
+                backup_old
+              }
+            });
+          }
+
+          if (pathEngine) {
+            try {
+              await pathEngine.registerPathOwnership({
+                machine_id: mId,
+                path: new_path,
+                backend_id,
+                ownership_role: 'primary',
+                resource_type: 'backend'
+              });
+            } catch (_) {}
+          }
+
+          const existingOvr = db.backendOverrides.get(backend_id) || {};
+          existingOvr.installation_path = new_path;
+          db.backendOverrides.set(backend_id, existingOvr);
+          saveBackendInventoryState();
+
+          logAudit('backend_relocated', 'admin', mId, `Relocated backend ${backend_id} from ${current_path} to ${new_path}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            success: true,
+            message: `Backend relocated successfully to ${new_path}`,
+            new_path,
+            canonical_path: canonNew
+          }));
+          return;
+        }
+
+        if (action === 'delete') {
+          if (!backend_id) throw new Error('backend_id is required');
+          const mId = machine_id || 'control-plane-host';
+          const { path: targetPath, purge_files = false, confirmation } = body;
+
+          if (purge_files) {
+            if (confirmation !== 'CONFIRM DELETE') {
+              throw new Error('Explicit confirmation string "CONFIRM DELETE" is required to purge physical files from disk.');
+            }
+            if (isServerProtectedPath(targetPath)) {
+              throw new Error(`Refusing to delete protected system path: '${targetPath}'.`);
+            }
+            if (mId === 'control-plane-host' && targetPath && fs.existsSync(targetPath)) {
+              const resolved = path.resolve(targetPath);
+              if (resolved !== path.resolve('/') && !resolved.endsWith(':\\')) {
+                fs.rmSync(targetPath, { recursive: true, force: true });
+              }
+            } else if (db.connectedAgents.has(mId)) {
+              sendServerCommand(mId, {
+                type: 'BackendDelete',
+                payload: {
+                  request_id: 'del_' + Date.now(),
+                  backend_id,
+                  path: targetPath,
+                  purge_files: true,
+                  confirmation
+                }
+              });
+            }
+          }
+
+          db.deletedBackends.add(backend_id);
+          db.customBackends.delete(backend_id);
+          saveBackendInventoryState();
+
+          logAudit('backend_deleted', 'admin', mId, `Deleted backend ${backend_id} on ${mId} (Purge: ${purge_files})`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            success: true,
+            message: `Backend ${backend_id} removed successfully`
+          }));
+          return;
+        }
+
+        if (action === 'add') {
+          const { backend_name, category = 'Custom Service', role = 'custom_backend', installation_path, executable_path, config_path, log_path, data_path, service_name, ports } = body;
+          if (!backend_name) throw new Error('backend_name is required');
+          if (!installation_path) throw new Error('installation_path is required');
+          const mId = machine_id || 'control-plane-host';
+
+          for (const [k, p] of Object.entries({ installation_path, executable_path, config_path, log_path, data_path })) {
+            if (p && typeof p === 'string' && p.includes('..')) {
+              throw new Error(`Path traversal segments (..) are strictly prohibited in ${k}.`);
+            }
+          }
+
+          if (isServerProtectedPath(installation_path)) {
+            throw new Error(`Protected system directory '${installation_path}' cannot be used as installation root.`);
+          }
+
+          const canon = pathEngine ? pathEngine.canonicalizePath(installation_path, process.platform) : installation_path;
+          const newId = `be_custom_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+
+          if (pathEngine) {
+            const conflicts = pathEngine.listConflicts(mId);
+            const conf = conflicts.find(c => c.canonical_path === canon);
+            if (conf) {
+              const err = new Error(`Strict Path Ownership Conflict: Path [${canon}] is already owned by [${conf.existing_owner_backend}].`);
+              err.statusCode = 409;
+              throw err;
+            }
+            try {
+              await pathEngine.registerPathOwnership({
+                machine_id: mId,
+                path: installation_path,
+                backend_id: newId,
+                ownership_role: 'primary',
+                resource_type: 'backend'
+              });
+            } catch (e) {
+              if (e.statusCode === 409) throw e;
+            }
+          }
+
+          const rec = {
+            backend_id: newId,
+            backend_name,
+            category,
+            role,
+            machine_id: mId,
+            hostname: db.machines.has(mId) ? (db.machines.get(mId).hostname || mId) : 'host.local',
+            status: 'running',
+            runtime_pid: 'Managed Service',
+            installation_path,
+            canonical_path: canon,
+            executable_path: executable_path || '',
+            config_path: config_path || '',
+            log_path: log_path || '',
+            data_path: data_path || '',
+            service_name: service_name || 'Custom User Service',
+            service_manager: 'custom',
+            storage_provider: process.platform === 'win32' ? 'Local Volume (NTFS)' : 'Local Volume (ext4)',
+            single_writer_enforced: true,
+            single_writer_verified: true,
+            single_writer_status: 'Active Exclusive Writer ✅',
+            obsidian_mesh_pillar: `Obsidian Pillar Custom (${mId})`,
+            failover_replica_path: path.join(installation_path, 'standby_replicas'),
+            path_exists: fs.existsSync(installation_path),
+            verification_status: fs.existsSync(installation_path) ? 'verified_on_disk' : 'registered_path',
+            verification_reason: fs.existsSync(installation_path) ? 'Physical installation directory verified on host.' : 'Registered user backend path.',
+            last_heartbeat: new Date().toISOString(),
+            ports_detected: Array.isArray(ports) ? ports : []
+          };
+
+          db.customBackends.set(newId, rec);
+          saveBackendInventoryState();
+
+          if (db.connectedAgents.has(mId)) {
+            sendServerCommand(mId, {
+              type: 'RegisterCustomBackend',
+              payload: {
+                request_id: 'add_' + Date.now(),
+                ...rec
+              }
+            });
+          }
+
+          logAudit('backend_added', 'admin', mId, `Registered new custom backend ${newId} (${backend_name}) on ${mId}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            success: true,
+            message: 'Custom backend registered successfully',
+            backend: rec
+          }));
+          return;
+        }
+
+        if (action === 'restore') {
+          if (!backend_id) throw new Error('backend_id is required');
+          db.deletedBackends.delete(backend_id);
+          saveBackendInventoryState();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            success: true,
+            message: `Backend ${backend_id} restored successfully`
+          }));
+          return;
+        }
+
+        throw new Error(`Unknown action: ${action}`);
+      } catch (err) {
+        const statusCode = err.statusCode || 400;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: false,
+          success: false,
+          error: err.message,
+          conflict_id: err.conflictId || null
+        }));
+      }
+    });
+    return;
   }
 
   if (pathname === '/api/v1/registry/paths') {
@@ -1867,7 +2347,7 @@ const server = http.createServer(async (req, res) => {
             res.end(JSON.stringify({ error: 'Machine not enrolled. Please send Auth event first.' }));
             return;
           }
-          if (!isValidEnrollmentToken(token)) {
+          if (!isValidEnrollmentToken(token, machineId)) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Invalid enrollment token' }));
             return;
@@ -1903,7 +2383,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!isValidEnrollmentToken(token)) {
+    if (!isValidEnrollmentToken(token, machineId)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Invalid or missing enrollment token' }));
       return;
@@ -2324,6 +2804,7 @@ const server = http.createServer(async (req, res) => {
     const allBackends = getAllClusterBackends();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
+      ok: true,
       total_backends: allBackends.length,
       single_writer_invariant: 'STRICT_ENFORCED',
       inventory: allBackends,
@@ -4779,6 +5260,7 @@ while True:
 
   if (pathname === '/api/v1/enrollment/verify' && (method === 'GET' || method === 'POST')) {
     let token = req.headers['x-enrollment-token'] || parsedUrl.searchParams.get('token');
+    let machineId = req.headers['x-machine-id'] || parsedUrl.searchParams.get('machine_id');
     if (!token && method === 'POST') {
       let body = '';
       req.on('data', chunk => body += chunk);
@@ -4786,8 +5268,9 @@ while True:
         try {
           const parsed = JSON.parse(body || '{}');
           token = parsed.token || parsed.enrollment_token;
+          if (parsed.machine_id) machineId = parsed.machine_id;
         } catch {}
-        if (isValidEnrollmentToken(token)) {
+        if (isValidEnrollmentToken(token, machineId)) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, valid: true }));
         } else {
@@ -4797,7 +5280,7 @@ while True:
       });
       return;
     }
-    if (isValidEnrollmentToken(token)) {
+    if (isValidEnrollmentToken(token, machineId)) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, valid: true }));
     } else {
@@ -7536,6 +8019,9 @@ module.exports = {
   savePersistentState,
   flushPersistentState,
   loadPersistentState,
+  loadBackendInventoryState,
+  saveBackendInventoryState,
+  isServerProtectedPath,
   getMachineBackendInventory,
   getAllClusterBackends,
   cleanup

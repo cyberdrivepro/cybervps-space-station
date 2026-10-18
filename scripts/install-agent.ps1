@@ -519,8 +519,7 @@ $ConfigObj = [ordered]@{
     server_url = $Server.TrimEnd("/")
     server_urls = @(
         $Server.TrimEnd("/"),
-        "https://cybervps-space-station.up.railway.app",
-        "https://cybervps-render-control.onrender.com"
+        "https://cybervps-space-station.up.railway.app"
     )
     token = $Token
     machine_id = $MachineId
@@ -553,16 +552,28 @@ $TaskName = "CyberVPSAgent"
 $StartupShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Startup)) "CyberVPS-Agent.lnk"
 $VbsScript = Join-Path $BinDir "run-agent.vbs"
 
-# Clean up stale competing mechanisms
+# Clean up stale competing mechanisms and running instances to avoid mutex collision
 if (Test-Path $StartupShortcut) {
     Remove-Item -Path $StartupShortcut -Force -ErrorAction SilentlyContinue
 }
 foreach ($oldTask in @("CyberVPS-Space-Station-Agent", "CyberVPSAgentAutoStart", "CyberVPSAgent")) {
+    try { & schtasks.exe /End /TN $oldTask 2>$null | Out-Null } catch {}
     try { Unregister-ScheduledTask -TaskName $oldTask -Confirm:$false -ErrorAction SilentlyContinue } catch {}
     try { & schtasks.exe /Delete /TN $oldTask /F 2>$null | Out-Null } catch {}
 }
 try {
     Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPS-Agent" -Force -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPSAgent" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# Stop any running universal-agent.py processes to avoid duplicate instance mutex conflict
+Write-Host "[*] Terminating existing agent instances to ensure clean single-instance startup..." -ForegroundColor Cyan
+try {
+    Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" -ErrorAction SilentlyContinue | Where-Object {
+        $_.CommandLine -like "*universal-agent.py*"
+    } | ForEach-Object {
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+    }
 } catch {}
 
 # Prefer pythonw.exe for 100% windowless execution (Zero Popups)
@@ -574,9 +585,12 @@ if ($PythonExe) {
 $ServicePyExe = if ($PythonWExe) { $PythonWExe } else { $PythonExe }
 
 $IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$CurrentUserName = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$IsPythonInUserProfile = ($ServicePyExe -like "*\Users\*" -or $ServicePyExe -like "*AppData*")
 $ProgramDataBase = if ($env:ProgramData) { Join-Path $env:ProgramData "CyberVPS" } else { "C:\ProgramData\CyberVPS" }
 
-if ($IsElevated) {
+if ($IsElevated -and (-not $IsPythonInUserProfile)) {
+    # System-level Python runtime: can safely run under SYSTEM account
     foreach ($pDir in @($ProgramDataBase, (Join-Path $ProgramDataBase "run"), (Join-Path $ProgramDataBase "logs"), (Join-Path $ProgramDataBase "bin"))) {
         if (-not (Test-Path $pDir)) { New-Item -ItemType Directory -Path $pDir -Force | Out-Null }
     }
@@ -607,6 +621,7 @@ if ($IsElevated) {
         & schtasks.exe /Create /TN $TaskName /TR $TaskRun /SC ONSTART /RU "SYSTEM" /RL HIGHEST /F 2>$null | Out-Null
     }
 } else {
+    # User-profile Python (or non-elevated): register Scheduled Task under current user account
     $EscPy = $ServicePyExe.Replace('"', '""')
     $EscAgent = $AgentScript.Replace('"', '""')
     $EscConfig = $ConfigFile.Replace('"', '""')
@@ -619,48 +634,80 @@ WshShell.Run """$EscPy"" -u ""$EscAgent"" --config ""$EscConfig"" --log-dir ""$E
     try {
         Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPSAgent" -Value "wscript.exe //B //Nologo `"$VbsScript`"" -Force
     } catch {}
+
+    # Register user scheduled task at logon with Highest privileges (no password required)
+    try {
+        $action = New-ScheduledTaskAction -Execute $ServicePyExe -Argument "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`" --ghost"
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUserName
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
 }
 
 # ------------------------------------------------------------------------------
-# STEP 9: Start Background Agent Daemon Immediately
+# STEP 9: Start Background Agent Daemon Immediately & Verify
 # ------------------------------------------------------------------------------
 $AgentPidFile = Join-Path $RunDir "agent.pid"
 if (Test-Path $AgentPidFile) {
-    try {
-        $oldPid = [int](Get-Content $AgentPidFile -Raw).Trim()
-        Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
-    } catch {}
     Remove-Item $AgentPidFile -Force -ErrorAction SilentlyContinue
 }
 
-$agentProc = $null
-if (-not $IsElevated) {
-    $launchTarget = if ($ServicePyExe) { $ServicePyExe } else { $PythonExe }
-    $agentProc = Start-Process -FilePath $launchTarget -ArgumentList "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`" --ghost" -PassThru -WindowStyle Hidden
-    Start-Sleep -Milliseconds 400
-    if (-not $agentProc.HasExited) {
-        Set-Content -Path $AgentPidFile -Value $agentProc.Id -Force
-        Write-Host "  [+] CyberVPS Agent spawned in Ghost Mode (PID: $($agentProc.Id))" -ForegroundColor Green
-    }
+$launchTarget = if ($ServicePyExe) { $ServicePyExe } else { $PythonExe }
+$agentProc = Start-Process -FilePath $launchTarget -ArgumentList "-u `"$AgentScript`" --config `"$ConfigFile`" --log-dir `"$LogsDir`" --ghost" -PassThru -WindowStyle Hidden
+Start-Sleep -Milliseconds 800
+
+$isRunning = $false
+$runningPid = 0
+if ($agentProc -and (-not $agentProc.HasExited)) {
+    $runningPid = $agentProc.Id
+    Set-Content -Path $AgentPidFile -Value $runningPid -Force
+    $isRunning = $true
 } else {
-    try { & schtasks.exe /Run /TN $TaskName 2>$null | Out-Null } catch {}
-    Write-Host "  [+] CyberVPS Agent running as 24/7 SYSTEM service." -ForegroundColor Green
+    try {
+        $p = Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" -ErrorAction SilentlyContinue | Where-Object {
+            $_.CommandLine -like "*universal-agent.py*"
+        } | Select-Object -First 1
+        if ($p) {
+            $runningPid = $p.ProcessId
+            Set-Content -Path $AgentPidFile -Value $runningPid -Force
+            $isRunning = $true
+        }
+    } catch {}
 }
 
 # ------------------------------------------------------------------------------
-# STEP 10: Clean & Instant Completion Summary
+# STEP 10: Clean & Truthful Completion Summary
 # ------------------------------------------------------------------------------
 Write-Host ""
-Write-Host "================================================================" -ForegroundColor Green
-Write-Host "   CYBERVPS HOST AGENT - SETUP COMPLETE                         " -ForegroundColor Green
-Write-Host "================================================================" -ForegroundColor Green
+Write-Host "================================================================" -ForegroundColor Cyan
+if ($isRunning) {
+    Write-Host "   CYBERVPS HOST AGENT - SETUP COMPLETE                         " -ForegroundColor Green
+} else {
+    Write-Host "❌ CYBERVPS HOST AGENT - SETUP FAILED                          " -ForegroundColor Red
+}
+Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host "Host:        $env:COMPUTERNAME (Windows)" -ForegroundColor White
-Write-Host "Backend:     $Server (Connected & Verified)" -ForegroundColor White
-Write-Host "Status:      ONLINE (Virtual IP: $PreflightVip)" -ForegroundColor Green
-Write-Host "Service:     Running 24/7 in Background (CyberVPSAgent)" -ForegroundColor Green
-Write-Host "Startup:     Automatic on Reboot & Logon" -ForegroundColor Green
+Write-Host "Backend:     $Server" -ForegroundColor White
+if ($isRunning) {
+    Write-Host "Agent:       ACTIVE (PID: $runningPid) [Ghost Mode]" -ForegroundColor Green
+    Write-Host "Service:     Running 24/7 in Background (CyberVPSAgent)" -ForegroundColor Green
+    Write-Host "Startup:     Automatic on Reboot & Logon" -ForegroundColor Green
+} else {
+    Write-Host "Agent:       STOPPED / FAILED TO LAUNCH ❌" -ForegroundColor Red
+}
 Write-Host "Machine ID:  $MachineId" -ForegroundColor White
 Write-Host "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Yellow
-Write-Host "================================================================" -ForegroundColor Green
-Write-Host "Setup complete! The Host Agent is running silently in the background." -ForegroundColor White
-Write-Host "You can safely close this window." -ForegroundColor Gray
+Write-Host "================================================================" -ForegroundColor Cyan
+
+if ($isRunning) {
+    Write-Host "Setup complete! The Host Agent is running silently in the background." -ForegroundColor White
+    Write-Host "You can safely close this window." -ForegroundColor Gray
+} else {
+    Write-Host "❌ Agent process failed to stay active. Recent agent logs:" -ForegroundColor Red
+    $agentLogPath = Join-Path $LogsDir "agent.log"
+    if (Test-Path $agentLogPath) {
+        Get-Content $agentLogPath -Tail 20
+    }
+    Write-Host "👉 Run diagnostics: cybervps doctor --network" -ForegroundColor Yellow
+    Exit-WithCode 1
+}

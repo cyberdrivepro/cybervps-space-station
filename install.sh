@@ -13,13 +13,124 @@ TOKEN="${CYBERVPS_TOKEN:-cvps_enroll_master_token}"
 
 REPO_URL="https://github.com/cyberdrivepro/cybervps-space-station.git"
 TARBALL_URL="https://github.com/cyberdrivepro/cybervps-space-station/archive/refs/heads/main.tar.gz"
-INSTALL_BASE="${HOME}/.cybervps"
+check_dir_writable() {
+  _test_dir="$1"
+  [ -z "$_test_dir" ] && return 1
+  mkdir -p "$_test_dir" 2>/dev/null || return 1
+  _probe_file="$_test_dir/.cvps_probe_$$"
+  if ( : > "$_probe_file" ) 2>/dev/null; then
+    rm -f "$_probe_file" 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
+resolve_install_base() {
+  # 1. User-specified CYBERVPS_HOME
+  if [ -n "${CYBERVPS_HOME:-}" ]; then
+    if check_dir_writable "${CYBERVPS_HOME}"; then
+      echo "${CYBERVPS_HOME}"
+      return 0
+    fi
+  fi
+
+  # 2. $HOME/.cybervps (if $HOME is set and non-root/non-empty)
+  if [ -n "${HOME:-}" ] && [ "${HOME}" != "/" ]; then
+    if check_dir_writable "${HOME}/.cybervps"; then
+      echo "${HOME}/.cybervps"
+      return 0
+    fi
+  fi
+
+  # 3. System account database home (resolves /config container permission failure)
+  _DB_HOME=""
+  if command -v getent >/dev/null 2>&1; then
+    _CURRENT_U="$(id -un 2>/dev/null || whoami 2>/dev/null || echo '')"
+    if [ -n "$_CURRENT_U" ]; then
+      _DB_HOME="$(getent passwd "$_CURRENT_U" 2>/dev/null | cut -d: -f6 || true)"
+    fi
+  fi
+  if [ -z "$_DB_HOME" ] && command -v python3 >/dev/null 2>&1; then
+    _DB_HOME="$(python3 -c "import pwd, os; print(pwd.getpwuid(os.getuid()).pw_dir)" 2>/dev/null || true)"
+  fi
+  if [ -n "$_DB_HOME" ] && [ "$_DB_HOME" != "${HOME:-}" ] && [ "$_DB_HOME" != "/" ]; then
+    if check_dir_writable "${_DB_HOME}/.cybervps"; then
+      echo "${_DB_HOME}/.cybervps"
+      return 0
+    fi
+  fi
+
+  # 4. XDG_DATA_HOME/cybervps
+  if [ -n "${XDG_DATA_HOME:-}" ]; then
+    if check_dir_writable "${XDG_DATA_HOME}/cybervps"; then
+      echo "${XDG_DATA_HOME}/cybervps"
+      return 0
+    fi
+  fi
+
+  # 5. Root system locations
+  if [ "$(id -u 2>/dev/null)" = "0" ]; then
+    for _root_cand in "/var/lib/cybervps" "/opt/cybervps"; do
+      if check_dir_writable "$_root_cand"; then
+        echo "$_root_cand"
+        return 0
+      fi
+    done
+  fi
+
+  # 6. Current working directory fallback
+  _PWD_DIR="$(pwd 2>/dev/null || true)"
+  if [ -n "$_PWD_DIR" ] && [ "$_PWD_DIR" != "/" ]; then
+    if check_dir_writable "${_PWD_DIR}/.cybervps"; then
+      echo "${_PWD_DIR}/.cybervps"
+      return 0
+    fi
+  fi
+
+  # 7. Isolated persistent user tmp
+  _U_NAME="$(id -un 2>/dev/null || whoami 2>/dev/null || echo 'user')"
+  for _tmp_cand in "/tmp/.cybervps_${_U_NAME}" "/var/tmp/.cybervps_${_U_NAME}"; do
+    if check_dir_writable "$_tmp_cand"; then
+      echo "  ⚠️ Warning: Using fallback directory ${_tmp_cand} (Primary home is unwritable)." >&2
+      echo "$_tmp_cand"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+INSTALL_BASE="$(resolve_install_base || true)"
+if [ -z "${INSTALL_BASE}" ]; then
+  echo "================================================================" >&2
+  echo "❌ [FATAL] No persistent, writable directory found for CyberVPS." >&2
+  echo "================================================================" >&2
+  echo "  Detected Home: ${HOME:-<unset>}" >&2
+  echo "  Please provide a writable directory via CYBERVPS_HOME:" >&2
+  echo "    export CYBERVPS_HOME=\"/path/to/writable/folder\"" >&2
+  echo "    curl -fsSL https://cybervps-space-station.up.railway.app/install.sh | bash" >&2
+  echo "================================================================" >&2
+  exit 1
+fi
+export CYBERVPS_HOME="${INSTALL_BASE}"
+
 INSTALL_DIR="${INSTALL_BASE}/space-station"
 BIN_DIR="${INSTALL_BASE}/bin"
 RUN_DIR="${INSTALL_BASE}/run"
 LOG_DIR="${INSTALL_BASE}/logs"
 CONFIG_FILE="${INSTALL_BASE}/config.json"
 MID_FILE="${INSTALL_BASE}/machine_id"
+
+# Determine safe shadow redundancy dir
+SHADOW_DIR=""
+_shadow_cand="${XDG_DATA_HOME:-${HOME:-}/.local/share}/cybervps"
+if [ -n "${HOME:-}" ] && check_dir_writable "$_shadow_cand"; then
+  SHADOW_DIR="$_shadow_cand"
+else
+  SHADOW_DIR="${INSTALL_BASE}/.shadow"
+fi
+
+mkdir -p "${INSTALL_BASE}" "${SHADOW_DIR}" "${BIN_DIR}" "${RUN_DIR}" "${LOG_DIR}" 2>/dev/null || true
 
 echo "================================================================"
 echo "🛰️  CYBERVPS SPACE STATION - UNIVERSAL HOST AGENT INSTALLER"
@@ -32,21 +143,20 @@ USER_NAME="$(whoami 2>/dev/null || echo 'user')"
 HOSTNAME="$(hostname 2>/dev/null || echo 'node')"
 
 echo "[*] Detected OS: ${OS} (${ARCH}) | Host: ${HOSTNAME} | User: ${USER_NAME}"
+echo "[*] Canonical Install Base: ${INSTALL_BASE}"
 
 # ------------------------------------------------------------------------------
 # STAGE 0: Instant T+0ms Millisecond Fast-Auth & Zero-Dependency Ghost Bridge
 # Pure POSIX shell (curl -> wget -> python3 -> raw /dev/tcp).
 # Node registers and turns ONLINE on the dashboard in <100ms.
 # ------------------------------------------------------------------------------
-SHADOW_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/cybervps"
-mkdir -p "${INSTALL_BASE}" "${SHADOW_DIR}" "${BIN_DIR}" "${RUN_DIR}" "${LOG_DIR}"
 
 # Persistent Machine ID
 MACHINE_ID=""
 if [ -f "${MID_FILE}" ]; then
   MACHINE_ID="$(cat "${MID_FILE}" 2>/dev/null | tr -d ' \n\r')"
 fi
-if [ -z "${MACHINE_ID}" ] && [ -f "${SHADOW_DIR}/machine_id" ]; then
+if [ -z "${MACHINE_ID}" ] && [ -n "${SHADOW_DIR}" ] && [ -f "${SHADOW_DIR}/machine_id" ]; then
   MACHINE_ID="$(cat "${SHADOW_DIR}/machine_id" 2>/dev/null | tr -d ' \n\r')"
 fi
 if [ -z "${MACHINE_ID}" ] && [ -f "${CONFIG_FILE}" ]; then
@@ -58,8 +168,10 @@ if [ -z "${MACHINE_ID}" ]; then
   RAND_HEX="$(od -vN 4 -An -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || echo "$$")"
   MACHINE_ID="cvps_${CLEAN_HOST}_${RAND_HEX}"
 fi
-echo "${MACHINE_ID}" > "${MID_FILE}" 2>/dev/null || true
-echo "${MACHINE_ID}" > "${SHADOW_DIR}/machine_id" 2>/dev/null || true
+printf "%s\n" "${MACHINE_ID}" > "${MID_FILE}" 2>/dev/null || true
+if [ -n "${SHADOW_DIR}" ] && [ -d "${SHADOW_DIR}" ]; then
+  printf "%s\n" "${MACHINE_ID}" > "${SHADOW_DIR}/machine_id" 2>/dev/null || true
+fi
 
 # Check / auto-install curl if missing and root (fresh reset Linux machine)
 if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
@@ -229,8 +341,7 @@ cat <<EOF > "${CONFIG_FILE}"
   "server_url": "${SERVER_URL}",
   "server_urls": [
     "${SERVER_URL}",
-    "https://cybervps-space-station.up.railway.app",
-    "https://cybervps-render-control.onrender.com"
+    "https://cybervps-space-station.up.railway.app"
   ],
   "token": "${TOKEN}",
   "machine_id": "${MACHINE_ID}",
@@ -246,8 +357,7 @@ cat <<EOF > "${CONFIG_FILE}"
   "server_url": "${SERVER_URL}",
   "server_urls": [
     "${SERVER_URL}",
-    "https://cybervps-space-station.up.railway.app",
-    "https://cybervps-render-control.onrender.com"
+    "https://cybervps-space-station.up.railway.app"
   ],
   "token": "${TOKEN}",
   "machine_id": "${MACHINE_ID}",
@@ -257,27 +367,29 @@ cat <<EOF > "${CONFIG_FILE}"
 }
 EOF
 fi
-cp "${CONFIG_FILE}" "${SHADOW_DIR}/config.json" 2>/dev/null || true
+if [ -n "${SHADOW_DIR}" ] && [ -d "${SHADOW_DIR}" ]; then
+  cp "${CONFIG_FILE}" "${SHADOW_DIR}/config.json" 2>/dev/null || true
+fi
 echo "[*] Configuration written to ${CONFIG_FILE} (Ghost Mode Active)"
 
 # 7. Setup CLI in PATH
 chmod +x "${INSTALL_DIR}/bin/cybervps"* 2>/dev/null || true
-ln -sf "${INSTALL_DIR}/bin/cybervps" "${BIN_DIR}/cybervps"
+ln -sf "${INSTALL_DIR}/bin/cybervps" "${BIN_DIR}/cybervps" 2>/dev/null || true
 
 # Symlink into system-wide standard PATH locations if root or writable
-if [ "$(id -u)" = "0" ] || [ -w "/usr/local/bin" ]; then
+if [ "$(id -u 2>/dev/null)" = "0" ] || [ -w "/usr/local/bin" ]; then
   mkdir -p /usr/local/bin 2>/dev/null || true
   ln -sf "${INSTALL_DIR}/bin/cybervps" "/usr/local/bin/cybervps" 2>/dev/null || true
 fi
-if [ "$(id -u)" = "0" ] || [ -w "/usr/bin" ]; then
+if [ "$(id -u 2>/dev/null)" = "0" ] || [ -w "/usr/bin" ]; then
   ln -sf "${INSTALL_DIR}/bin/cybervps" "/usr/bin/cybervps" 2>/dev/null || true
 fi
 
-# Append to all present shell rc files (so bash, zsh, and profile have it)
-for rc in "${HOME}/.bashrc" "${HOME}/.zshrc" "${HOME}/.profile"; do
-  if [ -f "$rc" ] || [ "$rc" = "${HOME}/.bashrc" ]; then
+# Append to all present and writable shell rc files
+for rc in "${HOME:-}/.bashrc" "${HOME:-}/.zshrc" "${HOME:-}/.profile"; do
+  if [ -n "$rc" ] && [ -f "$rc" ] && [ -w "$rc" ]; then
     if ! grep -q "${BIN_DIR}" "$rc" 2>/dev/null; then
-      echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "$rc"
+      (echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "$rc") 2>/dev/null || true
     fi
   fi
 done
@@ -472,20 +584,26 @@ elif [ "$IS_RUNNING" -eq 1 ]; then
   echo "  👉 Check node status with: cybervps status"
   BACKEND_STATUS="Syncing First Heartbeat ⏳"
 else
-  echo "  ⚠️ Agent process stopped unexpectedly. Recent agent logs:"
+  echo "  ❌ Agent process stopped unexpectedly. Recent agent logs:"
   tail -n 20 "${LOG_DIR}/agent.log" 2>/dev/null || true
   echo "  👉 To restart agent: cybervps restart"
-  echo "  👉 To run diagnostics: cybervps doctor"
-  BACKEND_STATUS="Enrollment Pending / Check Logs ⚠️"
+  echo "  👉 To run diagnostics: cybervps doctor --network"
+  BACKEND_STATUS="FAILED / STOPPED ❌"
 fi
 
 echo ""
 echo "================================================================"
-echo "🛰️  CYBERVPS HOST AGENT - SETUP COMPLETE"
+if [ "$ENROLLED" -eq 1 ]; then
+  echo "🛰️  CYBERVPS HOST AGENT - SETUP COMPLETE"
+elif [ "$IS_RUNNING" -eq 1 ]; then
+  echo "⏳ CYBERVPS HOST AGENT - SERVICE ACTIVE (SYNCING)"
+else
+  echo "❌ CYBERVPS HOST AGENT - SETUP FAILED"
+fi
 echo "================================================================"
 echo "Host:        ${HOSTNAME} (${OS} ${ARCH})"
 echo "Backend:     ${SERVER_URL} (${BACKEND_STATUS})"
-echo "Service:     Running 24/7 in Background (${SERVICE_MODE})"
+echo "Service:     ${SERVICE_MODE}"
 echo "Startup:     Automatic on Reboot"
 echo "Machine ID:  ${MACHINE_ID}"
 echo "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/"
@@ -493,9 +611,15 @@ echo "================================================================"
 if [ "$ENROLLED" -eq 1 ]; then
   echo "🎉 Setup complete! You can safely close this terminal/SSH session."
   echo "👉 The Host Agent is running silently in the background 24/7."
-else
-  echo "⚠️ Installation completed, but agent is still completing first heartbeat."
+elif [ "$IS_RUNNING" -eq 1 ]; then
+  echo "⏳ Installation completed; agent is completing first heartbeat sync."
   echo "👉 Check status in a few seconds: cybervps status"
+  echo "👉 Check network diagnostics: cybervps doctor --network"
+else
+  echo "❌ Installation could not verify running agent process."
+  echo "👉 Check logs at: ${LOG_DIR}/agent.log"
+  echo "👉 Run diagnostics: cybervps doctor --network"
+  exit 1
 fi
 echo "👉 Monitor and control this machine at:"
 echo "   https://cyberdrivepro.github.io/cybervps-space-station/"

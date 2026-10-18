@@ -25,10 +25,9 @@ import py_compile
 # Official GitHub authoritative repository URL
 GITHUB_AGENT_RAW_URL = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
 
-# Default multi-backend cloud mesh endpoints (3-backend policy)
+# Default multi-backend cloud mesh endpoints
 DEFAULT_BACKEND_CLUSTER = [
     "https://cybervps-space-station.up.railway.app",
-    "https://cybervps-render-control.onrender.com",
     "http://127.0.0.1:8080"
 ]
 

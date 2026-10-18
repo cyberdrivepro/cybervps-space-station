@@ -304,33 +304,49 @@ switch ($Command.ToLower()) {
 
     "stop" {
         Assert-IsAdmin "stop"
-        if (-not (Test-Path $AgentPidFile)) {
-            Write-Host "[*] CyberVPS Host Agent is not running (PID file not found)." -ForegroundColor Yellow
-            return
+        $stoppedAny = $false
+
+        # Stop Scheduled Task if active
+        try {
+            & schtasks.exe /End /TN "CyberVPSAgent" 2>$null | Out-Null
+        } catch {}
+
+        # Kill by PID file
+        $pidsToKill = @()
+        foreach ($pf in @($AgentPidFile, (Join-Path $ProgramDataBase "run\agent.pid"), (Join-Path $BaseDir "run\agent.pid"))) {
+            if (Test-Path $pf) {
+                try {
+                    $pidVal = [int](Get-Content $pf -Raw).Trim()
+                    if ($pidVal -gt 0) { $pidsToKill += $pidVal }
+                } catch {}
+                Remove-Item $pf -Force -ErrorAction SilentlyContinue
+            }
         }
-        $pidToKill = 0
-        try { $pidToKill = [int](Get-Content $AgentPidFile -Raw).Trim() } catch {}
-        if ($pidToKill -gt 0 -and (Is-PidRunning $pidToKill)) {
-            Write-Host "[*] Stopping CyberVPS Agent (PID: $pidToKill)..." -ForegroundColor Cyan
-            Stop-Process -Id $pidToKill -Force -ErrorAction SilentlyContinue
-            # Poll for confirmed termination up to 3 seconds
-            $stopped = $false
-            for ($k = 0; $k -lt 30; $k++) {
-                if (-not (Is-PidRunning $pidToKill)) {
-                    $stopped = $true
-                    break
-                }
-                Start-Sleep -Milliseconds 100
+
+        foreach ($p in $pidsToKill) {
+            if (Is-PidRunning $p) {
+                Write-Host "[*] Stopping CyberVPS Agent (PID: $p)..." -ForegroundColor Cyan
+                Stop-Process -Id $p -Force -ErrorAction SilentlyContinue
+                $stoppedAny = $true
             }
-            if ($stopped) {
-                Write-Host "[+] CyberVPS Agent stopped." -ForegroundColor Green
-            } else {
-                Write-Host "[!] Warning: Agent process $pidToKill may still be terminating." -ForegroundColor Yellow
+        }
+
+        # Clean up any stray universal-agent.py processes to avoid mutex collisions
+        try {
+            Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" -ErrorAction SilentlyContinue | Where-Object {
+                $_.CommandLine -like "*universal-agent.py*"
+            } | ForEach-Object {
+                Write-Host "[*] Stopping stray agent process (PID: $($_.ProcessId))..." -ForegroundColor Cyan
+                try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+                $stoppedAny = $true
             }
+        } catch {}
+
+        if ($stoppedAny) {
+            Write-Host "[+] CyberVPS Agent stopped cleanly." -ForegroundColor Green
         } else {
-            Write-Host "[*] Agent PID $pidToKill was not active." -ForegroundColor Yellow
+            Write-Host "[*] No active CyberVPS Agent process was running." -ForegroundColor Yellow
         }
-        Remove-Item $AgentPidFile -Force -ErrorAction SilentlyContinue
     }
 
     "restart" {
@@ -484,7 +500,8 @@ switch ($Command.ToLower()) {
             }
         }
 
-        # 6. Backend Network Connectivity
+        # 6. Backend Network Connectivity & HA Mesh
+        $isNetMode = ($ArgsList -and ($ArgsList -contains "--network" -or $ArgsList -contains "-n" -or $ArgsList -contains "--net"))
         try {
             $t0 = [DateTime]::UtcNow
             $res = Invoke-RestMethod -Uri "$($cfg.server_url.TrimEnd('/'))/health" -TimeoutSec 5 -ErrorAction Stop
@@ -494,7 +511,31 @@ switch ($Command.ToLower()) {
             Write-Host "  [FAIL] Backend Network    : Failed to reach $($cfg.server_url) ($($_.Exception.Message))" -ForegroundColor Red
         }
 
-        # 7. Autostart Registry Run Key
+        # Multi-Backend HA Mesh
+        $meshBackends = if ($cfg.server_urls) { $cfg.server_urls } else { @($cfg.server_url, "https://cybervps-space-station.up.railway.app") }
+        $meshBackends = @($meshBackends | Where-Object { $_ -notlike "*cybervps-render-control*" })
+        Write-Host "  [INFO] HA Backend Mesh    : $($meshBackends.Count) backends configured" -ForegroundColor Cyan
+        foreach ($b in $meshBackends) {
+            try {
+                $tB = [DateTime]::UtcNow
+                $bRes = Invoke-RestMethod -Uri "$($b.TrimEnd('/'))/health" -TimeoutSec 3 -ErrorAction Stop
+                $bLat = [Math]::Round(([DateTime]::UtcNow - $tB).TotalMilliseconds)
+                Write-Host "    - $b : ONLINE (${bLat}ms)" -ForegroundColor Green
+            } catch {
+                Write-Host "    - $b : UNREACHABLE ($($_.Exception.Message))" -ForegroundColor Yellow
+            }
+        }
+
+        # 7. Autostart Scheduled Task & Registry
+        try {
+            $taskQ = & schtasks.exe /Query /TN "CyberVPSAgent" /FO CSV /NH 2>$null
+            if ($taskQ -and $taskQ -like "*CyberVPSAgent*") {
+                Write-Host "  [PASS] Scheduled Task     : Installed (CyberVPSAgent) ✅" -ForegroundColor Green
+            } else {
+                Write-Host "  [INFO] Scheduled Task     : Not installed or registered under user" -ForegroundColor Gray
+            }
+        } catch {}
+
         try {
             $regVal = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CyberVPSAgent" -ErrorAction SilentlyContinue).CyberVPSAgent
             if ($regVal) {
@@ -508,6 +549,17 @@ switch ($Command.ToLower()) {
                 Write-Host "  [INFO] Autostart (RunKey) : Not registered in HKCU Run" -ForegroundColor Gray
             }
         } catch {}
+
+        if ($isNetMode) {
+            Write-Host "`n  [Local Network Interfaces]" -ForegroundColor Cyan
+            try {
+                $ips = [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) | ForEach-Object { $_.IPAddressToString }
+                Write-Host "  * Host Name       : $env:COMPUTERNAME" -ForegroundColor White
+                Write-Host "  * IP Addresses    : $($ips -join ', ')" -ForegroundColor White
+            } catch {}
+        } else {
+            Write-Host "`n  👉 Run 'cybervps doctor --network' for deep interface and socket checks." -ForegroundColor Gray
+        }
 
         Write-Host "================================================================" -ForegroundColor Cyan
     }
