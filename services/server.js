@@ -1315,7 +1315,7 @@ function isPublicApiRoute(pathname) {
   if (pathname.startsWith('/api/v1/relay/')) return true;
   if (pathname === '/api/v1/access/pairing') return true;
   if (pathname === '/api/v1/access/status') return true;
-  if (pathname === '/api/v1/terminal/token') return true;
+  if (pathname === '/api/v1/terminal/token' || pathname === '/api/v1/terminal/session') return true;
   if (pathname === '/api/v1/apps/stream/token') return true;
   if (pathname.startsWith('/api/v1/remote-desktop/') || pathname === '/api/v1/desktop/session') return true;
   if (pathname === '/api/v1/auth/login') return true;
@@ -2554,7 +2554,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === '/api/v1/terminal/token' && method === 'POST') {
+  if ((pathname === '/api/v1/terminal/token' || pathname === '/api/v1/terminal/session') && method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
@@ -2605,6 +2605,8 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({
           success: true,
           token: termToken,
+          session_token: termToken,
+          session_id: termToken,
           machine_id,
           profile: selectedProfile,
           resolved_profile: resolvedProfile,
@@ -7974,7 +7976,7 @@ wssTerminal.on('connection', (ws, request) => {
   const auth = ws._terminalAuth || verifyTerminalAuthorization(request, parsed);
 
   if (!auth || !auth.authorized) {
-    ws.send(JSON.stringify({ error: auth ? auth.error : 'Unauthorized' }));
+    ws.send(JSON.stringify({ type: 'status', status: 'error', error: auth ? auth.error : 'Unauthorized' }));
     ws.close(4001, 'Unauthorized');
     return;
   }
@@ -7991,13 +7993,50 @@ wssTerminal.on('connection', (ws, request) => {
   const rows = parseInt(parsed.searchParams.get('rows') || '24', 10);
 
   if (!machineId || !db.machines.has(machineId)) {
-    ws.send(JSON.stringify({ error: 'Machine not found' }));
-    ws.close();
+    ws.send(JSON.stringify({ type: 'status', status: 'error', code: 'MACHINE_NOT_FOUND', error: 'Machine not found in fleet' }));
+    ws.close(4004, 'Machine Not Found');
     return;
   }
 
-  db.terminalSessions.set(sessionId, { machine_id: machineId, wsBrowser: ws, auth });
+  const isAgentConnected = db.connectedAgents.has(machineId) && db.connectedAgents.get(machineId).readyState === WebSocket.OPEN;
+  if (!isAgentConnected) {
+    ws.send(JSON.stringify({
+      type: 'status',
+      status: 'error',
+      code: 'AGENT_OFFLINE',
+      error: `Host machine '${machineId}' is offline or agent is disconnected.`
+    }));
+    ws.close(4005, 'Agent Offline');
+    return;
+  }
+
+  const shellStartTimer = setTimeout(() => {
+    const sess = db.terminalSessions.get(sessionId);
+    if (sess && !sess.ready && sess.wsBrowser && sess.wsBrowser.readyState === WebSocket.OPEN) {
+      sess.wsBrowser.send(JSON.stringify({
+        type: 'status',
+        status: 'timeout',
+        error: `Timed out waiting for terminal shell initialization on host '${machineId}' (10s).`
+      }));
+    }
+  }, 10000);
+
+  db.terminalSessions.set(sessionId, {
+    machine_id: machineId,
+    wsBrowser: ws,
+    auth,
+    ready: false,
+    shellStartTimer
+  });
+
   logAudit('terminal_opened', auth.user || 'user', machineId, `Terminal session ${sessionId} opened (profile: ${profilePref || 'default'})`);
+
+  ws.send(JSON.stringify({
+    type: 'status',
+    status: 'connecting',
+    session_id: sessionId,
+    message: 'Relay connection established. Initializing interactive shell...'
+  }));
 
   sendServerCommand(machineId, {
     type: 'TerminalStart',
@@ -8042,6 +8081,10 @@ wssTerminal.on('connection', (ws, request) => {
   });
 
   ws.on('close', () => {
+    const sess = db.terminalSessions.get(sessionId);
+    if (sess && sess.shellStartTimer) {
+      clearTimeout(sess.shellStartTimer);
+    }
     sendServerCommand(machineId, {
       type: 'TerminalKill',
       payload: { session_id: sessionId }
@@ -8070,6 +8113,18 @@ wssAppStream.on('connection', (ws, request) => {
     ws.send(JSON.stringify({ type: 'status', status: 'error', error: 'Machine not found' }));
     ws.close();
     return;
+  }
+
+  // Remove stale desktop streams for this machine to prevent stream collision
+  for (const [existingId, existingStream] of db.appStreams.entries()) {
+    if (existingStream.machineId === machineId && existingId !== streamId) {
+      try {
+        if (existingStream.wsBrowser && existingStream.wsBrowser.readyState === WebSocket.OPEN) {
+          existingStream.wsBrowser.close(1000, 'Replaced by newer session');
+        }
+      } catch (_) {}
+      db.appStreams.delete(existingId);
+    }
   }
 
   const streamId = 'app_stream_' + crypto.randomUUID().slice(0, 8);

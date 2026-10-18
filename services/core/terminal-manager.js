@@ -12,17 +12,23 @@ const crypto = require('crypto');
 
 class TerminalManager {
   constructor(secret, options = {}) {
-    this.secret = secret || 'cybervps_pair_station_2026';
+    const isProd = process.env.NODE_ENV === 'production';
+    const resolvedSecret = secret || process.env.CYBERVPS_TERMINAL_SECRET || process.env.PAIRING_KEY || options.secret;
+    if (isProd && !resolvedSecret) {
+      throw new Error('TerminalManager: Cryptographic token signing secret must be explicitly configured in production.');
+    }
+    this.secret = resolvedSecret || crypto.randomBytes(32).toString('hex');
     this.tokenTtlMs = options.tokenTtlMs || 5 * 60 * 1000; // 5 mins
     this.sessionInactivityTimeoutMs = options.sessionInactivityTimeoutMs || 30 * 60 * 1000; // 30 mins
-    this.activeTokens = new Map(); // token -> { machine_id, expires_at, created_at, used }
+    this.activeTokens = new Map(); // token -> { machine_id, expires_at, created_at, used, profile, user_role }
+    this.consumedStatelessTokens = new Set(); // token -> consumed timestamp (prevents stateless replay)
     this.activeSessions = new Map(); // session_id -> { machine_id, socket, agent_ws, last_activity, cols, rows }
   }
 
   /**
    * Issues a short-lived machine-scoped terminal token.
    */
-  issueToken(machineId, userRole = 'operator') {
+  issueToken(machineId, userRole = 'operator', profile = 'auto') {
     if (!machineId) {
       throw new Error('machine_id is required to issue terminal token');
     }
@@ -31,7 +37,7 @@ class TerminalManager {
     const expHex = expiresAt.toString(16);
     const nonce = crypto.randomBytes(8).toString('hex');
     const signature = crypto.createHmac('sha256', this.secret)
-      .update(`term:${machineId}:${expHex}:${nonce}`)
+      .update(`term:${machineId}:${profile}:${expHex}:${nonce}`)
       .digest('hex')
       .slice(0, 24);
 
@@ -39,6 +45,7 @@ class TerminalManager {
     this.activeTokens.set(token, {
       machine_id: machineId,
       user_role: userRole,
+      profile: profile || 'auto',
       created_at: Date.now(),
       expires_at: expiresAt,
       used: false
@@ -47,6 +54,7 @@ class TerminalManager {
     return {
       token,
       machine_id: machineId,
+      profile: profile || 'auto',
       expires_at: new Date(expiresAt).toISOString()
     };
   }
@@ -54,15 +62,27 @@ class TerminalManager {
   /**
    * Validates and consumes a terminal token for WebSocket session upgrade.
    */
-  validateAndConsumeToken(token) {
+  validateAndConsumeToken(token, expectedMachineId = null) {
     if (!token || typeof token !== 'string') {
       return { valid: false, reason: 'missing_token' };
     }
 
+    // Check replay of consumed stateless tokens
+    if (this.consumedStatelessTokens.has(token)) {
+      return { valid: false, reason: 'token_already_consumed' };
+    }
+
     const entry = this.activeTokens.get(token);
     if (!entry) {
-      // Check stateless signature
-      return this._validateStatelessToken(token);
+      // Check stateless signature with replay guard
+      const res = this._validateStatelessToken(token);
+      if (res.valid) {
+        if (expectedMachineId && res.machine_id !== expectedMachineId) {
+          return { valid: false, reason: 'machine_mismatch' };
+        }
+        this.consumedStatelessTokens.add(token);
+      }
+      return res;
     }
 
     if (entry.used) {
@@ -74,8 +94,13 @@ class TerminalManager {
       return { valid: false, reason: 'token_expired' };
     }
 
+    if (expectedMachineId && entry.machine_id !== expectedMachineId) {
+      return { valid: false, reason: 'machine_mismatch' };
+    }
+
     entry.used = true;
-    return { valid: true, machine_id: entry.machine_id, user_role: entry.user_role };
+    this.activeTokens.delete(token); // Single-use consumption
+    return { valid: true, machine_id: entry.machine_id, user_role: entry.user_role, profile: entry.profile };
   }
 
   /**
@@ -200,16 +225,23 @@ class TerminalManager {
       return { valid: false, reason: 'token_expired' };
     }
 
-    const expectedSig = crypto.createHmac('sha256', this.secret)
+    const expectedSigWithProfile = (profile) => crypto.createHmac('sha256', this.secret)
+      .update(`term:${machineId}:${profile}:${expHex}:${nonce}`)
+      .digest('hex')
+      .slice(0, 24);
+
+    const legacySig = crypto.createHmac('sha256', this.secret)
       .update(`term:${machineId}:${expHex}:${nonce}`)
       .digest('hex')
       .slice(0, 24);
 
-    try {
-      if (crypto.timingSafeEqual(Buffer.from(signature, 'utf8'), Buffer.from(expectedSig, 'utf8'))) {
-        return { valid: true, machine_id: machineId, user_role: 'operator' };
+    const sigBuf = Buffer.from(signature, 'utf8');
+    for (const cand of [legacySig, expectedSigWithProfile('auto'), expectedSigWithProfile('standard'), expectedSigWithProfile('privileged')]) {
+      const candBuf = Buffer.from(cand, 'utf8');
+      if (sigBuf.length === candBuf.length && crypto.timingSafeEqual(sigBuf, candBuf)) {
+        return { valid: true, machine_id: machineId, user_role: 'operator', profile: 'auto' };
       }
-    } catch (_) {}
+    }
 
     return { valid: false, reason: 'invalid_signature' };
   }

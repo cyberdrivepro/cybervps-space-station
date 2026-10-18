@@ -115,10 +115,16 @@ class StationApiClient {
       body: JSON.stringify({ machine_id: machineId, pid: Number(pid) })
     });
   }
-  async createTerminalSession(machineId, shell = 'auto') {
+  async createTerminalSession(machineId, shell = 'auto', profile = 'auto') {
     return this.request('/api/v1/terminal/session', {
       method: 'POST',
-      body: JSON.stringify({ machine_id: machineId, shell })
+      body: JSON.stringify({ machine_id: machineId, shell, profile })
+    });
+  }
+  async getTerminalToken(machineId, profile = 'auto') {
+    return this.request('/api/v1/terminal/token', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, profile })
     });
   }
   async listFiles(machineId, dirPath = '/') {

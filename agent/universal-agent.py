@@ -143,39 +143,53 @@ AGENT_CAPABILITIES = [
 ]
 
 
+def _handle_to_ptr(h):
+    if h is None:
+        return None
+    if isinstance(h, int):
+        return h if h != 0 else None
+    val = getattr(h, "value", None)
+    return val if val != 0 else None
+
+
 class ConPTYTerminal:
     def __init__(self, session_id, cols=80, rows=24, shell_cmd=None, on_output=None, on_exit=None):
         self.session_id = session_id
-        self.cols = int(cols)
-        self.rows = int(rows)
+        self.cols = int(cols or 80)
+        self.rows = int(rows or 24)
         self.on_output = on_output
         self.on_exit = on_exit
-        self.hpcon = None
+        self.hPC = None
         self.h_proc = None
         self.pid = 0
-        self.w_in = None
-        self.r_out = None
+        self.hPipeIn = None
+        self.hPipeOut = None
+        self.p_attr = None
+        self.attr_buf = None
+        self.exit_code = None
         self.running = True
         self._start(shell_cmd)
 
     def _start(self, shell_cmd):
-        if platform.system() != "Windows" or not ctypes or not msvcrt:
-            raise NotImplementedError("ConPTY requires Windows with ctypes and msvcrt")
+        if platform.system() != "Windows" or not ctypes:
+            raise NotImplementedError("ConPTY requires Windows with ctypes")
 
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         if not hasattr(kernel32, "CreatePseudoConsole"):
             raise NotImplementedError("CreatePseudoConsole not supported on this Windows build")
 
+        from ctypes import wintypes, byref
+
         class COORD(ctypes.Structure):
-            _fields_ = [('X', ctypes.c_short), ('Y', ctypes.c_short)]
+            _fields_ = [('X', wintypes.SHORT), ('Y', wintypes.SHORT)]
 
         class STARTUPINFO(ctypes.Structure):
             _fields_ = [
-                ('cb', wintypes.DWORD), ('lpReserved', ctypes.c_wchar_p), ('lpDesktop', ctypes.c_wchar_p),
-                ('lpTitle', ctypes.c_wchar_p), ('dwX', wintypes.DWORD), ('dwY', wintypes.DWORD),
+                ('cb', wintypes.DWORD), ('lpReserved', wintypes.LPWSTR), ('lpDesktop', wintypes.LPWSTR),
+                ('lpTitle', wintypes.LPWSTR), ('dwX', wintypes.DWORD), ('dwY', wintypes.DWORD),
                 ('dwXSize', wintypes.DWORD), ('dwYSize', wintypes.DWORD), ('dwXCountChars', wintypes.DWORD),
                 ('dwYCountChars', wintypes.DWORD), ('dwFillAttribute', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
-                ('wShowWindow', wintypes.WORD), ('cbReserved2', wintypes.WORD), ('lpReserved2', ctypes.c_char_p),
+                ('wShowWindow', wintypes.WORD), ('cbReserved2', wintypes.WORD), ('lpReserved2', ctypes.POINTER(wintypes.BYTE)),
                 ('hStdInput', wintypes.HANDLE), ('hStdOutput', wintypes.HANDLE), ('hStdError', wintypes.HANDLE)
             ]
 
@@ -188,134 +202,291 @@ class ConPTYTerminal:
                 ('dwProcessId', wintypes.DWORD), ('dwThreadId', wintypes.DWORD)
             ]
 
-        r_in, w_in = os.pipe()
-        r_out, w_out = os.pipe()
-        self.w_in = w_in
-        self.r_out = r_out
-        self.r_in = r_in
-        self.w_out = w_out
+        # Configure Win32 signatures for 64-bit safety
+        kernel32.CreatePipe.argtypes = [ctypes.POINTER(wintypes.HANDLE), ctypes.POINTER(wintypes.HANDLE), ctypes.c_void_p, wintypes.DWORD]
+        kernel32.CreatePipe.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+        kernel32.ReadFile.restype = wintypes.BOOL
+        kernel32.WriteFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+        kernel32.WriteFile.restype = wintypes.BOOL
+        kernel32.CreatePseudoConsole.argtypes = [COORD, wintypes.HANDLE, wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        kernel32.CreatePseudoConsole.restype = ctypes.c_long
+        kernel32.ResizePseudoConsole.argtypes = [wintypes.HANDLE, COORD]
+        kernel32.ResizePseudoConsole.restype = ctypes.c_long
+        kernel32.ClosePseudoConsole.argtypes = [wintypes.HANDLE]
+        kernel32.ClosePseudoConsole.restype = None
+        kernel32.InitializeProcThreadAttributeList.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(ctypes.c_size_t)]
+        kernel32.InitializeProcThreadAttributeList.restype = wintypes.BOOL
+        kernel32.UpdateProcThreadAttribute.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
+        kernel32.UpdateProcThreadAttribute.restype = wintypes.BOOL
+        kernel32.DeleteProcThreadAttributeList.argtypes = [ctypes.c_void_p]
+        kernel32.DeleteProcThreadAttributeList.restype = None
+        kernel32.CreateProcessW.argtypes = [
+            wintypes.LPCWSTR, wintypes.LPWSTR,
+            ctypes.c_void_p, ctypes.c_void_p, wintypes.BOOL,
+            wintypes.DWORD, ctypes.c_void_p, wintypes.LPCWSTR,
+            ctypes.c_void_p, ctypes.c_void_p
+        ]
+        kernel32.CreateProcessW.restype = wintypes.BOOL
 
-        h_in = wintypes.HANDLE(msvcrt.get_osfhandle(r_in))
-        h_out = wintypes.HANDLE(msvcrt.get_osfhandle(w_out))
+        hPipeIn, hPipePTYIn = wintypes.HANDLE(), wintypes.HANDLE()
+        hPipeOut, hPipePTYOut = wintypes.HANDLE(), wintypes.HANDLE()
 
-        hpcon_val = ctypes.c_void_p()
-        size = COORD(self.cols, self.rows)
-        res = kernel32.CreatePseudoConsole(size, h_in, h_out, 0, ctypes.byref(hpcon_val))
-        if res != 0 or not hpcon_val.value:
-            for p in (r_in, w_in, r_out, w_out):
-                try: os.close(p)
-                except Exception: pass
-            raise RuntimeError(f"CreatePseudoConsole failed (code {res})")
-        self.hpcon = hpcon_val
+        if not kernel32.CreatePipe(byref(hPipePTYIn), byref(hPipeIn), None, 0):
+            raise RuntimeError(f"CreatePipe for stdin failed ({ctypes.get_last_error()})")
+        if not kernel32.CreatePipe(byref(hPipeOut), byref(hPipePTYOut), None, 0):
+            kernel32.CloseHandle(hPipePTYIn)
+            kernel32.CloseHandle(hPipeIn)
+            raise RuntimeError(f"CreatePipe for stdout failed ({ctypes.get_last_error()})")
 
-        size_attr = ctypes.c_size_t(0)
-        kernel32.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(size_attr))
-        attr_buf = (ctypes.c_char * size_attr.value)()
-        kernel32.InitializeProcThreadAttributeList(attr_buf, 1, 0, ctypes.byref(size_attr))
+        hPC = wintypes.HANDLE()
+        res = kernel32.CreatePseudoConsole(COORD(self.cols, self.rows), hPipePTYIn, hPipePTYOut, 0, byref(hPC))
+        kernel32.CloseHandle(hPipePTYIn)
+        kernel32.CloseHandle(hPipePTYOut)
+
+        if res != 0 or not hPC.value:
+            kernel32.CloseHandle(hPipeIn)
+            kernel32.CloseHandle(hPipeOut)
+            raise RuntimeError(f"CreatePseudoConsole failed with HRESULT {res} (Win32 {ctypes.get_last_error()})")
+
+        self.hPC = hPC
+        self.hPipeIn = hPipeIn
+        self.hPipeOut = hPipeOut
+
+        lpSize = ctypes.c_size_t(0)
+        kernel32.InitializeProcThreadAttributeList(None, 1, 0, byref(lpSize))
+        attr_buf = ctypes.create_string_buffer(lpSize.value)
+        p_attr = ctypes.cast(attr_buf, ctypes.c_void_p)
+        if not kernel32.InitializeProcThreadAttributeList(p_attr, 1, 0, byref(lpSize)):
+            self.close()
+            raise RuntimeError(f"InitializeProcThreadAttributeList failed ({ctypes.get_last_error()})")
+
+        self.attr_buf = attr_buf
+        self.p_attr = p_attr
 
         PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
-        kernel32.UpdateProcThreadAttribute(
-            attr_buf, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-            self.hpcon, ctypes.sizeof(self.hpcon), None, None
-        )
+        if not kernel32.UpdateProcThreadAttribute(
+            p_attr, 0,
+            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+            self.hPC, ctypes.sizeof(self.hPC), None, None
+        ):
+            self.close()
+            raise RuntimeError(f"UpdateProcThreadAttribute PSEUDOCONSOLE failed ({ctypes.get_last_error()})")
 
-        si = STARTUPINFOEX()
-        si.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEX)
-        si.StartupInfo.dwFlags = 0x00000001 # STARTF_USESHOWWINDOW
-        si.StartupInfo.wShowWindow = 0      # SW_HIDE
-        si.lpAttributeList = ctypes.cast(attr_buf, ctypes.c_void_p)
+        siEx = STARTUPINFOEX()
+        siEx.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEX)
+        siEx.StartupInfo.dwFlags = 0x00000100 # STARTF_USESTDHANDLES
+        siEx.StartupInfo.hStdInput = None
+        siEx.StartupInfo.hStdOutput = None
+        siEx.StartupInfo.hStdError = None
+        siEx.lpAttributeList = p_attr
 
         pi = PROCESS_INFORMATION()
         EXTENDED_STARTUPINFO_PRESENT = 0x00080000
-        CREATE_NO_WINDOW = 0x08000000
 
-        cmd_str = shell_cmd or "powershell.exe -NoLogo"
-        if "cmd" in cmd_str.lower() and not cmd_str.lower().endswith(".exe"):
-            cmd_str = "cmd.exe"
+        if isinstance(shell_cmd, list):
+            cmd_str = subprocess.list2cmdline(shell_cmd)
+        elif isinstance(shell_cmd, str) and shell_cmd.strip():
+            cmd_str = shell_cmd.strip()
+        else:
+            cmd_str = "powershell.exe -NoLogo -NoProfile"
 
+        cmd_buf = ctypes.create_unicode_buffer(cmd_str)
         ok = kernel32.CreateProcessW(
-            None, cmd_str, None, None, False,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, None, None,
-            ctypes.byref(si), ctypes.byref(pi)
+            None, cmd_buf, None, None, False,
+            EXTENDED_STARTUPINFO_PRESENT, None, None,
+            byref(siEx.StartupInfo), byref(pi)
         )
 
         if not ok:
+            err = ctypes.get_last_error()
             self.close()
-            raise RuntimeError("CreateProcessW failed for ConPTY")
+            raise RuntimeError(f"CreateProcessW for ConPTY failed with Win32 error {err}")
 
         self.h_proc = pi.hProcess
         self.pid = pi.dwProcessId
         kernel32.CloseHandle(pi.hThread)
 
-        threading.Thread(target=self._reader, daemon=True).start()
+        self.reader_thread = threading.Thread(target=self._reader, daemon=True)
+        self.reader_thread.start()
 
     def _reader(self):
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        buf = (ctypes.c_char * 4096)()
+        bytes_read = ctypes.wintypes.DWORD()
+        h_out = _handle_to_ptr(self.hPipeOut)
         try:
-            while self.running and self.r_out:
-                data = os.read(self.r_out, 2048)
-                if not data:
+            while self.running and h_out:
+                if kernel32.ReadFile(h_out, buf, 4096, ctypes.byref(bytes_read), None):
+                    if bytes_read.value > 0 and self.on_output:
+                        raw = bytes(buf.raw[:bytes_read.value])
+                        self.on_output(self.session_id, raw.decode('utf-8', errors='replace'))
+                else:
                     break
-                if self.on_output:
-                    self.on_output(self.session_id, data.decode('utf-8', errors='replace'))
         except Exception:
             pass
         finally:
-            self.close()
-            if hasattr(self, "on_exit") and self.on_exit:
-                try:
-                    self.on_exit(self.session_id)
-                except Exception:
-                    pass
+            self._on_shell_exit()
 
-    def write(self, data):
-        if self.w_in and self.running:
+    def _on_shell_exit(self):
+        if getattr(self, "_closed", False):
+            return
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        code = ctypes.wintypes.DWORD()
+        h_proc = _handle_to_ptr(self.h_proc)
+        if h_proc:
             try:
-                if isinstance(data, str):
-                    data = data.encode('utf-8')
-                os.write(self.w_in, data)
+                kernel32.GetExitCodeProcess(h_proc, ctypes.byref(code))
+                if code.value != 259: # STILL_ACTIVE
+                    self.exit_code = code.value
+            except Exception:
+                pass
+        self.close()
+        if hasattr(self, "on_exit") and self.on_exit:
+            try:
+                self.on_exit(self.session_id, self.exit_code if self.exit_code is not None else 0)
             except Exception:
                 pass
 
+    def write(self, data):
+        h_in = _handle_to_ptr(self.hPipeIn)
+        if not self.running or not h_in:
+            return False
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            if isinstance(data, str):
+                data = data.encode('utf-8')
+            written = ctypes.wintypes.DWORD()
+            return bool(kernel32.WriteFile(h_in, data, len(data), ctypes.byref(written), None))
+        except Exception:
+            return False
+
     def resize(self, cols, rows):
-        self.cols = int(cols)
-        self.rows = int(rows)
-        if self.hpcon and ctypes and hasattr(ctypes.windll.kernel32, 'ResizePseudoConsole'):
-            class COORD(ctypes.Structure):
-                _fields_ = [('X', ctypes.c_short), ('Y', ctypes.c_short)]
-            size = COORD(self.cols, self.rows)
-            ctypes.windll.kernel32.ResizePseudoConsole(self.hpcon, size)
+        self.cols = int(cols or 80)
+        self.rows = int(rows or 24)
+        h_pc = _handle_to_ptr(self.hPC)
+        if h_pc:
+            try:
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                class COORD(ctypes.Structure):
+                    _fields_ = [('X', ctypes.wintypes.SHORT), ('Y', ctypes.wintypes.SHORT)]
+                kernel32.ResizePseudoConsole(h_pc, COORD(self.cols, self.rows))
+            except Exception:
+                pass
 
     def close(self):
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
         self.running = False
-        if self.h_proc:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        # 1. Terminate child process first to break any pending IO loops
+        h_proc = _handle_to_ptr(self.h_proc)
+        if h_proc:
             try:
-                ctypes.windll.kernel32.TerminateProcess(self.h_proc, 0)
-                ctypes.windll.kernel32.CloseHandle(self.h_proc)
+                code = ctypes.wintypes.DWORD()
+                kernel32.GetExitCodeProcess(h_proc, ctypes.byref(code))
+                if code.value == 259: # STILL_ACTIVE
+                    kernel32.TerminateProcess(h_proc, 0)
+                    kernel32.WaitForSingleObject(h_proc, 200)
+                    kernel32.GetExitCodeProcess(h_proc, ctypes.byref(code))
+                self.exit_code = code.value if code.value != 259 else 0
+                kernel32.CloseHandle(h_proc)
             except Exception:
                 pass
             self.h_proc = None
-        if self.hpcon:
+
+        if self.pid:
             try:
-                ctypes.windll.kernel32.ClosePseudoConsole(self.hpcon)
+                h_term = kernel32.OpenProcess(0x0001, False, self.pid)
+                if h_term:
+                    kernel32.TerminateProcess(h_term, 0)
+                    kernel32.WaitForSingleObject(h_term, 200)
+                    kernel32.CloseHandle(h_term)
             except Exception:
                 pass
-            self.hpcon = None
-        if self.w_in:
-            try: os.close(self.w_in)
-            except Exception: pass
-            self.w_in = None
-        if self.r_out:
-            try: os.close(self.r_out)
-            except Exception: pass
-            self.r_out = None
-        if getattr(self, "r_in", None):
-            try: os.close(self.r_in)
-            except Exception: pass
-            self.r_in = None
-        if getattr(self, "w_out", None):
-            try: os.close(self.w_out)
-            except Exception: pass
-            self.w_out = None
+
+        # 2. Instantly cancel blocking ReadFile in reader thread via CancelSynchronousIo
+        if hasattr(self, "reader_thread") and self.reader_thread and self.reader_thread.is_alive():
+            try:
+                h_t = kernel32.OpenThread(0x1FFFFF, False, self.reader_thread.ident)
+                if h_t:
+                    kernel32.CancelSynchronousIo(h_t)
+                    kernel32.CloseHandle(h_t)
+            except Exception:
+                pass
+            self.reader_thread.join(timeout=0.2)
+
+        # 3. Asynchronously close PseudoConsole to avoid blocking on flush
+        h_pc = _handle_to_ptr(self.hPC)
+        if h_pc:
+            self.hPC = None
+            def _close_pc(handle):
+                try:
+                    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                    k32.ClosePseudoConsole(handle)
+                except Exception:
+                    pass
+            pc_t = threading.Thread(target=_close_pc, args=(h_pc,), daemon=True)
+            pc_t.start()
+            pc_t.join(timeout=0.3)
+
+        # 4. Close input & output pipes
+        h_in = _handle_to_ptr(self.hPipeIn)
+        if h_in:
+            try:
+                kernel32.CloseHandle(h_in)
+            except Exception:
+                pass
+            self.hPipeIn = None
+
+        h_out = _handle_to_ptr(self.hPipeOut)
+        if h_out:
+            try:
+                kernel32.CloseHandle(h_out)
+            except Exception:
+                pass
+            self.hPipeOut = None
+
+        # 5. Clean up attribute list
+        if self.p_attr:
+            try:
+                kernel32.DeleteProcThreadAttributeList(self.p_attr)
+            except Exception:
+                pass
+            self.p_attr = None
+            self.attr_buf = None
+
+
+class ConPTYProcWrapper:
+    def __init__(self, conpty):
+        self.conpty = conpty
+        self.pid = conpty.pid
+
+    def poll(self):
+        if not self.conpty.running:
+            return self.conpty.exit_code if self.conpty.exit_code is not None else 0
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            code = ctypes.wintypes.DWORD()
+            h_proc = _handle_to_ptr(self.conpty.h_proc)
+            if h_proc:
+                if kernel32.GetExitCodeProcess(h_proc, ctypes.byref(code)):
+                    if code.value != 259: # STILL_ACTIVE
+                        self.conpty.exit_code = code.value
+                        return code.value
+        except Exception:
+            pass
+        return None
+
+    def terminate(self):
+        self.conpty.close()
+
+    def kill(self):
+        self.conpty.close()
 
 
 def _safe_create_connection(address, timeout=8.0, source_address=None):
@@ -642,17 +813,24 @@ class RelayWebSocket:
                 return bytes(buf)
         return bytes(buf)
 
-    def send_text(self, text_str):
-        with self._lock:
+    def send_text(self, text_str, skip_if_busy=False):
+        if skip_if_busy:
+            acquired = self._lock.acquire(blocking=False)
+            if not acquired:
+                return False
+        else:
+            self._lock.acquire()
+        try:
             if not self.sock or not self.connected:
                 return False
-            try:
-                data = text_str.encode("utf-8")
-                self._send_frame(self.sock, 0x1, data)
-                return True
-            except Exception:
-                self.connected = False
-                return False
+            data = text_str.encode("utf-8")
+            self._send_frame(self.sock, 0x1, data)
+            return True
+        except Exception:
+            self.connected = False
+            return False
+        finally:
+            self._lock.release()
 
     def _send_frame(self, sock, opcode, data):
         length = len(data)
@@ -667,8 +845,12 @@ class RelayWebSocket:
             header.extend(struct.pack("!Q", length))
         mask = os.urandom(4)
         header.extend(mask)
-        masked = bytearray(b ^ mask[i % 4] for i, b in enumerate(data))
-        sock.sendall(bytes(header + masked))
+        if data:
+            mask_rep = (mask * ((length + 3) // 4))[:length]
+            masked = (int.from_bytes(data, 'little') ^ int.from_bytes(mask_rep, 'little')).to_bytes(length, 'little')
+        else:
+            masked = b""
+        sock.sendall(bytes(header) + masked)
 
 
 class CyberVPSAgent:
@@ -6981,7 +7163,7 @@ class CyberVPSAgent:
                         "is_diagnostic_frame": res.get("is_diagnostic_frame", False),
                         "timestamp": int(now * 1000)
                     }
-                })
+                }, skip_if_busy=True)
                 if res.get("is_diagnostic_frame"):
                     self.send_agent_event({
                         "type": "AppStreamStatus",
@@ -7665,18 +7847,50 @@ class CyberVPSAgent:
                 backend_label = "powershell.exe"
 
             try:
-                p = self._start_windows_terminal_proc(shell_cmd_list, want_standard_token, is_elevated)
-                with self.lock:
-                    self.active_terminals[session_id] = {"proc": p, "type": "pipe"}
+                use_conpty = False
+                conpty_instance = None
+                if ctypes and hasattr(ctypes.windll.kernel32, "CreatePseudoConsole") and not want_standard_token:
+                    try:
+                        conpty_instance = ConPTYTerminal(
+                            session_id=session_id,
+                            cols=cols,
+                            rows=rows,
+                            shell_cmd=shell_cmd_list,
+                            on_output=self._on_conpty_output,
+                            on_exit=self._on_conpty_exit
+                        )
+                        use_conpty = True
+                    except Exception as c_err:
+                        print(f"[*] ConPTY initialization fallback to pipe: {c_err}", flush=True)
 
-                threading.Thread(target=self._pipe_terminal_reader, args=(session_id, p.stdout), daemon=True).start()
+                if use_conpty and conpty_instance:
+                    proc_wrapper = ConPTYProcWrapper(conpty_instance)
+                    with self.lock:
+                        self.active_terminals[session_id] = {
+                            "term": conpty_instance,
+                            "proc": proc_wrapper,
+                            "type": "conpty",
+                            "pid": conpty_instance.pid,
+                            "cols": cols,
+                            "rows": rows
+                        }
+                    backend_type = f"ConPTY [{profile_desc}]"
+                    terminal_pid = conpty_instance.pid
+                else:
+                    p = self._start_windows_terminal_proc(shell_cmd_list, want_standard_token, is_elevated)
+                    with self.lock:
+                        self.active_terminals[session_id] = {"proc": p, "type": "pipe", "pid": p.pid}
+                    threading.Thread(target=self._pipe_terminal_reader, args=(session_id, p.stdout), daemon=True).start()
+                    backend_type = f"{profile_desc} [{backend_label}]"
+                    terminal_pid = p.pid
+
                 self.send_agent_event({
                     "type": "TerminalReady",
                     "payload": {
                         "session_id": session_id,
-                        "backend": f"{profile_desc} [{backend_label}]",
+                        "backend": backend_type,
                         "shell": backend_label,
-                        "pid": p.pid,
+                        "pid": terminal_pid,
                         "cols": cols,
                         "rows": rows,
                         "profile": active_profile,
@@ -7936,6 +8150,26 @@ class CyberVPSAgent:
                 "payload": {"session_id": session_id, "exit_code": exit_code}
             })
 
+    def _on_conpty_output(self, session_id, data):
+        self.send_agent_event({
+            "type": "TerminalOutput",
+            "payload": {
+                "session_id": session_id,
+                "data": data
+            }
+        })
+
+    def _on_conpty_exit(self, session_id, exit_code):
+        with self.lock:
+            self.active_terminals.pop(session_id, None)
+        self.send_agent_event({
+            "type": "TerminalExit",
+            "payload": {
+                "session_id": session_id,
+                "exit_code": exit_code if exit_code is not None else 0
+            }
+        })
+
     def write_terminal_input(self, session_id, text):
         with self.lock:
             term = self.active_terminals.get(session_id)
@@ -7984,7 +8218,7 @@ class CyberVPSAgent:
             return
 
         proc = term.get("proc")
-        pid = getattr(proc, "pid", None)
+        pid = getattr(proc, "pid", None) or term.get("pid")
         is_sess0 = False
         import ctypes
         if pid:
@@ -8050,6 +8284,16 @@ class CyberVPSAgent:
                 ttype = term.get("type")
                 if ttype == "conpty":
                     term["term"].close()
+                    pid = term.get("pid")
+                    if pid and self.is_pid_alive(pid):
+                        try:
+                            h = ctypes.windll.kernel32.OpenProcess(0x0001, False, pid)
+                            if h:
+                                ctypes.windll.kernel32.TerminateProcess(h, 0)
+                                ctypes.windll.kernel32.CloseHandle(h)
+                        except Exception:
+                            pass
+                    exit_code = getattr(term.get("term"), "exit_code", 0) or 0
                 elif ttype == "pty":
                     proc = term.get("proc")
                     if proc:
@@ -8183,7 +8427,7 @@ class CyberVPSAgent:
     # =========================================================================
     # Outbound Relay Communication & Heartbeats
     # =========================================================================
-    def send_agent_event(self, event_data):
+    def send_agent_event(self, event_data, skip_if_busy=False):
         if "payload" in event_data and isinstance(event_data["payload"], dict):
             if "token" not in event_data["payload"]:
                 event_data["payload"]["token"] = self.token
@@ -8193,7 +8437,8 @@ class CyberVPSAgent:
         # First attempt WebSocket transmission for zero-latency streaming
         if self.ws_relay and self.ws_connected and getattr(self.ws_relay, "authenticated", False):
             try:
-                if self.ws_relay.send_text(json.dumps(event_data)):
+                sent = self.ws_relay.send_text(json.dumps(event_data), skip_if_busy=skip_if_busy)
+                if sent or skip_if_busy:
                     return
             except Exception:
                 pass

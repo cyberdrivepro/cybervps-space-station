@@ -88,6 +88,7 @@ try {
 
     # 3. POPULATE DIRECTORY HIERARCHY
     Execute-Sql $db "INSERT INTO Directory (Directory, Directory_Parent, DefaultDir) VALUES ('TARGETDIR', NULL, 'SourceDir')"
+    Execute-Sql $db "INSERT INTO Directory (Directory, Directory_Parent, DefaultDir) VALUES ('System64Folder', 'TARGETDIR', 'Sys64')"
     Execute-Sql $db "INSERT INTO Directory (Directory, Directory_Parent, DefaultDir) VALUES ('ProgramFiles64Folder', 'TARGETDIR', 'PFiles64')"
     Execute-Sql $db "INSERT INTO Directory (Directory, Directory_Parent, DefaultDir) VALUES ('INSTALLDIR', 'ProgramFiles64Folder', 'CyberVPS')"
     Execute-Sql $db "INSERT INTO Directory (Directory, Directory_Parent, DefaultDir) VALUES ('BINDIR', 'INSTALLDIR', 'bin')"
@@ -106,8 +107,8 @@ try {
     Execute-Sql $db "INSERT INTO File (File, Component_, FileName, FileSize, Version, Language, Attributes, Sequence) VALUES ('AgentScriptFile', 'CyberVPSCoreComponent', 'universal-agent.py', $agentSize, '$Version', NULL, 512, 1)"
 
     # 7. POPULATE CUSTOM ACTIONS
-    # Type 50 = Standard Command Line Execution of executable
-    Execute-Sql $db "INSERT INTO CustomAction (Action, Type, Source, Target) VALUES ('CyberVPSInstallAction', 50, 'INSTALLDIR', 'cmd.exe /c echo CyberVPS Active')"
+    # Type 50 = Standard Command Line Execution of executable located in Directory table (System64Folder)
+    Execute-Sql $db "INSERT INTO CustomAction (Action, Type, Source, Target) VALUES ('CyberVPSInstallAction', 50, 'System64Folder', 'cmd.exe /c echo CyberVPS Active')"
 
     # 8. POPULATE EXECUTION SEQUENCES
     $execSeq = @(
