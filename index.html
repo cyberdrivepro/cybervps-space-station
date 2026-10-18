@@ -6635,6 +6635,29 @@
                 appendTerminalBanner(exitMsg);
               }
               return;
+            } else if (parsed && parsed.type === 'status' && parsed.status === 'connecting') {
+              badge.className = 'badge badge-warning';
+              badge.innerText = 'Connecting...';
+              if (parsed.message) {
+                const infoMsg = `\x1b[90m[*] ${parsed.message}\x1b[0m\r\n`;
+                if (appState.termInstance) appState.termInstance.writeln(infoMsg);
+                else appendTerminalBanner(infoMsg);
+              }
+              return;
+            } else if (parsed && (parsed.code === 'AGENT_OFFLINE' || (parsed.error && parsed.error.includes('offline or agent is disconnected')))) {
+              appState.isTerminalReady = false;
+              setQuickChipsEnabled(false);
+              badge.className = 'badge badge-warning';
+              badge.innerText = 'Recovering Relay...';
+              const retryNotice = `\r\n\x1b[33m[*] Host agent relay link is recovering. Auto-reconnecting terminal in 2s...\x1b[0m\r\n`;
+              if (appState.termInstance) appState.termInstance.writeln(retryNotice);
+              else appendTerminalBanner(retryNotice);
+              setTimeout(() => {
+                if (!appState.isTerminalReady && appState.currentTerminalMachineId === machineId) {
+                  initTerminalSession(false);
+                }
+              }, 2000);
+              return;
             } else if (parsed && parsed.error) {
               appState.isTerminalReady = false;
               setQuickChipsEnabled(false);
@@ -17785,9 +17808,24 @@ class TerminalView {
           } else if (parsed && parsed.type === 'status') {
             if (parsed.status === 'connecting') {
               this._setStatus('connecting', parsed.message || 'Connecting...', '#f59e0b');
+              if (this.term && parsed.message) {
+                this.term.writeln(`\x1b[90m[*] ${parsed.message}\x1b[0m\r\n`);
+              }
               return;
             } else if (parsed.status === 'error' || parsed.status === 'timeout') {
               this.isReady = false;
+              if (parsed.code === 'AGENT_OFFLINE') {
+                this._setStatus('connecting', 'Agent link recovering... retrying in 2s', '#f59e0b');
+                if (this.term) {
+                  this.term.writeln(`\r\n\x1b[33m[*] Host machine agent relay bridge is recovering. Auto-retrying connection in 2s...\x1b[0m\r\n`);
+                }
+                setTimeout(() => {
+                  if (!this.isReady && (document.getElementById('term-machine-select')?.value === machineId || this.activeMachineId === machineId)) {
+                    this.connect();
+                  }
+                }, 2000);
+                return;
+              }
               this._setStatus('error', `Error: ${parsed.error || parsed.code}`, '#ef4444');
               if (this.term) {
                 this.term.writeln(`\r\n\x1b[31m[!] Host Error: ${parsed.error || 'Connection failed'}\x1b[0m\r\n`);

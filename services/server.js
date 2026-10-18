@@ -1059,12 +1059,54 @@ function getAllClusterBackends() {
   return list;
 }
 
+function findMachine(idOrHost) {
+  if (!idOrHost) return null;
+  if (db.machines.has(idOrHost)) return db.machines.get(idOrHost);
+  const targetLower = String(idOrHost).toLowerCase().trim();
+  for (const [id, m] of db.machines.entries()) {
+    if (String(id).toLowerCase().trim() === targetLower) return m;
+    if (m.hostname && String(m.hostname).toLowerCase().trim() === targetLower) return m;
+    if (m.friendly_name && String(m.friendly_name).toLowerCase().trim() === targetLower) return m;
+  }
+  return null;
+}
+
+function getAgentSocket(machineId) {
+  if (!machineId) return null;
+  const direct = db.connectedAgents.get(machineId);
+  if (direct && direct.readyState === WebSocket.OPEN) return direct;
+
+  const targetLower = String(machineId).toLowerCase().trim();
+  for (const [id, ws] of db.connectedAgents.entries()) {
+    if (String(id).toLowerCase().trim() === targetLower && ws.readyState === WebSocket.OPEN) {
+      return ws;
+    }
+  }
+
+  const m = findMachine(machineId);
+  if (m) {
+    const wsFromId = db.connectedAgents.get(m.id);
+    if (wsFromId && wsFromId.readyState === WebSocket.OPEN) return wsFromId;
+
+    for (const [id, ws] of db.connectedAgents.entries()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const agentM = db.machines.get(id);
+      if (agentM) {
+        if (agentM.id === m.id) return ws;
+        if (m.hardware_uuid && agentM.hardware_uuid && m.hardware_uuid === agentM.hardware_uuid) return ws;
+        if (m.hostname && agentM.hostname && m.hostname.toLowerCase().trim() === agentM.hostname.toLowerCase().trim()) return ws;
+      }
+      if (String(id).toLowerCase().trim() === String(m.id).toLowerCase().trim()) return ws;
+    }
+  }
+
+  return null;
+}
+
 function getMachineStatus(m) {
   if (!m) return 'offline';
-  if (db.connectedAgents.has(m.id)) {
-    const ws = db.connectedAgents.get(m.id);
-    if (ws && ws.readyState === WebSocket.OPEN) return 'online';
-  }
+  const ws = getAgentSocket(m.id);
+  if (ws && ws.readyState === WebSocket.OPEN) return 'online';
   if (m.status === 'restarting' || m.status === 'rebooting') {
     const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
     if (Date.now() - lastSeenMs < 120000) return 'restarting';
@@ -2577,13 +2619,14 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         
-        if (!machine_id || !db.machines.has(machine_id)) {
+        const machine = findMachine(machine_id);
+        if (!machine) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
           return;
         }
 
-        const machine = db.machines.get(machine_id);
+        const canonicalMachineId = machine.id;
         const selectedProfile = profile || 'auto';
         let resolvedProfile = selectedProfile;
         if (selectedProfile === 'auto') {
@@ -2594,7 +2637,7 @@ const server = http.createServer(async (req, res) => {
 
         const termToken = 'term_tok_' + crypto.randomBytes(16).toString('hex');
         db.terminalAuthTokens.set(termToken, {
-          machine_id,
+          machine_id: canonicalMachineId,
           profile: selectedProfile,
           resolved_profile: resolvedProfile,
           created_at: Date.now(),
@@ -7747,9 +7790,11 @@ function verifyAppStreamAuthorization(request, parsedUrl) {
 
 function verifyTerminalAuthorization(request, parsedUrl) {
   const machineId = parsedUrl.searchParams.get('machine_id');
-  if (!machineId || !db.machines.has(machineId)) {
+  const targetMachine = findMachine(machineId);
+  if (!machineId || (!targetMachine && !db.machines.has(machineId))) {
     return { authorized: false, error: 'Machine not found in fleet', status: 404 };
   }
+  const resolvedMachineId = targetMachine ? targetMachine.id : machineId;
 
   // 1. Browser Origin verification: block untrusted cross-origin terminal hijack attempts (CSWSH)
   const origin = request.headers['origin'];
@@ -7826,14 +7871,17 @@ function verifyTerminalAuthorization(request, parsedUrl) {
     if (Date.now() > record.expires_at) {
       return { authorized: false, error: 'Unauthorized: Terminal token expired', status: 401 };
     }
-    if (record.machine_id !== machineId) {
+    const tokenMatches = record.machine_id === machineId || 
+                         String(record.machine_id).toLowerCase().trim() === String(machineId).toLowerCase().trim() ||
+                         (targetMachine && String(record.machine_id).toLowerCase().trim() === String(targetMachine.id).toLowerCase().trim());
+    if (!tokenMatches) {
       return { authorized: false, error: 'Forbidden: Terminal token not authorized for this machine', status: 403 };
     }
     const requestedProfile = parsedUrl.searchParams.get('profile') || (record.profile || 'auto');
     if (record.profile && record.profile !== 'any' && record.profile !== 'auto' && record.profile !== requestedProfile && record.resolved_profile !== requestedProfile) {
       return { authorized: false, error: `Forbidden: Terminal token is restricted to profile '${record.profile}', cannot execute '${requestedProfile}'`, status: 403 };
     }
-    return { authorized: true, user: 'browser-authenticated', machineId, profile: record.profile, resolved_profile: record.resolved_profile };
+    return { authorized: true, user: 'browser-authenticated', machineId: resolvedMachineId, profile: record.profile, resolved_profile: record.resolved_profile };
   }
 
   return { authorized: false, error: 'Unauthorized: Invalid or expired terminal token', status: 401 };
@@ -8009,63 +8057,111 @@ wssTerminal.on('connection', (ws, request) => {
   const cols = parseInt(parsed.searchParams.get('cols') || '80', 10);
   const rows = parseInt(parsed.searchParams.get('rows') || '24', 10);
 
-  if (!machineId || !db.machines.has(machineId)) {
+  const targetMachine = findMachine(machineId);
+  const resolvedMachineId = targetMachine ? targetMachine.id : machineId;
+
+  if (!targetMachine && !db.machines.has(machineId)) {
     ws.send(JSON.stringify({ type: 'status', status: 'error', code: 'MACHINE_NOT_FOUND', error: 'Machine not found in fleet' }));
     ws.close(4004, 'Machine Not Found');
     return;
   }
 
-  const isAgentConnected = db.connectedAgents.has(machineId) && db.connectedAgents.get(machineId).readyState === WebSocket.OPEN;
-  if (!isAgentConnected) {
+  const startTerminalSessionWithAgent = () => {
+    const shellStartTimer = setTimeout(() => {
+      const sess = db.terminalSessions.get(sessionId);
+      if (sess && !sess.ready && sess.wsBrowser && sess.wsBrowser.readyState === WebSocket.OPEN) {
+        sess.wsBrowser.send(JSON.stringify({
+          type: 'status',
+          status: 'timeout',
+          error: `Timed out waiting for terminal shell initialization on host '${resolvedMachineId}' (10s).`
+        }));
+      }
+    }, 10000);
+
+    db.terminalSessions.set(sessionId, {
+      machine_id: resolvedMachineId,
+      wsBrowser: ws,
+      auth,
+      ready: false,
+      shellStartTimer
+    });
+
+    logAudit('terminal_opened', auth.user || 'user', resolvedMachineId, `Terminal session ${sessionId} opened (profile: ${profilePref || 'default'})`);
+
     ws.send(JSON.stringify({
       type: 'status',
-      status: 'error',
-      code: 'AGENT_OFFLINE',
-      error: `Host machine '${machineId}' is offline or agent is disconnected.`
-    }));
-    ws.close(4005, 'Agent Offline');
-    return;
-  }
-
-  const shellStartTimer = setTimeout(() => {
-    const sess = db.terminalSessions.get(sessionId);
-    if (sess && !sess.ready && sess.wsBrowser && sess.wsBrowser.readyState === WebSocket.OPEN) {
-      sess.wsBrowser.send(JSON.stringify({
-        type: 'status',
-        status: 'timeout',
-        error: `Timed out waiting for terminal shell initialization on host '${machineId}' (10s).`
-      }));
-    }
-  }, 10000);
-
-  db.terminalSessions.set(sessionId, {
-    machine_id: machineId,
-    wsBrowser: ws,
-    auth,
-    ready: false,
-    shellStartTimer
-  });
-
-  logAudit('terminal_opened', auth.user || 'user', machineId, `Terminal session ${sessionId} opened (profile: ${profilePref || 'default'})`);
-
-  ws.send(JSON.stringify({
-    type: 'status',
-    status: 'connecting',
-    session_id: sessionId,
-    message: 'Relay connection established. Initializing interactive shell...'
-  }));
-
-  sendServerCommand(machineId, {
-    type: 'TerminalStart',
-    payload: {
+      status: 'connecting',
       session_id: sessionId,
-      cols,
-      rows,
-      shell: shellPref,
-      shell_preference: shellPref,
-      profile: profilePref
+      message: 'Relay connection established. Initializing interactive shell...'
+    }));
+
+    sendServerCommand(resolvedMachineId, {
+      type: 'TerminalStart',
+      payload: {
+        session_id: sessionId,
+        cols,
+        rows,
+        shell: shellPref,
+        shell_preference: shellPref,
+        profile: profilePref
+      }
+    });
+  };
+
+  const directSocket = getAgentSocket(resolvedMachineId);
+  if (directSocket) {
+    startTerminalSessionWithAgent();
+  } else {
+    const machineStatus = targetMachine ? getMachineStatus(targetMachine) : 'offline';
+    const isPotentiallyAlive = machineStatus === 'online' || machineStatus === 'reconnecting';
+
+    if (isPotentiallyAlive) {
+      ws.send(JSON.stringify({
+        type: 'status',
+        status: 'connecting',
+        session_id: sessionId,
+        message: `Establishing direct relay to host '${targetMachine ? (targetMachine.hostname || resolvedMachineId) : resolvedMachineId}'...`
+      }));
+
+      let elapsed = 0;
+      let sessionStarted = false;
+      const pollTimer = setInterval(() => {
+        elapsed += 250;
+        const sock = getAgentSocket(resolvedMachineId);
+        if (sock && !sessionStarted) {
+          sessionStarted = true;
+          clearInterval(pollTimer);
+          if (ws.readyState === WebSocket.OPEN) {
+            startTerminalSessionWithAgent();
+          }
+        } else if (elapsed >= 6000) {
+          clearInterval(pollTimer);
+          if (!sessionStarted && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'status',
+              status: 'error',
+              code: 'AGENT_OFFLINE',
+              error: `Host machine '${resolvedMachineId}' is offline or agent is disconnected.`
+            }));
+            ws.close(4005, 'Agent Offline');
+          }
+        }
+      }, 250);
+
+      ws.on('close', () => {
+        clearInterval(pollTimer);
+      });
+    } else {
+      ws.send(JSON.stringify({
+        type: 'status',
+        status: 'error',
+        code: 'AGENT_OFFLINE',
+        error: `Host machine '${resolvedMachineId}' is offline or agent is disconnected.`
+      }));
+      ws.close(4005, 'Agent Offline');
+      return;
     }
-  });
+  }
 
   ws.on('message', (data) => {
     try {
@@ -9000,7 +9096,7 @@ function handleAgentMessage(ws, msg) {
 }
 
 function sendServerCommand(machineId, cmd) {
-  const agentWs = db.connectedAgents.get(machineId);
+  const agentWs = getAgentSocket(machineId);
   if (agentWs && agentWs.readyState === WebSocket.OPEN) {
     agentWs.send(JSON.stringify(cmd));
   } else {

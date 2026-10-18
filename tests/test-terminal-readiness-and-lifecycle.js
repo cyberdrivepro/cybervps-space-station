@@ -299,6 +299,127 @@ async function runTerminalReadinessSuite() {
     console.log('  ✅ Agent disconnect triggers clean session teardown and browser notification.\n');
   }
 
+  // TEST 5: Case-insensitive machine ID and hostname-tolerant terminal routing
+  console.log('[*] Test 5: Case-insensitive machine ID and hostname-tolerant terminal routing...');
+  {
+    // Reconnect agent with mixed casing
+    const mixedMachineId = 'node_term_cAsE_' + Math.random().toString(36).substring(2, 6);
+    const reconnectAgentWs = new WebSocket(`${WS_URL}/api/v1/relay/connect`);
+    await new Promise(resolve => reconnectAgentWs.on('open', resolve));
+
+    reconnectAgentWs.send(JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: mixedMachineId,
+        token: ENROLL_TOKEN,
+        hostname: 'DESKTOP-TEST-HOST',
+        os: 'Windows'
+      }
+    }));
+
+    await new Promise(resolve => {
+      reconnectAgentWs.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'AuthAck' && msg.payload.success) resolve(true);
+      });
+    });
+
+    const receivedStarts = [];
+    reconnectAgentWs.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'TerminalStart') receivedStarts.push(msg);
+      } catch (_) {}
+    });
+
+    // Request token with UPPERCASE machine ID
+    const upperMachineId = mixedMachineId.toUpperCase();
+    const token = await mintTerminalToken(upperMachineId);
+    assert(token, 'Must acquire token using uppercase target');
+
+    const browserWs = new WebSocket(`${WS_URL}/api/v1/terminal/stream?machine_id=${upperMachineId}&token=${token}&cols=80&rows=24`);
+    await new Promise(resolve => browserWs.on('open', resolve));
+
+    await wait(200);
+    assert(receivedStarts.length > 0, 'TerminalStart must be delivered to agent despite casing difference');
+    console.log('  ✅ Case-insensitive machine ID resolution verified (mixed vs uppercase).\n');
+
+    browserWs.close();
+    reconnectAgentWs.close();
+    await wait(100);
+  }
+
+  // TEST 6: Grace period for reconnecting host agent
+  console.log('[*] Test 6: Grace period for reconnecting host agent...');
+  {
+    const graceMachineId = 'node_term_grace_' + Math.random().toString(36).substring(2, 6);
+    const initialAgentWs = new WebSocket(`${WS_URL}/api/v1/relay/connect`);
+    await new Promise(resolve => initialAgentWs.on('open', resolve));
+
+    initialAgentWs.send(JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: graceMachineId,
+        token: ENROLL_TOKEN,
+        hostname: 'test-grace-host',
+        os: 'Windows'
+      }
+    }));
+
+    await new Promise(resolve => {
+      initialAgentWs.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'AuthAck' && msg.payload.success) resolve(true);
+      });
+    });
+
+    // Simulate momentary agent drop
+    initialAgentWs.close();
+    await wait(100);
+
+    // Terminal connects while agent is temporarily offline (but machine is known & recent)
+    const token = await mintTerminalToken(graceMachineId);
+    const browserWs = new WebSocket(`${WS_URL}/api/v1/terminal/stream?machine_id=${graceMachineId}&token=${token}&cols=80&rows=24`);
+    await new Promise(resolve => browserWs.on('open', resolve));
+
+    const browserMessages = [];
+    browserWs.on('message', (raw) => {
+      browserMessages.push(JSON.parse(raw.toString()));
+    });
+
+    // Agent reconnects after 600ms
+    await wait(600);
+    const reconnectedAgentWs = new WebSocket(`${WS_URL}/api/v1/relay/connect`);
+    await new Promise(resolve => reconnectedAgentWs.on('open', resolve));
+
+    let termStartDelivered = false;
+    reconnectedAgentWs.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'TerminalStart') termStartDelivered = true;
+      } catch (_) {}
+    });
+
+    reconnectedAgentWs.send(JSON.stringify({
+      type: 'Auth',
+      payload: {
+        machine_id: graceMachineId,
+        token: ENROLL_TOKEN,
+        hostname: 'test-grace-host',
+        os: 'Windows'
+      }
+    }));
+
+    await wait(800);
+    assert(termStartDelivered, 'TerminalStart must be delivered after agent reconnects within grace period');
+    assert(!browserMessages.some(m => m.code === 'AGENT_OFFLINE'), 'AGENT_OFFLINE must not be emitted when agent reconnects in grace period');
+    console.log('  ✅ Reconnecting host agent grace period & delayed relay bridge verified.\n');
+
+    browserWs.close();
+    reconnectedAgentWs.close();
+    await wait(100);
+  }
+
   console.log('================================================================');
   console.log('🎉 ALL TERMINAL READINESS & LIFECYCLE TESTS PASSED WITH 100% SUCCESS!');
   console.log('================================================================\n');

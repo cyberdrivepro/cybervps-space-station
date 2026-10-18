@@ -415,9 +415,24 @@ class TerminalView {
           } else if (parsed && parsed.type === 'status') {
             if (parsed.status === 'connecting') {
               this._setStatus('connecting', parsed.message || 'Connecting...', '#f59e0b');
+              if (this.term && parsed.message) {
+                this.term.writeln(`\x1b[90m[*] ${parsed.message}\x1b[0m\r\n`);
+              }
               return;
             } else if (parsed.status === 'error' || parsed.status === 'timeout') {
               this.isReady = false;
+              if (parsed.code === 'AGENT_OFFLINE') {
+                this._setStatus('connecting', 'Agent link recovering... retrying in 2s', '#f59e0b');
+                if (this.term) {
+                  this.term.writeln(`\r\n\x1b[33m[*] Host machine agent relay bridge is recovering. Auto-retrying connection in 2s...\x1b[0m\r\n`);
+                }
+                setTimeout(() => {
+                  if (!this.isReady && (document.getElementById('term-machine-select')?.value === machineId || this.activeMachineId === machineId)) {
+                    this.connect();
+                  }
+                }, 2000);
+                return;
+              }
               this._setStatus('error', `Error: ${parsed.error || parsed.code}`, '#ef4444');
               if (this.term) {
                 this.term.writeln(`\r\n\x1b[31m[!] Host Error: ${parsed.error || 'Connection failed'}\x1b[0m\r\n`);

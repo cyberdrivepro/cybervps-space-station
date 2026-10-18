@@ -564,7 +564,8 @@ class RelayWebSocket:
         self.authenticated = False
         self.running = True
         self._lock = threading.Lock()
-        self._backoff = 2.0
+        self._send_lock = threading.Lock()
+        self._backoff = 1.0
         self.last_activity = time.time()
         self.last_pong = time.time()
 
@@ -616,9 +617,9 @@ class RelayWebSocket:
                     self.connected = False
                     self.authenticated = False
                     self.agent.ws_connected = False
-            sleep_duration = min(self._backoff + random.uniform(0.5, 2.0), 15.0)
+            sleep_duration = min(self._backoff + random.uniform(0.1, 0.5), 3.0)
             time.sleep(sleep_duration)
-            self._backoff = min(self._backoff * 1.5, 12.0)
+            self._backoff = min(self._backoff * 1.3, 3.0)
 
     def _connect_and_read(self):
         raw = self.target_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -850,7 +851,8 @@ class RelayWebSocket:
             masked = (int.from_bytes(data, 'little') ^ int.from_bytes(mask_rep, 'little')).to_bytes(length, 'little')
         else:
             masked = b""
-        sock.sendall(bytes(header) + masked)
+        with self._send_lock:
+            sock.sendall(bytes(header) + masked)
 
 
 class CyberVPSAgent:
