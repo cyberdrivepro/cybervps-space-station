@@ -15,7 +15,7 @@ class NetBoxAdapter extends BaseAdapter {
       category: 'infrastructure',
       description: 'Infrastructure source of truth for planned devices, sites, prefixes, and IP allocations.',
       version: 'v3.7.0',
-      supportedOperations: ['test', 'list_devices', 'list_ip_addresses', 'list_prefixes', 'compare_telemetry'],
+      supportedOperations: ['test', 'list_devices', 'list_ip_addresses', 'list_prefixes', 'compare_telemetry', 'detect_drift', 'sync_device', 'get_inventory'],
       config: {
         api_url: process.env.NETBOX_URL || '',
         api_token: process.env.NETBOX_TOKEN || '',
@@ -25,18 +25,22 @@ class NetBoxAdapter extends BaseAdapter {
   }
 
   isConfigured() {
-    return Boolean(this.config.api_url && this.config.api_token);
+    const url = this.config.api_url || this.config.endpoint;
+    const token = this.config.api_token || this.config.token;
+    return Boolean(url && token);
   }
 
   getApiBase() {
-    let url = (this.config.api_url || '').trim().replace(/\/+$/, '');
+    let url = (this.config.api_url || this.config.endpoint || '').trim().replace(/\/+$/, '');
+    if (!url) return '';
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
     return url;
   }
 
   getHeaders() {
+    const token = this.config.api_token || this.config.token || '';
     return {
-      'Authorization': `Token ${this.config.api_token || ''}`,
+      'Authorization': `Token ${token}`,
       'Content-Type': 'application/json',
       'User-Agent': 'CyberVPS-SpaceStation-NetBox/1.0'
     };
@@ -45,7 +49,7 @@ class NetBoxAdapter extends BaseAdapter {
   async testConnection() {
     if (!this.isConfigured()) {
       this.status = ADAPTER_STATUS.UNCONFIGURED;
-      return { success: false, status: this.status, error: 'NetBox API URL or API Token not configured.' };
+      return { success: false, status: this.status, configured: false, error: 'NetBox API URL or API Token not configured.' };
     }
 
     try {
@@ -96,6 +100,9 @@ class NetBoxAdapter extends BaseAdapter {
 
       case 'get_inventory':
       case 'list_devices': {
+        if (!this.isConfigured()) {
+          throw new Error('NetBox is not configured');
+        }
         const res = await this.httpRequest(`${this.getApiBase()}/api/dcim/devices/?limit=100`, {
           method: 'GET',
           headers: this.getHeaders()
@@ -113,6 +120,9 @@ class NetBoxAdapter extends BaseAdapter {
       }
 
       case 'list_ip_addresses': {
+        if (!this.isConfigured()) {
+          throw new Error('NetBox is not configured');
+        }
         const res = await this.httpRequest(`${this.getApiBase()}/api/ipam/ip-addresses/?limit=100`, {
           method: 'GET',
           headers: this.getHeaders()
@@ -128,6 +138,9 @@ class NetBoxAdapter extends BaseAdapter {
       }
 
       case 'list_prefixes': {
+        if (!this.isConfigured()) {
+          throw new Error('NetBox is not configured');
+        }
         const res = await this.httpRequest(`${this.getApiBase()}/api/ipam/prefixes/?limit=50`, {
           method: 'GET',
           headers: this.getHeaders()
@@ -139,7 +152,40 @@ class NetBoxAdapter extends BaseAdapter {
       case 'detect_drift':
       case 'compare_telemetry': {
         const observedMachines = params.observed_machines || [];
-        const plannedDevices = await this.executeOperation('list_devices');
+        let plannedDevices = [];
+        try {
+          plannedDevices = await this.executeOperation('list_devices');
+        } catch (err) {
+          if (!this.isConfigured()) {
+            return {
+              success: false,
+              configured: false,
+              status: ADAPTER_STATUS.UNCONFIGURED,
+              message: 'NetBox DCIM adapter is currently not configured or in standby mode.',
+              total_planned: 0,
+              total_observed: observedMachines.length,
+              in_sync_count: 0,
+              drift_count: 0,
+              missing_observed_count: 0,
+              unregistered_count: observedMachines.length,
+              drift_items: [],
+              in_sync_items: [],
+              unregistered_nodes: observedMachines.map(m => ({
+                name: m.hostname || m.id,
+                observed: m
+              })),
+              all_items: observedMachines.map(m => ({
+                name: m.hostname || m.id,
+                role: m.role || 'Edge VPS',
+                ip: m.virtual_ip || m.public_ip || m.ip || '10.77.0.x',
+                drift: true,
+                field: 'unmanaged_device',
+                observed: m
+              }))
+            };
+          }
+          throw err;
+        }
 
         const plannedMap = new Map(plannedDevices.map(d => [(d.name || '').toLowerCase(), d]));
         const observedMap = new Map(observedMachines.map(m => [((m.hostname || m.id) || '').toLowerCase(), m]));
@@ -159,24 +205,46 @@ class NetBoxAdapter extends BaseAdapter {
             const observedIp = obs.virtual_ip || obs.public_ip || obs.ip;
             if (plannedIp && observedIp && plannedIp !== observedIp) {
               drift.push({
-                name,
+                name: obs.hostname || p.name || name,
+                role: p.role || 'Edge VPS',
+                ip: observedIp,
+                planned_ip: plannedIp,
+                drift: true,
                 field: 'ip_address',
                 planned: plannedIp,
                 observed: observedIp
               });
             } else {
-              inSync.push({ name, planned: p, observed: obs });
+              inSync.push({
+                name: obs.hostname || p.name || name,
+                role: p.role || 'Edge VPS',
+                ip: observedIp || plannedIp,
+                drift: false,
+                field: null,
+                planned: p,
+                observed: obs
+              });
             }
           }
         }
 
         for (const [name, obs] of observedMap) {
           if (!plannedMap.has(name)) {
-            missingInNetBox.push({ name, observed: obs });
+            missingInNetBox.push({
+              name: obs.hostname || obs.id || name,
+              role: obs.role || 'Edge VPS',
+              ip: obs.virtual_ip || obs.public_ip || obs.ip || '10.77.0.x',
+              drift: true,
+              field: 'unmanaged_device',
+              observed: obs
+            });
           }
         }
 
         return {
+          success: true,
+          configured: true,
+          status: this.status,
           total_planned: plannedDevices.length,
           total_observed: observedMachines.length,
           in_sync_count: inSync.length,
@@ -184,7 +252,133 @@ class NetBoxAdapter extends BaseAdapter {
           missing_observed_count: missingInObserved.length,
           unregistered_count: missingInNetBox.length,
           drift_items: drift,
-          unregistered_nodes: missingInNetBox.slice(0, 20)
+          in_sync_items: inSync,
+          unregistered_nodes: missingInNetBox.slice(0, 50),
+          all_items: [...drift, ...missingInNetBox, ...inSync]
+        };
+      }
+
+      case 'sync_device': {
+        if (!this.isConfigured()) {
+          return {
+            success: false,
+            configured: false,
+            status: ADAPTER_STATUS.UNCONFIGURED,
+            error: 'NetBox DCIM adapter is not configured. Please configure NetBox URL and API Token.'
+          };
+        }
+
+        const name = params.name || params.hostname || params.id;
+        if (!name) throw new Error('Machine name or hostname is required');
+        const roleName = params.role || 'server';
+        const statusVal = params.status || 'active';
+        const virtualIp = params.virtual_ip || params.ip;
+        const dryRun = Boolean(params.dry_run);
+
+        // 1. Check if device exists in NetBox
+        const searchRes = await this.httpRequest(`${this.getApiBase()}/api/dcim/devices/?name=${encodeURIComponent(name)}`, {
+          method: 'GET',
+          headers: this.getHeaders()
+        });
+        if (searchRes.statusCode !== 200) {
+          throw new Error(`NetBox device lookup failed: HTTP ${searchRes.statusCode}`);
+        }
+        const existingDevices = (searchRes.json && searchRes.json.results) ? searchRes.json.results : [];
+        const existing = existingDevices.length > 0 ? existingDevices[0] : null;
+
+        if (dryRun) {
+          return {
+            success: true,
+            dry_run: true,
+            action: existing ? 'update' : 'create',
+            device_name: name,
+            existing_id: existing ? existing.id : null,
+            target_role: roleName,
+            target_status: statusVal,
+            target_ip: virtualIp || null,
+            message: existing
+              ? `Dry-run plan: Update existing NetBox device '${name}' (ID: ${existing.id})`
+              : `Dry-run plan: Provision new NetBox device '${name}' with role '${roleName}'`
+          };
+        }
+
+        // 2. Perform write
+        let deviceResult = null;
+        if (existing) {
+          const patchRes = await this.httpRequest(`${this.getApiBase()}/api/dcim/devices/${existing.id}/`, {
+            method: 'PATCH',
+            headers: this.getHeaders(),
+            body: JSON.stringify({ status: statusVal })
+          });
+          if (patchRes.statusCode >= 200 && patchRes.statusCode < 300) {
+            deviceResult = patchRes.json;
+          } else {
+            throw new Error(`Failed to update NetBox device '${name}': HTTP ${patchRes.statusCode}`);
+          }
+        } else {
+          let siteId = params.site_id;
+          let roleId = params.role_id;
+          let deviceTypeId = params.device_type_id;
+
+          if (!siteId) {
+            const sRes = await this.httpRequest(`${this.getApiBase()}/api/dcim/sites/?limit=1`, { headers: this.getHeaders() });
+            if (sRes.statusCode === 200 && sRes.json?.results?.length > 0) siteId = sRes.json.results[0].id;
+          }
+          if (!roleId) {
+            const rRes = await this.httpRequest(`${this.getApiBase()}/api/dcim/device-roles/?limit=1`, { headers: this.getHeaders() });
+            if (rRes.statusCode === 200 && rRes.json?.results?.length > 0) roleId = rRes.json.results[0].id;
+          }
+          if (!deviceTypeId) {
+            const dtRes = await this.httpRequest(`${this.getApiBase()}/api/dcim/device-types/?limit=1`, { headers: this.getHeaders() });
+            if (dtRes.statusCode === 200 && dtRes.json?.results?.length > 0) deviceTypeId = dtRes.json.results[0].id;
+          }
+
+          const createBody = {
+            name,
+            status: statusVal,
+            ...(siteId ? { site: siteId } : {}),
+            ...(roleId ? { role: roleId } : {}),
+            ...(deviceTypeId ? { device_type: deviceTypeId } : {})
+          };
+
+          const createRes = await this.httpRequest(`${this.getApiBase()}/api/dcim/devices/`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(createBody)
+          });
+
+          if (createRes.statusCode >= 200 && createRes.statusCode < 300) {
+            deviceResult = createRes.json;
+          } else {
+            throw new Error(`Failed to create NetBox device: HTTP ${createRes.statusCode}`);
+          }
+        }
+
+        // Register IP in NetBox IPAM if provided
+        let ipResult = null;
+        if (virtualIp) {
+          const cleanIp = virtualIp.includes('/') ? virtualIp : `${virtualIp}/24`;
+          try {
+            const ipCreateRes = await this.httpRequest(`${this.getApiBase()}/api/ipam/ip-addresses/`, {
+              method: 'POST',
+              headers: this.getHeaders(),
+              body: JSON.stringify({
+                address: cleanIp,
+                status: 'active',
+                description: `Synced from CyberVPS Agent: ${name}`
+              })
+            });
+            if (ipCreateRes.statusCode >= 200 && ipCreateRes.statusCode < 300) {
+              ipResult = ipCreateRes.json;
+            }
+          } catch (_) {}
+        }
+
+        return {
+          success: true,
+          action: existing ? 'updated' : 'created',
+          device: deviceResult,
+          ip: ipResult
         };
       }
 

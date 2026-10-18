@@ -5315,7 +5315,7 @@ class CyberVPSAgent:
                         bmi = BITMAPINFOHEADER()
                         bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
                         bmi.biWidth = w
-                        bmi.biHeight = -h
+                        bmi.biHeight = h
                         bmi.biPlanes = 1
                         bmi.biBitCount = 32
                         bmi.biCompression = 0
@@ -5327,7 +5327,7 @@ class CyberVPSAgent:
                         try:
                             from PIL import Image
                             import io
-                            img = Image.frombuffer('RGBA', (w, h), raw_bytes, 'raw', 'BGRA', 0, 1)
+                            img = Image.frombuffer('RGBA', (w, h), raw_bytes, 'raw', 'BGRA', 0, -1)
                             out_io = io.BytesIO()
                             img.convert('RGB').save(out_io, format='JPEG', quality=quality)
                             b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
@@ -5368,27 +5368,97 @@ class CyberVPSAgent:
             except Exception as e:
                 return {"success": False, "status": "capture_error", "error": f"Exception capturing full desktop: {e}"}
         else:
-            # Linux desktop capture
+            # Linux desktop capture (X11 / Wayland / headless virtual display)
             try:
-                cmd = ["import", "-window", "root", "jpg:-"]
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                stdout, _ = p.communicate(timeout=3)
-                if p.returncode == 0 and len(stdout) > 500:
+                import shutil
+                env = os.environ.copy()
+                if "DISPLAY" not in env:
+                    for d in [":0", ":1", ":10", ":99"]:
+                        sock_path = f"/tmp/.X11-unix/X{d.replace(':', '')}"
+                        if os.path.exists(sock_path):
+                            env["DISPLAY"] = d
+                            break
+                    if "DISPLAY" not in env:
+                        env["DISPLAY"] = ":0"
+                if "XAUTHORITY" not in env:
+                    for auth in ["/root/.Xauthority", os.path.expanduser("~/.Xauthority")]:
+                        if os.path.exists(auth):
+                            env["XAUTHORITY"] = auth
+                            break
+
+                stdout = None
+                # Method A: xwd + ImageMagick / Netpbm
+                try:
+                    p1 = subprocess.Popen(["xwd", "-root", "-silent"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+                    p2 = subprocess.Popen(["convert", "xwd:-", "jpg:-"], stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+                    p1.stdout.close()
+                    stdout, _ = p2.communicate(timeout=3)
+                except Exception:
+                    stdout = None
+
+                # Method B: ffmpeg x11grab
+                if not stdout or len(stdout) < 500:
+                    try:
+                        disp_str = env.get("DISPLAY", ":0")
+                        if not disp_str.startswith(":"):
+                            disp_str = ":" + disp_str
+                        p = subprocess.Popen(
+                            ["ffmpeg", "-y", "-f", "x11grab", "-draw_mouse", "1", "-i", f"{disp_str}.0", "-vframes", "1", "-f", "mjpeg", "-"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env
+                        )
+                        stdout, _ = p.communicate(timeout=3)
+                    except Exception:
+                        pass
+
+                # Method C: scrot
+                if not stdout or len(stdout) < 500:
+                    try:
+                        p = subprocess.Popen(["scrot", "-z", "-q", str(quality), "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+                        stdout, _ = p.communicate(timeout=3)
+                    except Exception:
+                        pass
+
+                # Method D: ImageMagick import
+                if not stdout or len(stdout) < 500:
+                    try:
+                        p = subprocess.Popen(["import", "-window", "root", "jpg:-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+                        stdout, _ = p.communicate(timeout=3)
+                    except Exception:
+                        pass
+
+                # Method E: grim (Wayland screencopy)
+                if not stdout or len(stdout) < 500:
+                    try:
+                        p = subprocess.Popen(["grim", "-t", "jpeg", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+                        stdout, _ = p.communicate(timeout=3)
+                    except Exception:
+                        pass
+
+                if stdout and len(stdout) > 500:
                     return {
                         "success": True,
                         "has_gui": True,
                         "desktop_mode": True,
-                        "title": "Linux Desktop (Full Screen)",
+                        "title": f"Linux Desktop ({env.get('DISPLAY', ':0')})",
                         "width": 1920,
                         "height": 1080,
                         "is_minimized": False,
                         "format": "jpeg",
-                        "data": base64.b64encode(stdout).decode('ascii'),
+                        "data": base64.b64encode(stdout).decode("ascii"),
                         "timestamp": now_ms
                     }
             except Exception:
                 pass
-            return {"success": False, "status": "no_display", "error": "Full desktop capture requires active X11 or Wayland screencopy session."}
+
+            import shutil
+            has_xvfb = shutil.which("Xvfb") is not None
+            err_msg = (
+                "Headless Linux Server: No active physical or virtual X11/Wayland display detected. "
+                "Start an interactive desktop session or run 'Xvfb :99 -screen 0 1920x1080x24 &' to launch a virtual display."
+                if not has_xvfb else
+                "No active graphical display detected on Linux host. Virtual Xvfb display is installed and available to launch."
+            )
+            return {"success": False, "status": "no_display", "error": err_msg, "has_xvfb": has_xvfb}
 
     def _capture_window_image(self, hwnd=None, pid=None, quality=80, max_w=1920, max_h=1080, app_id=None, app_name=None, desktop_mode=False):
         sys_os = platform.system()
@@ -5544,7 +5614,7 @@ class CyberVPSAgent:
                     bmi = BITMAPINFOHEADER()
                     bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
                     bmi.biWidth = w
-                    bmi.biHeight = -h
+                    bmi.biHeight = h
                     bmi.biPlanes = 1
                     bmi.biBitCount = 32
                     bmi.biCompression = 0
@@ -5557,7 +5627,7 @@ class CyberVPSAgent:
                     try:
                         from PIL import Image
                         import io
-                        img = Image.frombuffer('RGBA', (w, h), raw_bytes, 'raw', 'BGRA', 0, 1)
+                        img = Image.frombuffer('RGBA', (w, h), raw_bytes, 'raw', 'BGRA', 0, -1)
                         if w > max_w or h > max_h:
                             img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.ANTIALIAS)
                             w, h = img.size
@@ -5865,110 +5935,165 @@ class CyberVPSAgent:
 
     def handle_desktop_input_mouse(self, payload):
         """Processes remote mouse events with pixel-perfect screen coordinate mapping."""
-        if platform.system() != "Windows":
-            return
+        sys_os = platform.system()
         try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            action = payload.get("type", "move")
-            norm_x = float(payload.get("x", 0))
-            norm_y = float(payload.get("y", 0))
-            button = int(payload.get("button", 0))
+            action = payload.get("action") or payload.get("type", "move")
+            raw_x = float(payload.get("x", 0))
+            raw_y = float(payload.get("y", 0))
+            canvas_w = float(payload.get("canvas_w", 0))
+            canvas_h = float(payload.get("canvas_h", 0))
             delta_y = int(payload.get("delta_y", 0))
 
-            w = user32.GetSystemMetrics(0)
-            h = user32.GetSystemMetrics(1)
-            px_x = max(0, min(w - 1, int(norm_x * w)))
-            px_y = max(0, min(h - 1, int(norm_y * h)))
+            raw_button = payload.get("button", 0)
+            if isinstance(raw_button, str):
+                b_str = raw_button.lower()
+                button = 2 if b_str == "right" else (1 if b_str == "middle" else 0)
+            else:
+                try:
+                    button = int(raw_button)
+                except Exception:
+                    button = 0
 
-            user32.SetCursorPos(px_x, px_y)
+            if sys_os == "Windows":
+                import ctypes
+                user32 = ctypes.windll.user32
+                w = max(1, user32.GetSystemMetrics(0))
+                h = max(1, user32.GetSystemMetrics(1))
 
-            # MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004
-            # MOUSEEVENTF_RIGHTDOWN = 0x0008, MOUSEEVENTF_RIGHTUP = 0x0010
-            # MOUSEEVENTF_MIDDLEDOWN = 0x0020, MOUSEEVENTF_MIDDLEUP = 0x0040
-            # MOUSEEVENTF_WHEEL = 0x0800
-            if action == "down":
-                if button == 0:
+                if canvas_w > 0 and canvas_h > 0:
+                    px_x = int((raw_x / canvas_w) * w)
+                    px_y = int((raw_y / canvas_h) * h)
+                elif 0.0 <= raw_x <= 1.0 and 0.0 <= raw_y <= 1.0:
+                    px_x = int(raw_x * w)
+                    px_y = int(raw_y * h)
+                else:
+                    px_x = int(raw_x)
+                    px_y = int(raw_y)
+
+                px_x = max(0, min(w - 1, px_x))
+                px_y = max(0, min(h - 1, px_y))
+
+                user32.SetCursorPos(px_x, px_y)
+
+                # MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004
+                # MOUSEEVENTF_RIGHTDOWN = 0x0008, MOUSEEVENTF_RIGHTUP = 0x0010
+                # MOUSEEVENTF_MIDDLEDOWN = 0x0020, MOUSEEVENTF_MIDDLEUP = 0x0040
+                # MOUSEEVENTF_WHEEL = 0x0800
+                if action == "down":
+                    if button == 0:
+                        user32.mouse_event(0x0002, 0, 0, 0, 0)
+                    elif button == 2:
+                        user32.mouse_event(0x0008, 0, 0, 0, 0)
+                    elif button == 1:
+                        user32.mouse_event(0x0020, 0, 0, 0, 0)
+                elif action == "up":
+                    if button == 0:
+                        user32.mouse_event(0x0004, 0, 0, 0, 0)
+                    elif button == 2:
+                        user32.mouse_event(0x0010, 0, 0, 0, 0)
+                    elif button == 1:
+                        user32.mouse_event(0x0040, 0, 0, 0, 0)
+                elif action == "click":
+                    if button == 0:
+                        user32.mouse_event(0x0002, 0, 0, 0, 0)
+                        user32.mouse_event(0x0004, 0, 0, 0, 0)
+                    elif button == 2:
+                        user32.mouse_event(0x0008, 0, 0, 0, 0)
+                        user32.mouse_event(0x0010, 0, 0, 0, 0)
+                    elif button == 1:
+                        user32.mouse_event(0x0020, 0, 0, 0, 0)
+                        user32.mouse_event(0x0040, 0, 0, 0, 0)
+                elif action == "dblclick":
                     user32.mouse_event(0x0002, 0, 0, 0, 0)
-                elif button == 2:
-                    user32.mouse_event(0x0008, 0, 0, 0, 0)
-                elif button == 1:
-                    user32.mouse_event(0x0020, 0, 0, 0, 0)
-            elif action == "up":
-                if button == 0:
                     user32.mouse_event(0x0004, 0, 0, 0, 0)
-                elif button == 2:
-                    user32.mouse_event(0x0010, 0, 0, 0, 0)
-                elif button == 1:
-                    user32.mouse_event(0x0040, 0, 0, 0, 0)
-            elif action == "click":
-                if button == 0:
+                    time.sleep(0.04)
                     user32.mouse_event(0x0002, 0, 0, 0, 0)
                     user32.mouse_event(0x0004, 0, 0, 0, 0)
-                elif button == 2:
+                elif action == "contextmenu":
                     user32.mouse_event(0x0008, 0, 0, 0, 0)
                     user32.mouse_event(0x0010, 0, 0, 0, 0)
-                elif button == 1:
-                    user32.mouse_event(0x0020, 0, 0, 0, 0)
-                    user32.mouse_event(0x0040, 0, 0, 0, 0)
-            elif action == "dblclick":
-                user32.mouse_event(0x0002, 0, 0, 0, 0)
-                user32.mouse_event(0x0004, 0, 0, 0, 0)
-                time.sleep(0.04)
-                user32.mouse_event(0x0002, 0, 0, 0, 0)
-                user32.mouse_event(0x0004, 0, 0, 0, 0)
-            elif action == "contextmenu":
-                user32.mouse_event(0x0008, 0, 0, 0, 0)
-                user32.mouse_event(0x0010, 0, 0, 0, 0)
-            elif action == "wheel":
-                amount = int(delta_y)
-                if abs(amount) < 10:
-                    amount *= 120
-                user32.mouse_event(0x0800, 0, 0, amount, 0)
+                elif action == "wheel":
+                    amount = int(delta_y)
+                    if abs(amount) < 10:
+                        amount *= 120
+                    user32.mouse_event(0x0800, 0, 0, amount, 0)
+            else:
+                # Linux mouse input dispatch via xdotool
+                px_x = int(raw_x)
+                px_y = int(raw_y)
+                btn_num = 1 if button == 0 else (3 if button == 2 else 2)
+                if action == "move":
+                    subprocess.Popen(["xdotool", "mousemove", str(px_x), str(px_y)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif action == "down":
+                    subprocess.Popen(["xdotool", "mousemove", str(px_x), str(px_y), "mousedown", str(btn_num)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif action == "up":
+                    subprocess.Popen(["xdotool", "mousemove", str(px_x), str(px_y), "mouseup", str(btn_num)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif action == "click":
+                    subprocess.Popen(["xdotool", "mousemove", str(px_x), str(px_y), "click", str(btn_num)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif action == "dblclick":
+                    subprocess.Popen(["xdotool", "mousemove", str(px_x), str(px_y), "click", "--repeat", "2", str(btn_num)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif action == "contextmenu":
+                    subprocess.Popen(["xdotool", "mousemove", str(px_x), str(px_y), "click", "3"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif action == "wheel":
+                    w_btn = "4" if delta_y < 0 else "5"
+                    subprocess.Popen(["xdotool", "click", w_btn], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 
     def handle_desktop_input_keyboard(self, payload):
         """Processes remote keyboard events, physical key-down/up, modifier tracking."""
-        if platform.system() != "Windows":
-            return
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            k_type = payload.get("type", "keydown")
-            key = payload.get("key", "")
-            code = payload.get("code", "")
-            vk = int(payload.get("vk", 0))
+        sys_os = platform.system()
+        k_type = payload.get("action") or payload.get("type", "keydown")
+        if k_type == "down":
+            k_type = "keydown"
+        elif k_type == "up":
+            k_type = "keyup"
+        key = payload.get("key", "")
+        code = payload.get("code", "")
+        vk = int(payload.get("vk", 0))
 
-            VK_MAP = {
-                "Enter": 0x0D, "Backspace": 0x08, "Tab": 0x09, "Escape": 0x1B,
-                "Space": 0x20, " ": 0x20, "PageUp": 0x21, "PageDown": 0x22, "End": 0x23, "Home": 0x24,
-                "ArrowLeft": 0x25, "ArrowUp": 0x26, "ArrowRight": 0x27, "ArrowDown": 0x28,
-                "Delete": 0x2E, "Control": 0x11, "Shift": 0x10, "Alt": 0x12,
-                "Meta": 0x5B, "Windows": 0x5B,
-                "F1": 0x70, "F2": 0x71, "F3": 0x72, "F4": 0x73, "F5": 0x74, "F6": 0x75,
-                "F7": 0x76, "F8": 0x77, "F9": 0x78, "F10": 0x79, "F11": 0x7A, "F12": 0x7B
-            }
+        if sys_os == "Windows":
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                VK_MAP = {
+                    "Enter": 0x0D, "Backspace": 0x08, "Tab": 0x09, "Escape": 0x1B,
+                    "Space": 0x20, " ": 0x20, "PageUp": 0x21, "PageDown": 0x22, "End": 0x23, "Home": 0x24,
+                    "ArrowLeft": 0x25, "ArrowUp": 0x26, "ArrowRight": 0x27, "ArrowDown": 0x28,
+                    "Delete": 0x2E, "Control": 0x11, "Shift": 0x10, "Alt": 0x12,
+                    "Meta": 0x5B, "Windows": 0x5B,
+                    "F1": 0x70, "F2": 0x71, "F3": 0x72, "F4": 0x73, "F5": 0x74, "F6": 0x75,
+                    "F7": 0x76, "F8": 0x77, "F9": 0x78, "F10": 0x79, "F11": 0x7A, "F12": 0x7B
+                }
 
-            resolved_vk = vk or VK_MAP.get(key)
-            if not resolved_vk and len(key) == 1:
-                resolved_vk = user32.VkKeyScanW(ord(key)) & 0xFF
+                resolved_vk = vk or VK_MAP.get(key)
+                if not resolved_vk and len(key) == 1:
+                    resolved_vk = user32.VkKeyScanW(ord(key)) & 0xFF
 
-            if not resolved_vk:
-                return
+                if not resolved_vk:
+                    return
 
-            if k_type == "keydown":
-                user32.keybd_event(resolved_vk, 0, 0, 0)
-                self.pressed_keys.add(resolved_vk)
-            elif k_type == "keyup":
-                user32.keybd_event(resolved_vk, 0, 0x0002, 0)
-                self.pressed_keys.discard(resolved_vk)
-            elif k_type == "text" and key:
-                for ch in key:
-                    user32.keybd_event(0, ord(ch), 0x0004, 0)
-                    user32.keybd_event(0, ord(ch), 0x0004 | 0x0002, 0)
-        except Exception:
-            pass
+                if k_type == "keydown":
+                    user32.keybd_event(resolved_vk, 0, 0, 0)
+                    self.pressed_keys.add(resolved_vk)
+                elif k_type == "keyup":
+                    user32.keybd_event(resolved_vk, 0, 0x0002, 0)
+                    self.pressed_keys.discard(resolved_vk)
+                elif k_type == "text" and key:
+                    for ch in key:
+                        user32.keybd_event(0, ord(ch), 0x0004, 0)
+                        user32.keybd_event(0, ord(ch), 0x0004 | 0x0002, 0)
+            except Exception:
+                pass
+        else:
+            # Linux keyboard input via xdotool
+            try:
+                if k_type == "keydown" and key:
+                    subprocess.Popen(["xdotool", "keydown", key], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif k_type == "keyup" and key:
+                    subprocess.Popen(["xdotool", "keyup", key], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
     def cleanup_desktop_keys(self):
         """Releases all tracked keys to prevent modifier keys from remaining pressed."""

@@ -100,7 +100,17 @@ class IntegrationRegistry {
   }
 
   getProvider(id) {
-    return this.providers.get(id) || null;
+    if (!id) return null;
+    const direct = this.providers.get(id);
+    if (direct) return direct;
+    // Map aliases (e.g. 'uptime_kuma' or 'uptime-kuma' -> 'uptimekuma')
+    const normalized = id.toLowerCase().replace(/[-_]/g, '');
+    for (const [key, p] of this.providers) {
+      if (key.toLowerCase().replace(/[-_]/g, '') === normalized) {
+        return p;
+      }
+    }
+    return null;
   }
 
   listProviders() {
@@ -111,7 +121,7 @@ class IntegrationRegistry {
   }
 
   async testProvider(id, testConfig = null) {
-    const provider = this.providers.get(id);
+    const provider = this.getProvider(id);
     if (!provider) throw new Error(`Provider '${id}' not found in registry`);
 
     if (testConfig) {
@@ -123,7 +133,7 @@ class IntegrationRegistry {
   }
 
   updateProviderConfig(id, newConfig) {
-    const provider = this.providers.get(id);
+    const provider = this.getProvider(id);
     if (!provider) throw new Error(`Provider '${id}' not found in registry`);
 
     const sanitized = provider.updateConfig(newConfig);
@@ -132,7 +142,7 @@ class IntegrationRegistry {
   }
 
   async execute(id, operation, params = {}) {
-    const provider = this.providers.get(id);
+    const provider = this.getProvider(id);
     if (!provider) throw new Error(`Provider '${id}' not found in registry`);
 
     // Create tracked job if operation is long-running

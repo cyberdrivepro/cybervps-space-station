@@ -7810,11 +7810,19 @@
       if (msg.type === 'frame') {
         if (!msg.data || typeof msg.data !== 'string' || msg.data.length < 50) return;
 
+        // Drop incoming frame if browser canvas is still decoding previous frame (prevents lag backlog)
+        if (webDesktopState.isImageDecoding) return;
+
         const canvas = document.getElementById('desktop-workstation-canvas');
         if (!canvas) return;
 
+        webDesktopState.isImageDecoding = true;
         const img = new Image();
+        img.onerror = () => {
+          webDesktopState.isImageDecoding = false;
+        };
         img.onload = () => {
+          webDesktopState.isImageDecoding = false;
           if (sessionId && sessionId !== webDesktopState.sessionId) return;
 
           webDesktopState.firstFrameReceived = true;
@@ -7827,6 +7835,13 @@
             webDesktopState.remoteResolution = { width: img.naturalWidth, height: img.naturalHeight };
             const resEl = document.getElementById('desktop-ws-res');
             if (resEl) resEl.innerText = `${img.naturalWidth} × ${img.naturalHeight}`;
+          }
+
+          // Measure frame transit latency if relay timestamp is present
+          if (msg.server_relay_timestamp) {
+            const frameLatency = Math.max(1, Math.round(Date.now() - msg.server_relay_timestamp));
+            const pingEl = document.getElementById('desktop-ws-ping');
+            if (pingEl) pingEl.innerText = `${frameLatency} ms`;
           }
 
           const ctx = canvas.getContext('2d');
@@ -8085,11 +8100,16 @@
 
     function sendDesktopMouseEvent(action, payload) {
       if (!webDesktopState.ws || webDesktopState.ws.readyState !== WebSocket.OPEN) return;
+      const canvas = document.getElementById('desktop-workstation-canvas');
+      const canvas_w = canvas ? canvas.width : 0;
+      const canvas_h = canvas ? canvas.height : 0;
       webDesktopState.ws.send(JSON.stringify({
         type: 'mouse',
         action,
         x: payload.x,
         y: payload.y,
+        canvas_w: payload.canvas_w || canvas_w,
+        canvas_h: payload.canvas_h || canvas_h,
         button: payload.button || 'left',
         delta_x: payload.delta_x || 0,
         delta_y: payload.delta_y || 0
@@ -10488,49 +10508,98 @@
       showToast('Auditing NetBox configuration drift...', 'info');
       try {
         const res = await apiRequest('/api/v1/integrations/netbox/operations/detect_drift', { method: 'POST', body: '{}' });
-        if (res.ok && res.data && Array.isArray(res.data.drift_items)) {
-          const items = res.data.drift_items;
-          if (items.length === 0) {
-            if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--status-success); padding:2rem;">✅ Zero Configuration Drift: NetBox DCIM matches 100% of live agent instances.</td></tr>';
-            showToast('NetBox: Zero drift detected', 'success');
-            return;
-          }
-
+        
+        // Handle unconfigured state honestly
+        if (!res.ok || !res.data || res.data.configured === false || res.data.status === 'unconfigured') {
           if (tbody) {
-            tbody.innerHTML = items.map(d => `
-              <tr>
-                <td style="font-weight:600; color:var(--text-primary);">${escapeHtml(d.name || d.device || 'Node')}</td>
-                <td style="font-size:0.75rem;">${escapeHtml(d.role || 'Edge VPS')}</td>
-                <td style="font-family:var(--font-mono); font-size:0.8rem; color:var(--accent-cyan);">${escapeHtml(d.ip || '10.77.0.x')}</td>
-                <td><span class="badge ${d.drift ? 'badge-warning' : 'badge-success'}" style="font-size:0.68rem;">${d.drift ? 'DRIFT DETECTED' : 'IN SYNC'}</span></td>
-                <td><span class="badge badge-success" style="font-size:0.68rem;">HEALTHY (18ms)</span></td>
-                <td><button class="btn btn-secondary btn-sm" onclick="syncSelectedMachineToNetbox('${escapeJs(d.name || '')}')" style="font-size:0.7rem; padding:0.2rem 0.5rem;">Sync to NetBox</button></td>
-              </tr>
-            `).join('');
-          }
-        } else {
-          if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2rem;">
-              <div>NetBox DCIM adapter is currently in standby mode.</div>
-              <div style="margin-top:0.5rem;"><button class="btn btn-secondary btn-sm" onclick="openIntegrationConfigModal('netbox')">⚙️ Configure NetBox Endpoint</button></div>
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem 1.5rem;">
+              <div style="font-size:1.6rem; margin-bottom:0.5rem;">📦</div>
+              <div style="font-weight:600; color:var(--text-primary); font-size:1rem; margin-bottom:0.35rem;">NetBox DCIM / IPAM Source of Truth (Standby)</div>
+              <div style="font-size:0.82rem; color:var(--text-secondary); line-height:1.6; max-width:540px; margin:0 auto 1.25rem;">
+                No active NetBox connection configured. Connect your NetBox instance to compare planned devices, prefixes, and IP allocations with live CyberVPS agent telemetry and detect infrastructure drift.
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="openIntegrationConfigModal('netbox')">⚙️ Configure NetBox Endpoint</button>
             </td></tr>`;
           }
+          return;
         }
+
+        const items = res.data.all_items || res.data.drift_items || [];
+        if (items.length === 0) {
+          if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--status-success); padding:2rem;">✅ Zero Configuration Drift: NetBox DCIM matches 100% of live agent instances.</td></tr>';
+          showToast('NetBox: Zero drift detected', 'success');
+          return;
+        }
+
+        // Cache for Uptime Kuma monitors to evaluate node health
+        const kumaMonitors = window.__uptimeKumaCache || [];
+
+        if (tbody) {
+          tbody.innerHTML = items.map(d => {
+            const nodeName = d.name || d.device || 'Node';
+            const nodeIp = d.ip || d.virtual_ip || '--';
+
+            // Real drift status badge
+            let driftBadge = '<span class="badge badge-success" style="font-size:0.68rem;">IN SYNC</span>';
+            if (d.field === 'unmanaged_device') {
+              driftBadge = '<span class="badge badge-pink" style="font-size:0.68rem;">NOT IN NETBOX</span>';
+            } else if (d.drift) {
+              driftBadge = `<span class="badge badge-warning" style="font-size:0.68rem;">DRIFT (${escapeHtml(d.planned_ip || d.planned || '?')} ≠ ${escapeHtml(d.ip || d.observed || '?')})</span>`;
+            }
+
+            // Real Uptime Kuma status lookup (NEVER hardcoded fake data)
+            let kumaBadge = '<span class="badge badge-subtle" style="font-size:0.68rem;">Unmonitored</span>';
+            if (kumaMonitors.length > 0) {
+              const matchedMon = kumaMonitors.find(m => m.id === nodeName || m.id === nodeIp || (m.name && (m.name.includes(nodeName) || m.name.includes(nodeIp))));
+              if (matchedMon) {
+                kumaBadge = matchedMon.active
+                  ? `<span class="badge badge-success" style="font-size:0.68rem;">ONLINE (${matchedMon.ping ? matchedMon.ping + 'ms' : 'Active'})</span>`
+                  : `<span class="badge badge-danger" style="font-size:0.68rem;">DOWN</span>`;
+              }
+            }
+
+            return `
+              <tr>
+                <td style="font-weight:600; color:var(--text-primary);">${escapeHtml(nodeName)}</td>
+                <td style="font-size:0.75rem;">${escapeHtml(d.role || (d.field === 'unmanaged_device' ? 'Unregistered' : 'Edge VPS'))}</td>
+                <td style="font-family:var(--font-mono); font-size:0.8rem; color:var(--accent-cyan);">${escapeHtml(nodeIp)}</td>
+                <td>${driftBadge}</td>
+                <td>${kumaBadge}</td>
+                <td><button class="btn btn-secondary btn-sm" onclick="syncSelectedMachineToNetbox('${escapeJs(nodeName)}', '${escapeJs(nodeIp)}')" style="font-size:0.7rem; padding:0.2rem 0.5rem;">Sync to NetBox</button></td>
+              </tr>
+            `;
+          }).join('');
+        }
+        showToast(`NetBox: ${res.data.drift_count || 0} drift, ${res.data.unregistered_count || 0} unmanaged nodes`, 'info');
       } catch (e) {
         if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--status-danger); padding:1.5rem;">NetBox error: ${escapeHtml(e.message)}</td></tr>`;
       }
     }
 
-    async function syncSelectedMachineToNetbox(name) {
-      showToast(`Synchronizing ${name || 'machine'} to NetBox IPAM...`, 'info');
+    async function syncSelectedMachineToNetbox(name, ip) {
+      let targetName = name;
+      let targetIp = ip;
+      if (!targetName) {
+        const activeSel = document.getElementById('fleet-machine-select');
+        targetName = activeSel ? activeSel.value : '';
+      }
+      if (!targetName) {
+        targetName = prompt('Enter agent hostname or machine ID to register in NetBox DCIM:');
+      }
+      if (!targetName) return;
+
+      showToast(`Synchronizing ${targetName} to NetBox IPAM...`, 'info');
       try {
         const res = await apiRequest('/api/v1/integrations/netbox/operations/sync_device', {
           method: 'POST',
-          body: JSON.stringify({ name: name || 'local-station', role: 'server', status: 'active' })
+          body: JSON.stringify({ name: targetName, role: 'server', status: 'active', virtual_ip: targetIp, dry_run: false })
         });
         if (res.ok && res.data && res.data.success) {
-          showToast(`Successfully registered with NetBox DCIM`, 'success');
+          showToast(`Successfully registered ${targetName} with NetBox DCIM`, 'success');
           runNetBoxDriftAudit();
+        } else if (res.data && res.data.configured === false) {
+          showToast(`NetBox is not configured. Please set API URL & Token first.`, 'warning');
+          openIntegrationConfigModal('netbox');
         } else {
           showToast(`NetBox sync: ${(res.data && res.data.error) || 'Failed'}`, 'warning');
         }
@@ -10542,12 +10611,18 @@
     async function loadUptimeKumaStatus() {
       showToast('Polling Uptime Kuma synthetic monitors...', 'info');
       try {
-        const res = await apiRequest('/api/v1/integrations/uptime_kuma/operations/get_monitors', { method: 'POST', body: '{}' });
-        if (res.ok && res.data && Array.isArray(res.data.monitors)) {
+        const res = await apiRequest('/api/v1/integrations/uptimekuma/operations/get_monitors', { method: 'POST', body: '{}' });
+        if (res.ok && res.data && res.data.configured && Array.isArray(res.data.monitors)) {
+          window.__uptimeKumaCache = res.data.monitors;
           const activeCount = res.data.monitors.filter(m => m.active).length;
           showToast(`Uptime Kuma: ${activeCount}/${res.data.monitors.length} synthetic health checks passing`, 'success');
+          const tbody = document.getElementById('netbox-inventory-table-body');
+          if (tbody && !tbody.innerText.includes('Standby')) {
+            runNetBoxDriftAudit();
+          }
         } else {
-          showToast('Uptime Kuma: In standby mode. Configure in Open-Source Hub.', 'info');
+          showToast('Uptime Kuma is not configured. Configure in Open-Source Hub.', 'info');
+          openIntegrationConfigModal('uptimekuma');
         }
       } catch (e) {
         showToast('Uptime Kuma error: ' + e.message, 'error');

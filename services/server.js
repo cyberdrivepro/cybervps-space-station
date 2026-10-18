@@ -3333,7 +3333,23 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const payload = JSON.parse(body || '{}');
-        const result = await integrationRegistry.execute(providerId, operation, payload.params || payload);
+        const params = payload.params || payload;
+
+        // Auto-inject live agent nodes from db.machines into NetBox drift operations if not supplied
+        if (providerId === 'netbox' && (operation === 'detect_drift' || operation === 'compare_telemetry')) {
+          if (!params.observed_machines || params.observed_machines.length === 0) {
+            params.observed_machines = Array.from(db.machines.values()).map(m => ({
+              id: m.id,
+              hostname: m.hostname || m.friendly_name || m.id,
+              virtual_ip: m.virtual_ip,
+              public_ip: m.public_ip,
+              os: m.os,
+              status: m.status
+            }));
+          }
+        }
+
+        const result = await integrationRegistry.execute(providerId, operation, params);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
@@ -7999,6 +8015,12 @@ function handleAgentMessage(ws, msg) {
     const stream = db.appStreams.get(stream_id);
     if (stream) {
       if (stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
+        // Backpressure check: if browser socket buffer has backed up, drop this frame!
+        // This enforces latest-frame delivery and eliminates multi-second stream backlog.
+        if (stream.wsBrowser.bufferedAmount > 64 * 1024) {
+          stream.droppedFrames = (stream.droppedFrames || 0) + 1;
+          return { success: true, dropped: true };
+        }
         stream.frameCount = (stream.frameCount || 0) + 1;
         stream.byteCount = (stream.byteCount || 0) + (payload.data ? payload.data.length : 0);
         stream.wsBrowser.send(JSON.stringify({
