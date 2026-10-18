@@ -938,12 +938,18 @@ async function handleDoctor() {
   // Outbound Egress & DNS Checks
   const isNetMode = args.includes('--network') || args.includes('-n') || args.includes('--net');
   console.log('[Network] Checking outbound HTTPS reachability & DNS...');
-  const dns = require('dns');
   const checkUrl = (u) => new Promise(r => {
     try {
       const parsed = new URL(u);
+      const client = parsed.protocol === 'http:' ? http : https;
+      const port = parsed.port || (parsed.protocol === 'http:' ? 80 : 443);
       const t0 = Date.now();
-      const req = https.get({ hostname: parsed.hostname, path: parsed.pathname || '/', timeout: 4000 }, (res) => r({ code: res.statusCode, ms: Date.now() - t0 }));
+      const req = client.get({
+        hostname: parsed.hostname,
+        port: port,
+        path: parsed.pathname || '/',
+        timeout: 3000
+      }, (res) => r({ code: res.statusCode, ms: Date.now() - t0 }));
       req.on('error', (e) => r({ error: e.message }));
       req.on('timeout', () => { req.destroy(); r({ error: 'Timeout' }); });
     } catch (e) { r({ error: e.message }); }
