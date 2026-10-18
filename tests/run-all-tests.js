@@ -2033,6 +2033,14 @@ async function runTests() {
   assert(securityTest.includes('ALL WINDOWS UAC FALLBACK & OBSIDIAN SECURITY TESTS PASSED'), 'UAC fallback and Obsidian security tests must pass');
   console.log('  ✅ Windows UAC Fallback, Emergency Blackout Mode & Obsidian Pillar Hardcore File Protection verified.');
 
+  // [TEST 49] Testing Open-Source Adapters, Providers Registry & Job Tracker...
+  console.log('\n[TEST 49] Testing Open-Source Adapters, Providers Registry & Job Tracker...');
+  const adapterTest = execSync(`node "${require('path').join(__dirname, 'test-open-source-adapters.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(adapterTest.includes('ALL OPEN-SOURCE ADAPTERS & ARCHITECTURE TESTS PASSED'), 'Open-source adapters tests must pass');
+  console.log('  ✅ Open-Source Adapters, 17 Providers, Destination Guards & Job Tracking verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2040,7 +2048,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 48 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA, PATH OWNERSHIP, LIFECYCLE & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 49 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

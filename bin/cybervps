@@ -202,9 +202,38 @@ async function main() {
       await handleStop();
       break;
     case 'restart':
+      assertIsAdmin('restart');
+      if (process.platform !== 'win32') {
+        let restartedSystemd = false;
+        try {
+          if (fs.existsSync('/etc/systemd/system/cybervps-agent.service')) {
+            execSync('systemctl restart cybervps-agent.service', { stdio: 'ignore' });
+            console.log('[+] Restarted CyberVPS agent via systemd service.');
+            restartedSystemd = true;
+          }
+        } catch (_) {}
+        if (!restartedSystemd) {
+          try {
+            const userSvc = path.join(os.homedir(), '.config', 'systemd', 'user', 'cybervps-agent.service');
+            if (fs.existsSync(userSvc)) {
+              execSync('systemctl --user restart cybervps-agent.service', { stdio: 'ignore' });
+              console.log('[+] Restarted CyberVPS agent via user systemd service.');
+              restartedSystemd = true;
+            }
+          } catch (_) {}
+        }
+        if (restartedSystemd) break;
+      }
       await handleStop();
       await new Promise(r => setTimeout(r, 1000));
       await handleStart();
+      break;
+    case 'security':
+    case 'blackout':
+    case 'pillar':
+    case 'replit':
+    case 'lab':
+      await handlePythonCliForward();
       break;
     case 'status':
       await handleStatus();
@@ -489,6 +518,23 @@ async function handleStop() {
     } catch (_) {}
   }
 
+  // On Linux, also check systemd services
+  if (process.platform !== 'win32') {
+    try {
+      if (fs.existsSync('/etc/systemd/system/cybervps-agent.service')) {
+        execSync('systemctl stop cybervps-agent.service', { stdio: 'ignore' });
+        anyStopped = true;
+      }
+    } catch (_) {}
+    try {
+      const userSvc = path.join(os.homedir(), '.config', 'systemd', 'user', 'cybervps-agent.service');
+      if (fs.existsSync(userSvc)) {
+        execSync('systemctl --user stop cybervps-agent.service', { stdio: 'ignore' });
+        anyStopped = true;
+      }
+    } catch (_) {}
+  }
+
   if (fs.existsSync(PID_FILE)) {
     const sPid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
     if (isPidRunning(sPid)) {
@@ -502,6 +548,19 @@ async function handleStop() {
     console.log('✅ CyberVPS background services stopped successfully.');
   } else {
     console.log('ℹ️  No CyberVPS processes were currently running.');
+  }
+}
+
+async function handlePythonCliForward() {
+  const pyRuntime = findPythonRuntime();
+  const pyScript = path.join(APP_DIR, 'bin', 'cybervps.py');
+  if (pyRuntime && fs.existsSync(pyScript)) {
+    const { spawnSync } = require('child_process');
+    const res = spawnSync(pyRuntime.cmd, [...pyRuntime.argsPrefix, pyScript, ...args], { stdio: 'inherit' });
+    process.exit(res.status || 0);
+  } else {
+    console.error(`❌ Python 3 runtime or ${pyScript} required for command: ${command}`);
+    process.exit(1);
   }
 }
 

@@ -311,7 +311,7 @@ if [ -z "$PY_CMD" ] && [ -z "$NODE_CMD" ]; then
     echo "================================================================"
     echo "Host:        ${HOSTNAME} (Linux Pure POSIX)"
     echo "Backend:     ${SERVER_URL} (Connected in <100ms)"
-    echo "Status:      ONLINE (Zero external dependencies required)"
+    echo "Status:      HANDSHAKE ACTIVE (Ghost Bridge Running - Enrollment Syncing)"
     echo "Ghost PID:   ${GHOST_PID} (100% Invisible Background Connection)"
     echo "Machine ID:  ${MACHINE_ID}"
     echo "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/"

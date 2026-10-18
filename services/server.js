@@ -21,6 +21,7 @@ const PathOwnershipEngine = require('./core/path-ownership-engine');
 const ResourceReconciliationService = require('./core/resource-reconciliation');
 const InfrastructureIntelService = require('./core/infrastructure-intel');
 const CanaryRolloutManager = require('./core/canary-rollout-manager');
+const { integrationRegistry } = require('./adapters/registry');
 
 const PORT = process.env.PORT || 8080;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
@@ -3197,6 +3198,156 @@ const server = http.createServer(async (req, res) => {
       success: true,
       machine_id: machineId,
       incidents
+    }));
+    return;
+  }
+
+  // =========================================================================
+  // OPEN-SOURCE INTEGRATIONS & THIRD-PARTY ADAPTERS API
+  // =========================================================================
+
+  // 1. List All Integrations & Hub Summary
+  if (pathname === '/api/v1/integrations' && method === 'GET') {
+    const summaryOnly = parsedUrl.searchParams.get('summary') === 'true';
+    if (summaryOnly) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, data: integrationRegistry.getHubSummary() }));
+      return;
+    }
+    const providers = integrationRegistry.listProviders();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      total: providers.length,
+      data: providers,
+      summary: integrationRegistry.getHubSummary()
+    }));
+    return;
+  }
+
+  // 2. List Background Integration Jobs
+  if (pathname === '/api/v1/integrations/jobs' && method === 'GET') {
+    const providerId = parsedUrl.searchParams.get('provider_id');
+    const status = parsedUrl.searchParams.get('status');
+    const jobs = integrationRegistry.getJobTracker().listJobs({ providerId, status });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, count: jobs.length, data: jobs }));
+    return;
+  }
+
+  // 3. Get Single Job Details & Progress
+  if (pathname.startsWith('/api/v1/integrations/jobs/') && !pathname.endsWith('/cancel') && method === 'GET') {
+    const jobId = pathname.replace('/api/v1/integrations/jobs/', '');
+    const job = integrationRegistry.getJobTracker().getJob(jobId);
+    if (!job) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: `Job '${jobId}' not found` }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, data: job }));
+    return;
+  }
+
+  // 4. Cancel Background Job
+  if (pathname.startsWith('/api/v1/integrations/jobs/') && pathname.endsWith('/cancel') && method === 'POST') {
+    const jobId = pathname.replace('/api/v1/integrations/jobs/', '').replace('/cancel', '');
+    const cancelled = integrationRegistry.getJobTracker().cancelJob(jobId);
+    res.writeHead(cancelled ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: cancelled, job_id: jobId }));
+    return;
+  }
+
+  // 5. Test Integration Connection
+  if (pathname.startsWith('/api/v1/integrations/') && pathname.endsWith('/test') && method === 'POST') {
+    const providerId = pathname.replace('/api/v1/integrations/', '').replace('/test', '');
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const result = await integrationRegistry.testProvider(providerId, payload.config || null);
+        res.writeHead(result.success ? 200 : (result.status === 'unauthorized' ? 401 : 502), { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: result.success,
+          provider_id: providerId,
+          ...result
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 6. Update Integration Configuration
+  if (pathname.startsWith('/api/v1/integrations/') && pathname.endsWith('/config') && method === 'POST') {
+    const providerId = pathname.replace('/api/v1/integrations/', '').replace('/config', '');
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const auth = verifyAdminAuthorization(req);
+        if (!auth.authorized) {
+          res.writeHead(auth.status || 401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: auth.reason || 'Unauthorized' }));
+          return;
+        }
+        const updatedSanitized = integrationRegistry.updateProviderConfig(providerId, payload.config || payload);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          provider_id: providerId,
+          sanitizedConfig: updatedSanitized
+        }));
+      } catch (err) {
+        res.writeHead(err.message.includes('not found') ? 404 : 500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 7. Execute Provider Operation
+  if (pathname.startsWith('/api/v1/integrations/') && pathname.includes('/operations/') && method === 'POST') {
+    const parts = pathname.replace('/api/v1/integrations/', '').split('/operations/');
+    const providerId = parts[0];
+    const operation = parts[1];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const result = await integrationRegistry.execute(providerId, operation, payload.params || payload);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        const status = err.message.includes('not supported') ? 400 : (err.message.includes('Security Exception') ? 403 : 500);
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 8. Get Single Integration Details
+  if (pathname.startsWith('/api/v1/integrations/') && !pathname.includes('/operations') && !pathname.includes('/test') && !pathname.includes('/config') && !pathname.startsWith('/api/v1/integrations/jobs') && method === 'GET') {
+    const providerId = pathname.replace('/api/v1/integrations/', '').split('/')[0];
+    const provider = integrationRegistry.getProvider(providerId);
+    if (!provider) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: `Provider '${providerId}' not found` }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      data: {
+        ...provider.getStatus(),
+        sanitizedConfig: provider.getSanitizedConfig()
+      }
     }));
     return;
   }

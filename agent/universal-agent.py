@@ -38,7 +38,7 @@ def _iso_now():
     try:
         return datetime.datetime.now(datetime.timezone.utc).isoformat()
     except Exception:
-        return _iso_now()
+        return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 # Guard against None stdio streams on Windows (e.g. under pythonw or windowless subsystems)
 if sys.stdout is None:
@@ -1614,12 +1614,22 @@ class CyberVPSAgent:
         try:
             import hmac
             import hashlib
+            heal_attempts = getattr(self, "_heal_attempts", 0)
+            if heal_attempts >= 5:
+                print(f"[!] Token self-heal rate-limit reached ({heal_attempts} attempts). Manual authentication required.")
+                return False
+            self._heal_attempts = heal_attempts + 1
+
             pairing_secret = (
                 os.environ.get("CVPS_PAIRING_KEY")
                 or os.environ.get("PAIRING_KEY")
                 or os.environ.get("BOOTSTRAP_SECRET")
                 or "cybervps_pair_station_2026"
             )
+            if not pairing_secret:
+                print("[!] Token self-heal failed: No pairing secret or bootstrap credential available.")
+                return False
+
             mid = self.machine_id or "node"
             sig = hmac.new(pairing_secret.encode("utf-8"), f"node:{mid}".encode("utf-8"), hashlib.sha256).hexdigest()[:24]
             canonical_token = f"cvps_node_{mid}_{sig}"
@@ -1641,8 +1651,8 @@ class CyberVPSAgent:
                     pass
                 return True
             return False
-        except Exception:
-            # Prevent secondary self-heal errors from crashing caller thread
+        except Exception as e:
+            print(f"[!] Token self-heal exception: {e}")
             return False
 
     # =========================================================================
@@ -7875,18 +7885,29 @@ class CyberVPSAgent:
             print(f"[!] Error spawning replacement agent: {e}")
 
     def send_discovery_report(self):
-        ports = self.discover_listening_ports()
-        profile = self.discover_device_profile()
-        self.send_agent_event({
-            "type": "DiscoveryReport",
-            "payload": {
-                "machine_id": self.machine_id,
-                "token": self.token,
-                "ports": ports,
-                "profile": profile,
-                "processes": []
-            }
-        })
+        try:
+            ports = self.discover_listening_ports()
+        except Exception as e:
+            ports = []
+            print(f"[!] Notice: Port discovery non-fatal exception: {e}")
+        try:
+            profile = self.discover_device_profile()
+        except Exception as e:
+            profile = {}
+            print(f"[!] Notice: Profile discovery non-fatal exception: {e}")
+        try:
+            self.send_agent_event({
+                "type": "DiscoveryReport",
+                "payload": {
+                    "machine_id": self.machine_id,
+                    "token": self.token,
+                    "ports": ports,
+                    "profile": profile,
+                    "processes": []
+                }
+            })
+        except Exception as e:
+            print(f"[!] Notice: Failed to dispatch discovery report event: {e}")
 
     def is_pid_alive(self, pid):
         if not pid or pid <= 0:
@@ -8092,7 +8113,8 @@ def handle_cli_subcommands(args):
     valid_subcmds = [
         "status", "stat", "restart", "reload", "stop", "kill", "start", "agent", "ghost",
         "reboot", "rebuild", "repair", "heal", "uninstall", "remove", "update",
-        "help", "--help", "-h", "doctor", "check", "logs", "log", "version", "-v", "--version"
+        "help", "--help", "-h", "doctor", "check", "logs", "log", "version", "-v", "--version",
+        "security", "blackout", "pillar", "replit", "lab"
     ]
 
     subcmd = None
@@ -8834,7 +8856,24 @@ def handle_cli_subcommands(args):
         else:
             subprocess.Popen("sleep 1 && (systemctl reboot || reboot || shutdown -r now)", shell=True)
         print("[+] Machine reboot dispatched.")
-        sys.exit(0)
+    elif subcmd in ["security", "blackout", "pillar", "replit", "lab"]:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        cli_candidates = [
+            os.path.join(base_dir, "..", "bin", "cybervps.py"),
+            os.path.join(base_dir, "bin", "cybervps.py"),
+            os.path.join(os.path.expanduser("~"), ".cybervps", "space-station", "bin", "cybervps.py")
+        ]
+        target_cli = None
+        for c in cli_candidates:
+            if os.path.exists(c):
+                target_cli = c
+                break
+        if target_cli:
+            ret = subprocess.run([sys.executable, target_cli, subcmd] + args[1:])
+            sys.exit(ret.returncode)
+        else:
+            print(f"[*] CyberVPS CLI handler not found for '{subcmd}'. Looked in: {cli_candidates}")
+            sys.exit(1)
 
     return True
 

@@ -916,6 +916,7 @@
       <li><a class="nav-item" onclick="navigate('doctor')"><svg viewBox="0 0 24 24"><path d="m22 12-4-4v3H3v2h15v3l4-4z"/><circle cx="12" cy="12" r="10"/></svg>System Doctor</a></li>
       <li><a class="nav-item" onclick="navigate('logs')"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>Activity Logs</a></li>
       <li><a class="nav-item" onclick="navigate('security')"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Obsidian Security & Blackout</a></li>
+      <li><a class="nav-item" onclick="navigate('integrations')"><svg viewBox="0 0 24 24" style="stroke:var(--accent-cyan); fill:none; stroke-width:2;"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Open-Source Hub</a></li>
       <li><a class="nav-item" onclick="navigate('settings')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</a></li>
     </ul>
 
@@ -1851,6 +1852,29 @@
               <div id="desktop-env-warning-text" style="font-size:0.8rem;"></div>
             </div>
 
+            <!-- REMOTE DESKTOP ENGINE SELECTOR -->
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; margin-bottom:1.25rem; padding:0.6rem 0.9rem; background:var(--bg-subtle); border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+              <div style="display:flex; align-items:center; gap:0.65rem; flex-wrap:wrap;">
+                <span style="font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">Desktop Engine:</span>
+                <div style="display:flex; gap:0.4rem;" id="desktop-engine-tabs">
+                  <button type="button" class="btn btn-secondary active" id="btn-engine-native" onclick="switchDesktopEngine('native')" style="font-size:0.78rem; padding:0.35rem 0.8rem;">
+                    🖥️ Native Live HD (GDI+)
+                  </button>
+                  <button type="button" class="btn btn-secondary" id="btn-engine-meshcentral" onclick="switchDesktopEngine('meshcentral')" style="font-size:0.78rem; padding:0.35rem 0.8rem;">
+                    🌐 MeshCentral Web Engine
+                  </button>
+                  <button type="button" class="btn btn-secondary" id="btn-engine-guacamole" onclick="switchDesktopEngine('guacamole')" style="font-size:0.78rem; padding:0.35rem 0.8rem;">
+                    🥑 Apache Guacamole HTML5
+                  </button>
+                </div>
+              </div>
+              <div id="desktop-engine-status-badge">
+                <span class="badge badge-cyan" style="font-size:0.72rem;">Zero-Install GDI+ Active</span>
+              </div>
+            </div>
+
+            <!-- CONTAINER: NATIVE LIVE HD -->
+            <div id="desktop-engine-container-native">
             <!-- WORKSTATION: ZERO-INSTALL HIGH-PERFORMANCE WEB REMOTE DESKTOP -->
             <div id="desktop-workstation-card" class="card" style="margin-bottom:1.5rem; border:1px solid rgba(6,182,212,0.3); background:var(--bg-surface); box-shadow:0 12px 36px rgba(0,0,0,0.4);">
               <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; background:linear-gradient(135deg, rgba(6,182,212,0.06), rgba(139,92,246,0.06)); border-bottom:1px solid var(--border-subtle); padding:0.85rem 1.25rem;">
@@ -1992,6 +2016,91 @@
                 <!-- Canvas Surface -->
                 <canvas id="desktop-workstation-canvas" style="display:none; max-width:100%; max-height:100%; object-fit:contain; box-shadow:0 12px 40px rgba(0,0,0,0.8); cursor:default;"></canvas>
 
+              </div>
+            </div>
+            </div> <!-- /desktop-engine-container-native -->
+
+            <!-- CONTAINER: MESHCENTRAL WEB ENGINE -->
+            <div id="desktop-engine-container-meshcentral" style="display:none; margin-bottom:1.5rem;">
+              <div class="card" style="border:1px solid rgba(139,92,246,0.3); background:var(--bg-surface); box-shadow:0 12px 36px rgba(0,0,0,0.4);">
+                <div class="card-header" style="background:linear-gradient(135deg, rgba(139,92,246,0.08), rgba(6,182,212,0.04));">
+                  <div style="display:flex; align-items:center; gap:0.65rem;">
+                    <div style="width:10px; height:10px; border-radius:50%; background:var(--accent-purple);" id="meshcentral-indicator"></div>
+                    <div>
+                      <div class="card-title" style="color:var(--text-primary); font-size:0.95rem;">
+                        <span>MeshCentral Browser Remote Desktop</span>
+                        <span class="badge badge-purple" style="font-size:0.68rem;">OPEN-SOURCE WEBSOCKET STREAM</span>
+                      </div>
+                      <div class="card-desc">Full-featured browser remote desktop with auto single-use session tokens (60s lifetime) and zero plaintext credential leakage</div>
+                    </div>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <button class="btn btn-secondary" onclick="checkMeshCentralStatus()" style="font-size:0.78rem; padding:0.35rem 0.75rem;">
+                      🔄 Check Status
+                    </button>
+                    <button class="btn btn-primary" id="btn-meshcentral-connect" onclick="connectMeshCentralDesktop()" style="font-size:0.78rem; padding:0.35rem 0.95rem; background:linear-gradient(135deg, #8b5cf6, #06b6d4);">
+                      🚀 Mint Token & Connect
+                    </button>
+                  </div>
+                </div>
+                <div class="card-body" id="meshcentral-viewer-container" style="min-height:480px; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#070b14; border-radius:0 0 var(--radius-md) var(--radius-md); position:relative; overflow:hidden;">
+                  <div id="meshcentral-standby" style="text-align:center; max-width:540px; padding:2rem;">
+                    <div style="width:58px; height:58px; border-radius:50%; background:rgba(139,92,246,0.12); border:1px solid rgba(139,92,246,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 1.25rem; font-size:1.8rem;">
+                      🌐
+                    </div>
+                    <h3 style="color:var(--text-primary); font-size:1.1rem; margin-bottom:0.5rem;">MeshCentral Remote Session Ready</h3>
+                    <p style="color:var(--text-muted); font-size:0.82rem; line-height:1.6; margin-bottom:1.5rem;">
+                      Click <strong>Mint Token & Connect</strong> to request a cryptographically signed, short-lived session token from the MeshCentral adapter and launch the interactive desktop stream inside an isolated sandbox iframe.
+                    </p>
+                    <div id="meshcentral-unconfigured-note" style="display:none; margin-bottom:1rem; padding:0.6rem 0.9rem; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.25); border-radius:var(--radius-sm); font-size:0.78rem; color:#f59e0b;">
+                      MeshCentral adapter is currently in standby mode. Configure your instance in the Open-Source Hub or use the default Native Live HD stream.
+                    </div>
+                  </div>
+                  <iframe id="meshcentral-iframe" style="display:none; width:100%; height:700px; border:none; background:#000;" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+                </div>
+              </div>
+            </div>
+
+            <!-- CONTAINER: GUACAMOLE HTML5 GATEWAY -->
+            <div id="desktop-engine-container-guacamole" style="display:none; margin-bottom:1.5rem;">
+              <div class="card" style="border:1px solid rgba(16,185,129,0.3); background:var(--bg-surface); box-shadow:0 12px 36px rgba(0,0,0,0.4);">
+                <div class="card-header" style="background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(6,182,212,0.04));">
+                  <div style="display:flex; align-items:center; gap:0.65rem;">
+                    <div style="width:10px; height:10px; border-radius:50%; background:var(--accent-green, #10b981);" id="guacamole-indicator"></div>
+                    <div>
+                      <div class="card-title" style="color:var(--text-primary); font-size:0.95rem;">
+                        <span>Apache Guacamole HTML5 Gateway</span>
+                        <span class="badge badge-success" style="font-size:0.68rem;">CLIENTLESS RDP / VNC / SSH</span>
+                      </div>
+                      <div class="card-desc">Standards-compliant clientless HTML5 gateway protocol converter with encrypted tunnel sessions and hardware scaling</div>
+                    </div>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <select id="guacamole-protocol-select" class="form-control" style="font-size:0.78rem; padding:0.3rem 0.6rem; height:auto; background:var(--bg-base); max-width:140px;">
+                      <option value="rdp" selected>Protocol: RDP (3389)</option>
+                      <option value="vnc">Protocol: VNC (5900)</option>
+                      <option value="ssh">Protocol: SSH (22)</option>
+                    </select>
+                    <button class="btn btn-primary" id="btn-guacamole-connect" onclick="connectGuacamoleDesktop()" style="font-size:0.78rem; padding:0.35rem 0.95rem; background:linear-gradient(135deg, #10b981, #06b6d4);">
+                      🚀 Launch Session
+                    </button>
+                  </div>
+                </div>
+                <div class="card-body" id="guacamole-viewer-container" style="min-height:480px; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#070b14; border-radius:0 0 var(--radius-md) var(--radius-md); position:relative; overflow:hidden;">
+                  <div id="guacamole-standby" style="text-align:center; max-width:540px; padding:2rem;">
+                    <div style="width:58px; height:58px; border-radius:50%; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 1.25rem; font-size:1.8rem;">
+                      🥑
+                    </div>
+                    <h3 style="color:var(--text-primary); font-size:1.1rem; margin-bottom:0.5rem;">Apache Guacamole Clientless Gateway</h3>
+                    <p style="color:var(--text-muted); font-size:0.82rem; line-height:1.6; margin-bottom:1.5rem;">
+                      Provides zero-plugin browser access to RDP, VNC, and SSH consoles with automatic resolution negotiation and two-way clipboard exchange.
+                    </p>
+                    <div id="guacamole-unconfigured-note" style="display:none; margin-bottom:1rem; padding:0.6rem 0.9rem; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.25); border-radius:var(--radius-sm); font-size:0.78rem; color:#f59e0b;">
+                      Guacamole gateway adapter is currently unconfigured. Set up your guacd / client endpoint in the Open-Source Hub or continue using the zero-dependency Native Live HD engine.
+                    </div>
+                  </div>
+                  <iframe id="guacamole-iframe" style="display:none; width:100%; height:700px; border:none; background:#000;" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+                </div>
               </div>
             </div>
 
@@ -2940,6 +3049,121 @@
         </div>
       </div>
 
+      <!-- VIEW: OPEN-SOURCE INTEGRATIONS & ECOSYSTEM HUB -->
+      <div id="view-integrations" class="view-panel" style="display:none;">
+        <div class="card" style="border:1px solid rgba(6,182,212,0.3); background:var(--bg-surface); box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem; background:linear-gradient(135deg, rgba(6,182,212,0.06), rgba(139,92,246,0.06));">
+            <div>
+              <div class="card-title" style="font-size:1.05rem;">
+                <svg viewBox="0 0 24 24" style="width:20px; height:20px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                <span>Open-Source Providers & Ecosystem Hub</span>
+                <span class="badge badge-cyan" style="font-size:0.7rem;">17 Production Engines</span>
+              </div>
+              <div class="card-desc">
+                Enterprise open-source sidecars powering P2P WireGuard mesh, reverse proxy tunnels, clientless remote desktop, PaaS deployments, encrypted backups, threat remediation, and telemetry
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+              <button class="btn btn-secondary" onclick="loadIntegrationsHub()" title="Refresh provider health and statuses">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>Refresh Hub</span>
+              </button>
+              <button class="btn btn-secondary" onclick="testAllIntegrations()" id="btn-test-all-integrations" title="Verify network reachability and auth across all adapters">
+                ⚡ Test All Adapters
+              </button>
+              <button class="btn btn-primary" onclick="openIntegrationJobsModal()" style="display:flex; align-items:center; gap:0.4rem;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>
+                <span>Background Jobs</span>
+                <span id="integrations-jobs-badge" class="badge badge-subtle" style="font-size:0.65rem; padding:1px 5px; margin-left:2px;">0</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="card-body">
+            <!-- Hub KPI Metrics -->
+            <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom:1.25rem;">
+              <div class="kpi-card" style="padding:1rem;">
+                <div class="kpi-label">Total Providers</div>
+                <div class="kpi-value" id="kpi-total-providers" style="color:var(--text-primary); font-size:1.6rem;">17</div>
+                <div class="kpi-subtext">Across 9 Architectural Domains</div>
+              </div>
+              <div class="kpi-card" style="padding:1rem;">
+                <div class="kpi-label">Connected / Active</div>
+                <div class="kpi-value" id="kpi-connected-providers" style="color:var(--status-online, #10b981); font-size:1.6rem;">--</div>
+                <div class="kpi-subtext">Authenticated & Responsive</div>
+              </div>
+              <div class="kpi-card" style="padding:1rem;">
+                <div class="kpi-label">Degraded / Warning</div>
+                <div class="kpi-value" id="kpi-degraded-providers" style="color:var(--status-warning, #f59e0b); font-size:1.6rem;">0</div>
+                <div class="kpi-subtext">Latency or Auth Warning</div>
+              </div>
+              <div class="kpi-card" style="padding:1rem;">
+                <div class="kpi-label">Standby / Unconfigured</div>
+                <div class="kpi-value" id="kpi-unconfigured-providers" style="color:var(--text-muted); font-size:1.6rem;">--</div>
+                <div class="kpi-subtext">Zero-Install Fallback Mode</div>
+              </div>
+              <div class="kpi-card" style="padding:1rem;">
+                <div class="kpi-label">Background Jobs</div>
+                <div class="kpi-value" id="kpi-active-jobs" style="color:var(--accent-cyan); font-size:1.6rem;">0</div>
+                <div class="kpi-subtext">Backups, Deploys & IaC</div>
+              </div>
+            </div>
+
+            <!-- Zero-Dependency Architecture Banner -->
+            <div style="display:flex; align-items:center; gap:0.75rem; padding:0.75rem 1rem; background:rgba(6,182,212,0.06); border:1px solid rgba(6,182,212,0.2); border-radius:var(--radius-sm); margin-bottom:1.25rem; font-size:0.8rem; color:var(--text-secondary);">
+              <span style="font-size:1.2rem;">💡</span>
+              <div>
+                <strong style="color:var(--text-primary);">Zero-Dependency Resilience Guarantee:</strong>
+                All external open-source engines run as completely optional modular sidecars. If any tool binary or external service is unconfigured or unavailable, CyberVPS automatically falls back to its built-in native implementations (Node userspace mesh, GDI+ desktop stream, and internal TCP bridge).
+              </div>
+            </div>
+
+            <!-- Category Filter Tabs -->
+            <div style="display:flex; align-items:center; gap:0.4rem; overflow-x:auto; padding-bottom:0.6rem; margin-bottom:1.25rem; border-bottom:1px solid var(--border-subtle);" id="integrations-category-tabs">
+              <button class="btn btn-secondary active" onclick="filterIntegrationsCategory('all', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                All Categories (17)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('mesh', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                🌐 Mesh (NetBird, Headscale)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('tunnels', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                ⚡ Tunnels (FRP, Pangolin)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('remote_desktop', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                🖥️ Remote Desktop (MeshCentral, Guacamole)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('paas', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                🚀 PaaS (Coolify)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('backup', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                💾 Backups (restic, Kopia)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('security', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                🛡️ Security (Wazuh, CrowdSec)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('observability', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                📊 Observability (Beszel, Prometheus, Uptime Kuma)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('infrastructure', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                🏗️ IaC & Inventory (NetBox, OpenTofu, Ansible)
+              </button>
+              <button class="btn btn-secondary" onclick="filterIntegrationsCategory('supply_chain', this)" style="font-size:0.76rem; padding:0.3rem 0.75rem; white-space:nowrap;">
+                🔏 Supply Chain (Cosign)
+              </button>
+            </div>
+
+            <!-- Integrations Provider Cards Grid -->
+            <div id="integrations-cards-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:1.25rem;">
+              <div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--text-muted);">
+                <div class="pulse-dot" style="margin:0 auto 0.75rem;"></div>
+                Loading Open-Source Integration Engine Registry...
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
       <!-- VIEW: SETTINGS -->
       <div id="view-settings" class="view-panel" style="display:none;">
         <div class="card">
@@ -3042,6 +3266,171 @@
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- MODAL: CONFIGURE OPEN-SOURCE INTEGRATION -->
+  <div id="modal-integration-config" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeIntegrationConfigModal();">
+    <div class="modal" style="max-width:580px; width:92vw;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <span id="modal-config-icon">⚙️</span>
+          <span id="modal-config-title">Configure Integration</span>
+        </strong>
+        <button class="btn-icon" onclick="closeIntegrationConfigModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="modal-config-provider-id">
+
+        <div style="padding:0.75rem 0.9rem; background:var(--bg-subtle); border-radius:var(--radius-sm); border:1px solid var(--border-subtle); margin-bottom:1.15rem;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.25rem;">
+            <strong id="modal-config-name" style="color:var(--text-primary); font-size:0.92rem;">Provider Name</strong>
+            <span id="modal-config-category-badge" class="badge badge-cyan">Domain</span>
+          </div>
+          <div id="modal-config-desc" style="font-size:0.76rem; color:var(--text-muted); line-height:1.4;">
+            Provider description goes here.
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between; padding:0.5rem 0.75rem; background:rgba(255,255,255,0.02); border-radius:var(--radius-sm);">
+          <div>
+            <label class="form-label" style="margin:0; font-weight:600;">Enable Integration</label>
+            <div style="font-size:0.72rem; color:var(--text-muted);">Activate sidecar adapter operations and health checks</div>
+          </div>
+          <input type="checkbox" id="modal-config-enabled" style="width:18px; height:18px; cursor:pointer;">
+        </div>
+
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label class="form-label" id="modal-config-endpoint-label">Endpoint URL / Control Server</label>
+          <input type="text" id="modal-config-endpoint" class="form-control" placeholder="e.g. https://api.netbird.io or http://localhost:8080">
+          <span style="font-size:0.72rem; color:var(--text-muted);" id="modal-config-endpoint-hint">Local daemon API or remote control server base URL</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom:1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label class="form-label" id="modal-config-token-label">API Token / Secret Key</label>
+            <button type="button" class="btn btn-secondary" onclick="toggleConfigSecretVisibility()" style="font-size:0.68rem; padding:0.15rem 0.45rem; height:auto;">👁️ Show/Hide</button>
+          </div>
+          <input type="password" id="modal-config-token" class="form-control" placeholder="••••••••••••••••" autocomplete="new-password">
+          <span style="font-size:0.72rem; color:var(--text-muted);">Stored securely on the backend; never exposed to unauthenticated viewers.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom:1rem;" id="modal-config-custom-group">
+          <label class="form-label">Custom Parameters (JSON)</label>
+          <textarea id="modal-config-custom-json" class="form-control" rows="3" style="font-family:var(--font-mono); font-size:0.78rem;" placeholder='{"timeoutMs": 10000}'></textarea>
+        </div>
+
+        <div id="modal-config-status-alert" style="display:none; padding:0.6rem 0.8rem; border-radius:var(--radius-sm); font-size:0.76rem; margin-top:0.75rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeIntegrationConfigModal()">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-integration-config" onclick="saveIntegrationConfig()">Save & Validate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: RUN OPEN-SOURCE INTEGRATION ACTION -->
+  <div id="modal-integration-action" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeIntegrationActionModal();">
+    <div class="modal" style="max-width:680px; width:94vw;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <span>🚀 Execute Provider Operation</span>
+        </strong>
+        <button class="btn-icon" onclick="closeIntegrationActionModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="modal-action-provider-id">
+
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:0.7rem 0.9rem; background:var(--bg-subtle); border-radius:var(--radius-sm); border:1px solid var(--border-subtle); margin-bottom:1rem;">
+          <div>
+            <strong id="modal-action-provider-name" style="color:var(--text-primary); font-size:0.92rem;">Provider</strong>
+            <span id="modal-action-provider-badge" class="badge badge-cyan" style="margin-left:0.4rem;">Category</span>
+          </div>
+          <span id="modal-action-status-badge" class="badge badge-subtle">Status</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label class="form-label">Operation</label>
+          <select id="modal-action-select" class="form-control" onchange="onActionOperationChange()">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label class="form-label">Operation Parameters (JSON)</label>
+          <textarea id="modal-action-params" class="form-control" rows="4" style="font-family:var(--font-mono); font-size:0.78rem;" placeholder='{}'></textarea>
+          <span style="font-size:0.72rem; color:var(--text-muted);" id="modal-action-params-hint">Provide arguments required by this operation.</span>
+        </div>
+
+        <!-- Result / Output Console -->
+        <div id="modal-action-result-box" style="display:none; margin-top:1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
+            <label class="form-label" style="margin:0;">Execution Response</label>
+            <span id="modal-action-exec-status" class="badge badge-success" style="font-size:0.68rem;">SUCCESS</span>
+          </div>
+          <pre id="modal-action-result-pre" style="background:#050811; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.75rem; color:#38bdf8; font-family:var(--font-mono); font-size:0.74rem; max-height:220px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; margin:0;"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeIntegrationActionModal()">Close</button>
+        <button class="btn btn-primary" id="btn-run-integration-action" onclick="executeIntegrationAction()">⚡ Execute Action</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: BACKGROUND INTEGRATION JOBS TRACKER -->
+  <div id="modal-integration-jobs" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeIntegrationJobsModal();">
+    <div class="modal" style="max-width:840px; width:95vw;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <span>📋 Background Integration Jobs Tracker</span>
+          <span id="modal-jobs-count-badge" class="badge badge-cyan">0 Jobs</span>
+        </strong>
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <button class="btn btn-secondary" onclick="fetchAndRenderIntegrationJobs()" style="font-size:0.74rem; padding:0.25rem 0.65rem;">🔄 Refresh</button>
+          <button class="btn-icon" onclick="closeIntegrationJobsModal()">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:1rem;">
+          Asynchronous background jobs executed by integration adapters (long-running restic backups, Coolify builds, OpenTofu plans, Ansible playbooks).
+        </div>
+
+        <div style="max-height:420px; overflow-y:auto;">
+          <table class="table" style="width:100%; font-size:0.8rem; border-collapse:collapse;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border-subtle); color:var(--text-muted); text-align:left;">
+                <th style="padding:0.5rem 0.65rem;">Job ID</th>
+                <th style="padding:0.5rem 0.65rem;">Provider</th>
+                <th style="padding:0.5rem 0.65rem;">Operation</th>
+                <th style="padding:0.5rem 0.65rem;">Status</th>
+                <th style="padding:0.5rem 0.65rem;">Progress</th>
+                <th style="padding:0.5rem 0.65rem;">Started</th>
+                <th style="padding:0.5rem 0.65rem; text-align:right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="integration-jobs-table-body">
+              <tr>
+                <td colspan="7" style="text-align:center; padding:2rem; color:var(--text-muted);">No background jobs currently running or recorded.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Selected Job Streaming Logs Pane -->
+        <div id="job-logs-pane" style="display:none; margin-top:1.25rem; border-top:1px solid var(--border-subtle); padding-top:1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+            <strong style="font-size:0.82rem; color:var(--text-primary);">
+              Streaming Logs: <span id="job-logs-id" style="color:var(--accent-cyan); font-family:var(--font-mono);"></span>
+            </strong>
+            <button class="btn btn-secondary" onclick="closeJobLogsPane()" style="font-size:0.68rem; padding:0.15rem 0.45rem;">Close Log</button>
+          </div>
+          <pre id="job-logs-content" style="background:#040711; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.75rem; color:#a78bfa; font-family:var(--font-mono); font-size:0.72rem; max-height:180px; overflow-y:auto; white-space:pre-wrap; margin:0;"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeIntegrationJobsModal()">Close</button>
+      </div>
     </div>
   </div>
 
@@ -7789,7 +8178,8 @@
         'logs': 'Security & Audit Activity Logs',
         'security': 'Obsidian Security & Emergency Blackout Containment',
         'settings': 'Settings & Backend Configuration',
-        'recovery': 'Durable Disaster Recovery & Auto-Enrollment'
+        'recovery': 'Durable Disaster Recovery & Auto-Enrollment',
+        'integrations': 'Open-Source Providers & Ecosystem Hub'
       };
 
       document.getElementById('breadcrumb-title').innerText = navTitles[viewName] || 'Space Station';
@@ -7867,6 +8257,8 @@
         loadRecoveryDevices();
       } else if (viewName === 'security') {
         initSecurityView();
+      } else if (viewName === 'integrations') {
+        loadIntegrationsHub();
       }
     }
 
@@ -8225,6 +8617,717 @@
         }
       } catch (e) {
         showToast(`Request error: ${e.message}`, 'error');
+      }
+    }
+
+    // =========================================================================
+    // OPEN-SOURCE INTEGRATIONS & ECOSYSTEM HUB CONTROLLER
+    // =========================================================================
+    window.__integrationsCache = [];
+    window.__activeIntegrationsCategory = 'all';
+
+    const PROVIDER_ICONS = {
+      'netbird': '🌐',
+      'headscale': '🔀',
+      'frp': '⚡',
+      'pangolin': '🛡️',
+      'meshcentral': '🖥️',
+      'guacamole': '🥑',
+      'coolify': '🚀',
+      'restic': '💾',
+      'kopia': '📦',
+      'wazuh': '🛡️',
+      'crowdsec': '🏰',
+      'beszel': '📊',
+      'prometheus': '📈',
+      'uptimekuma': '⏱️',
+      'netbox': '📑',
+      'provisioning': '🏗️',
+      'cosign': '🔏'
+    };
+
+    const PROVIDER_OPERATIONS = {
+      'netbird': ['list_peers', 'list_routes', 'create_setup_key'],
+      'headscale': ['list_nodes', 'create_preauth_key'],
+      'frp': ['create_tunnel', 'remove_tunnel', 'generate_client_config'],
+      'pangolin': ['create_route', 'list_identities'],
+      'meshcentral': ['get_session_token', 'get_device_status'],
+      'guacamole': ['get_connection_token', 'list_active_tunnels'],
+      'coolify': ['list_projects', 'deploy_application', 'get_build_logs'],
+      'restic': ['create_snapshot', 'check_integrity', 'preview_restore', 'safe_restore'],
+      'kopia': ['create_snapshot', 'verify_repository'],
+      'wazuh': ['query_alerts', 'get_syscheck_events', 'get_agent_health'],
+      'crowdsec': ['query_alerts', 'add_decision', 'remove_decision'],
+      'beszel': ['get_system_metrics', 'get_container_metrics'],
+      'prometheus': ['query_promql', 'list_targets'],
+      'uptimekuma': ['list_monitors', 'get_status_page'],
+      'netbox': ['get_inventory', 'detect_drift'],
+      'provisioning': ['plan', 'apply'],
+      'cosign': ['verify_artifact', 'inspect_attestation']
+    };
+
+    async function loadIntegrationsHub() {
+      const grid = document.getElementById('integrations-cards-grid');
+      if (grid && (!window.__integrationsCache || window.__integrationsCache.length === 0)) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--text-muted);"><div class="pulse-dot" style="margin:0 auto 0.75rem;"></div>Loading Open-Source Integration Engine Registry...</div>';
+      }
+
+      try {
+        const res = await apiRequest('/api/v1/integrations');
+        if (res.ok && res.data) {
+          const payload = res.data;
+          const providers = payload.providers || [];
+          window.__integrationsCache = providers;
+
+          // Update summary KPI counters
+          const summary = payload.summary || {};
+          const byStatus = summary.by_status || {};
+
+          const totalEl = document.getElementById('kpi-total-providers');
+          if (totalEl) totalEl.innerText = summary.total_providers || providers.length || 17;
+
+          const connEl = document.getElementById('kpi-connected-providers');
+          if (connEl) connEl.innerText = byStatus.connected || 0;
+
+          const degEl = document.getElementById('kpi-degraded-providers');
+          if (degEl) degEl.innerText = byStatus.degraded || 0;
+
+          const uncEl = document.getElementById('kpi-unconfigured-providers');
+          if (uncEl) uncEl.innerText = (byStatus.unconfigured || 0) + (byStatus.disconnected || 0);
+
+          renderIntegrationsCards(providers, window.__activeIntegrationsCategory || 'all');
+        } else {
+          showToast('Failed to load integrations: ' + ((res.data && res.data.error) || 'HTTP ' + res.status), 'error');
+        }
+      } catch (err) {
+        showToast('Error contacting integrations service: ' + err.message, 'error');
+      }
+
+      // Check active background jobs count
+      try {
+        const jobsRes = await apiRequest('/api/v1/integrations/jobs');
+        if (jobsRes.ok && jobsRes.data) {
+          const jobs = jobsRes.data.data || jobsRes.data || [];
+          const runningJobs = Array.isArray(jobs) ? jobs.filter(j => j.status === 'running') : [];
+          const jobsKpi = document.getElementById('kpi-active-jobs');
+          if (jobsKpi) jobsKpi.innerText = runningJobs.length;
+          const jobsBadge = document.getElementById('integrations-jobs-badge');
+          if (jobsBadge) {
+            jobsBadge.innerText = runningJobs.length;
+            jobsBadge.className = runningJobs.length > 0 ? 'badge badge-cyan' : 'badge badge-subtle';
+          }
+        }
+      } catch (e) {
+        // non-blocking
+      }
+    }
+
+    function filterIntegrationsCategory(category, tabBtn) {
+      window.__activeIntegrationsCategory = category;
+      const tabContainer = document.getElementById('integrations-category-tabs');
+      if (tabContainer) {
+        tabContainer.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      }
+      if (tabBtn) tabBtn.classList.add('active');
+
+      renderIntegrationsCards(window.__integrationsCache || [], category);
+    }
+
+    function renderIntegrationsCards(providers, category = 'all') {
+      const grid = document.getElementById('integrations-cards-grid');
+      if (!grid) return;
+
+      const filtered = (category === 'all')
+        ? providers
+        : providers.filter(p => p.category === category);
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--text-muted);">No open-source providers found in category: <strong>${escapeHtml(category)}</strong>.</div>`;
+        return;
+      }
+
+      grid.innerHTML = filtered.map(p => {
+        const icon = PROVIDER_ICONS[p.id] || '⚙️';
+        const status = p.status || 'unconfigured';
+
+        let badgeClass = 'badge-subtle';
+        let badgeLabel = 'STANDBY';
+        if (status === 'connected') {
+          badgeClass = 'badge-success';
+          badgeLabel = 'CONNECTED';
+        } else if (status === 'degraded') {
+          badgeClass = 'badge-warning';
+          badgeLabel = 'DEGRADED';
+        } else if (status === 'unauthorized') {
+          badgeClass = 'badge-danger';
+          badgeLabel = 'UNAUTHORIZED';
+        } else if (status === 'disconnected') {
+          badgeClass = 'badge-danger';
+          badgeLabel = 'DISCONNECTED';
+        }
+
+        const endpointText = p.endpoint || (p.options && p.options.binaryPath) || 'Zero-install fallback standby';
+        const capabilitiesList = Array.isArray(p.capabilities) ? p.capabilities : [];
+        const capsHtml = capabilitiesList.slice(0, 3).map(c => `<span class="badge badge-subtle" style="font-size:0.65rem; padding:1px 5px;">${escapeHtml(c)}</span>`).join(' ');
+
+        return `
+          <div class="card" id="provider-card-${p.id}" style="margin:0; display:flex; flex-direction:column; justify-content:space-between; border:1px solid var(--border-subtle); background:var(--bg-surface); transition:all 0.15s ease;">
+            <div>
+              <div class="card-header" style="padding:0.85rem 1rem; background:rgba(255,255,255,0.015);">
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                  <span style="font-size:1.25rem;">${icon}</span>
+                  <div>
+                    <div style="font-weight:700; font-size:0.92rem; color:var(--text-primary); display:flex; align-items:center; gap:0.35rem;">
+                      <span>${escapeHtml(p.name)}</span>
+                      <span class="badge badge-subtle" style="font-size:0.65rem; padding:1px 5px;">${escapeHtml(p.category)}</span>
+                    </div>
+                  </div>
+                </div>
+                <span id="provider-badge-${p.id}" class="badge ${badgeClass}" style="font-size:0.68rem; font-weight:600;">
+                  ${badgeLabel}
+                </span>
+              </div>
+
+              <div class="card-body" style="padding:1rem;">
+                <p style="font-size:0.78rem; color:var(--text-secondary); line-height:1.45; margin-bottom:0.75rem; min-height:2.9em;">
+                  ${escapeHtml(p.description || '')}
+                </p>
+
+                <div style="font-size:0.72rem; color:var(--text-muted); font-family:var(--font-mono); margin-bottom:0.65rem; word-break:break-all;">
+                  <strong>Target:</strong> <span id="provider-endpoint-${p.id}">${escapeHtml(endpointText)}</span>
+                </div>
+
+                <div style="display:flex; gap:0.3rem; flex-wrap:wrap; margin-bottom:0.75rem;">
+                  ${capsHtml}
+                </div>
+
+                <div id="provider-diag-${p.id}" style="display:none; padding:0.4rem 0.6rem; border-radius:var(--radius-sm); font-size:0.72rem; margin-bottom:0.5rem; font-family:var(--font-mono);"></div>
+              </div>
+            </div>
+
+            <div style="padding:0.75rem 1rem; border-top:1px solid var(--border-subtle); display:flex; gap:0.4rem; justify-content:space-between; background:rgba(0,0,0,0.15);">
+              <button class="btn btn-secondary btn-sm" id="btn-test-${p.id}" onclick="testIntegrationConnection('${p.id}')" title="Test adapter reachability and authentication">
+                ⚡ Test
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="openIntegrationConfigModal('${p.id}')" title="Configure endpoints, tokens, and options">
+                ⚙️ Config
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="openIntegrationActionModal('${p.id}')" title="Run operations and tasks">
+                🚀 Action
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function testIntegrationConnection(providerId) {
+      const btn = document.getElementById(`btn-test-${providerId}`);
+      const badge = document.getElementById(`provider-badge-${providerId}`);
+      const diag = document.getElementById(`provider-diag-${providerId}`);
+
+      if (btn) btn.innerHTML = '<span class="spinner" style="width:12px; height:12px;"></span>';
+
+      try {
+        const res = await apiRequest(`/api/v1/integrations/${providerId}/test`, { method: 'POST' });
+        const data = res.data || {};
+        const success = data.success;
+        const status = data.status || (success ? 'connected' : 'disconnected');
+        const latency = data.latencyMs ? `${data.latencyMs}ms` : '';
+
+        if (badge) {
+          if (success) {
+            badge.className = 'badge badge-success';
+            badge.innerText = 'CONNECTED';
+          } else if (status === 'unauthorized') {
+            badge.className = 'badge badge-danger';
+            badge.innerText = 'UNAUTHORIZED';
+          } else {
+            badge.className = 'badge badge-warning';
+            badge.innerText = status.toUpperCase();
+          }
+        }
+
+        if (diag) {
+          diag.style.display = 'block';
+          diag.style.background = success ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)';
+          diag.style.color = success ? '#10b981' : '#ef4444';
+          diag.innerHTML = `<strong>${latency ? latency + ' | ' : ''}</strong>${escapeHtml(data.message || (success ? 'Connection verified' : 'Check failed'))}`;
+        }
+
+        showToast(`${providerId.toUpperCase()}: ${data.message || (success ? 'Verified' : 'Failed')}`, success ? 'success' : 'warning');
+      } catch (err) {
+        if (diag) {
+          diag.style.display = 'block';
+          diag.style.background = 'rgba(239,68,68,0.1)';
+          diag.style.color = '#ef4444';
+          diag.innerText = `Error: ${err.message}`;
+        }
+        showToast(`Test error for ${providerId}: ${err.message}`, 'error');
+      } finally {
+        if (btn) btn.innerHTML = '⚡ Test';
+      }
+    }
+
+    async function testAllIntegrations() {
+      const btn = document.getElementById('btn-test-all-integrations');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Testing All...';
+      }
+
+      showToast('Testing all 17 open-source integration adapters...', 'info');
+      const providers = window.__integrationsCache || [];
+      for (const p of providers) {
+        await testIntegrationConnection(p.id);
+      }
+
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = '⚡ Test All Adapters';
+      }
+      showToast('All open-source provider health checks completed', 'success');
+      loadIntegrationsHub();
+    }
+
+    function openIntegrationConfigModal(providerId) {
+      const p = (window.__integrationsCache || []).find(x => x.id === providerId);
+      if (!p) {
+        showToast('Provider not found', 'error');
+        return;
+      }
+
+      document.getElementById('modal-config-provider-id').value = p.id;
+      document.getElementById('modal-config-name').innerText = p.name;
+      document.getElementById('modal-config-icon').innerText = PROVIDER_ICONS[p.id] || '⚙️';
+      document.getElementById('modal-config-category-badge').innerText = p.category;
+      document.getElementById('modal-config-desc').innerText = p.description || '';
+      document.getElementById('modal-config-enabled').checked = (p.status !== 'unconfigured');
+      document.getElementById('modal-config-endpoint').value = p.endpoint || '';
+      document.getElementById('modal-config-token').value = '';
+      document.getElementById('modal-config-custom-json').value = p.options ? JSON.stringify(p.options, null, 2) : '{}';
+
+      const alertEl = document.getElementById('modal-config-status-alert');
+      if (alertEl) alertEl.style.display = 'none';
+
+      const modal = document.getElementById('modal-integration-config');
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function closeIntegrationConfigModal() {
+      const modal = document.getElementById('modal-integration-config');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function toggleConfigSecretVisibility() {
+      const tokenInput = document.getElementById('modal-config-token');
+      if (tokenInput) {
+        tokenInput.type = (tokenInput.type === 'password') ? 'text' : 'password';
+      }
+    }
+
+    async function saveIntegrationConfig() {
+      const providerId = document.getElementById('modal-config-provider-id').value;
+      const enabled = document.getElementById('modal-config-enabled').checked;
+      const endpoint = document.getElementById('modal-config-endpoint').value.trim();
+      const token = document.getElementById('modal-config-token').value.trim();
+      const customJson = document.getElementById('modal-config-custom-json').value.trim();
+
+      let options = {};
+      try {
+        if (customJson) options = JSON.parse(customJson);
+      } catch (err) {
+        alert('Custom Parameters must be valid JSON: ' + err.message);
+        return;
+      }
+
+      const payload = {
+        enabled,
+        endpoint,
+        options
+      };
+      if (token) payload.token = token;
+
+      const saveBtn = document.getElementById('btn-save-integration-config');
+      if (saveBtn) saveBtn.innerText = 'Saving...';
+
+      try {
+        const res = await apiRequest(`/api/v1/integrations/${providerId}/config`, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok && res.data && res.data.success) {
+          showToast(`Configuration updated for ${providerId}`, 'success');
+          closeIntegrationConfigModal();
+          loadIntegrationsHub();
+        } else {
+          const err = (res.data && res.data.error) || 'Failed to save configuration';
+          showToast(err, 'error');
+          const alertEl = document.getElementById('modal-config-status-alert');
+          if (alertEl) {
+            alertEl.style.display = 'block';
+            alertEl.style.background = 'rgba(239,68,68,0.1)';
+            alertEl.style.color = '#ef4444';
+            alertEl.innerText = err;
+          }
+        }
+      } catch (err) {
+        showToast('Save error: ' + err.message, 'error');
+      } finally {
+        if (saveBtn) saveBtn.innerText = 'Save & Validate';
+      }
+    }
+
+    function openIntegrationActionModal(providerId) {
+      const p = (window.__integrationsCache || []).find(x => x.id === providerId);
+      if (!p) return;
+
+      document.getElementById('modal-action-provider-id').value = p.id;
+      document.getElementById('modal-action-provider-name').innerText = p.name;
+      document.getElementById('modal-action-provider-badge').innerText = p.category;
+
+      const badge = document.getElementById('modal-action-status-badge');
+      if (badge) {
+        badge.innerText = (p.status || 'unconfigured').toUpperCase();
+        badge.className = p.status === 'connected' ? 'badge badge-success' : 'badge badge-subtle';
+      }
+
+      const select = document.getElementById('modal-action-select');
+      const ops = PROVIDER_OPERATIONS[p.id] || ['test', 'status'];
+      select.innerHTML = ops.map(op => `<option value="${op}">${op.replace(/_/g, ' ').toUpperCase()}</option>`).join('');
+
+      onActionOperationChange();
+
+      const resultBox = document.getElementById('modal-action-result-box');
+      if (resultBox) resultBox.style.display = 'none';
+
+      const modal = document.getElementById('modal-integration-action');
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function closeIntegrationActionModal() {
+      const modal = document.getElementById('modal-integration-action');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function onActionOperationChange() {
+      const providerId = document.getElementById('modal-action-provider-id').value;
+      const op = document.getElementById('modal-action-select').value;
+      const paramsText = document.getElementById('modal-action-params');
+      const hint = document.getElementById('modal-action-params-hint');
+
+      // Default parameter templates
+      const templates = {
+        'create_snapshot': '{\n  "path": "/var/data",\n  "tags": ["space-station", "auto"]\n}',
+        'preview_restore': '{\n  "snapshot_id": "latest"\n}',
+        'safe_restore': '{\n  "snapshot_id": "latest",\n  "target_path": "/restore/preview",\n  "confirm_destructive": false\n}',
+        'query_alerts': '{\n  "limit": 10,\n  "severity": 3\n}',
+        'add_decision': '{\n  "ip": "198.51.100.42",\n  "duration": "4h",\n  "reason": "SSH brute-force detection"\n}',
+        'remove_decision': '{\n  "ip": "198.51.100.42"\n}',
+        'create_tunnel': '{\n  "name": "custom-app",\n  "type": "tcp",\n  "local_port": 8080,\n  "remote_port": 18080\n}',
+        'get_session_token': '{\n  "machine_id": "local-node",\n  "protocol": "rdp"\n}',
+        'get_connection_token': '{\n  "machine_id": "local-node",\n  "protocol": "rdp"\n}',
+        'plan': '{\n  "workspace": "default"\n}',
+        'apply': '{\n  "workspace": "default",\n  "confirmed": true\n}',
+        'verify_artifact': '{\n  "artifact_path": "bin/universal-agent",\n  "signature_path": "bin/universal-agent.sig"\n}',
+        'query_promql': '{\n  "query": "up"\n}',
+        'deploy_application': '{\n  "application_uuid": "app-01",\n  "commit": "HEAD"\n}'
+      };
+
+      if (paramsText) {
+        paramsText.value = templates[op] || '{}';
+      }
+      if (hint) {
+        hint.innerText = `Parameters for '${op}' on provider '${providerId}'.`;
+      }
+    }
+
+    async function executeIntegrationAction() {
+      const providerId = document.getElementById('modal-action-provider-id').value;
+      const operation = document.getElementById('modal-action-select').value;
+      const paramsRaw = document.getElementById('modal-action-params').value.trim();
+
+      let params = {};
+      try {
+        if (paramsRaw) params = JSON.parse(paramsRaw);
+      } catch (err) {
+        alert('Parameters must be valid JSON: ' + err.message);
+        return;
+      }
+
+      const btn = document.getElementById('btn-run-integration-action');
+      if (btn) btn.innerText = 'Executing...';
+
+      const resultBox = document.getElementById('modal-action-result-box');
+      const resultPre = document.getElementById('modal-action-result-pre');
+      const statusBadge = document.getElementById('modal-action-exec-status');
+
+      try {
+        const res = await apiRequest(`/api/v1/integrations/${providerId}/operations/${operation}`, {
+          method: 'POST',
+          body: JSON.stringify(params)
+        });
+
+        if (resultBox && resultPre) {
+          resultBox.style.display = 'block';
+          resultPre.innerText = JSON.stringify(res.data, null, 2);
+        }
+
+        if (res.ok) {
+          if (statusBadge) {
+            statusBadge.className = 'badge badge-success';
+            statusBadge.innerText = 'SUCCESS';
+          }
+          if (res.data && res.data.job_id) {
+            showToast(`Background Job #${res.data.job_id} scheduled!`, 'success');
+          } else {
+            showToast(`Operation '${operation}' completed successfully`, 'success');
+          }
+        } else {
+          if (statusBadge) {
+            statusBadge.className = 'badge badge-danger';
+            statusBadge.innerText = 'FAILED';
+          }
+          showToast(`Operation failed: ${(res.data && res.data.error) || 'HTTP ' + res.status}`, 'error');
+        }
+      } catch (err) {
+        if (resultBox && resultPre) {
+          resultBox.style.display = 'block';
+          resultPre.innerText = 'Error: ' + err.message;
+        }
+        if (statusBadge) {
+          statusBadge.className = 'badge badge-danger';
+          statusBadge.innerText = 'ERROR';
+        }
+        showToast('Execution error: ' + err.message, 'error');
+      } finally {
+        if (btn) btn.innerText = '⚡ Execute Action';
+      }
+    }
+
+    function openIntegrationJobsModal() {
+      const modal = document.getElementById('modal-integration-jobs');
+      if (modal) modal.style.display = 'flex';
+      fetchAndRenderIntegrationJobs();
+    }
+
+    function closeIntegrationJobsModal() {
+      const modal = document.getElementById('modal-integration-jobs');
+      if (modal) modal.style.display = 'none';
+      closeJobLogsPane();
+    }
+
+    async function fetchAndRenderIntegrationJobs() {
+      const tbody = document.getElementById('integration-jobs-table-body');
+      if (!tbody) return;
+
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:var(--text-muted);"><span class="spinner"></span> Polling active jobs...</td></tr>';
+
+      try {
+        const res = await apiRequest('/api/v1/integrations/jobs');
+        if (res.ok && res.data) {
+          const jobs = res.data.data || res.data || [];
+          const countBadge = document.getElementById('modal-jobs-count-badge');
+          if (countBadge) countBadge.innerText = `${jobs.length} Jobs`;
+
+          if (!Array.isArray(jobs) || jobs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:2rem; color:var(--text-muted);">No background jobs recorded yet.</td></tr>';
+            return;
+          }
+
+          tbody.innerHTML = jobs.map(j => {
+            const isRunning = j.status === 'running';
+            let badgeClass = 'badge-subtle';
+            if (j.status === 'running') badgeClass = 'badge-cyan';
+            else if (j.status === 'completed') badgeClass = 'badge-success';
+            else if (j.status === 'failed') badgeClass = 'badge-danger';
+            else if (j.status === 'cancelled') badgeClass = 'badge-warning';
+
+            const progressPct = Math.min(100, Math.max(0, j.progress || 0));
+            const started = j.startedAt ? new Date(j.startedAt).toLocaleTimeString() : '--';
+
+            return `
+              <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                <td style="padding:0.5rem 0.65rem; font-family:var(--font-mono); color:var(--text-primary); font-size:0.75rem;">${escapeHtml(j.id)}</td>
+                <td style="padding:0.5rem 0.65rem;"><span class="badge badge-subtle" style="font-size:0.68rem;">${escapeHtml(j.providerId)}</span></td>
+                <td style="padding:0.5rem 0.65rem; font-family:var(--font-mono); font-size:0.75rem;">${escapeHtml(j.operation)}</td>
+                <td style="padding:0.5rem 0.65rem;"><span class="badge ${badgeClass}" style="font-size:0.68rem;">${escapeHtml(j.status)}</span></td>
+                <td style="padding:0.5rem 0.65rem; min-width:110px;">
+                  <div style="background:rgba(255,255,255,0.08); border-radius:3px; height:8px; overflow:hidden; position:relative;">
+                    <div style="background:var(--accent-cyan); width:${progressPct}%; height:100%; transition:width 0.3s ease;"></div>
+                  </div>
+                  <span style="font-size:0.65rem; color:var(--text-muted);">${progressPct}%</span>
+                </td>
+                <td style="padding:0.5rem 0.65rem; font-size:0.72rem; color:var(--text-muted);">${escapeHtml(started)}</td>
+                <td style="padding:0.5rem 0.65rem; text-align:right;">
+                  <button class="btn btn-secondary btn-sm" onclick="viewJobLogs('${j.id}')" style="font-size:0.68rem; padding:0.15rem 0.45rem;">Logs</button>
+                  ${isRunning ? `<button class="btn btn-danger btn-sm" onclick="cancelIntegrationJob('${j.id}')" style="font-size:0.68rem; padding:0.15rem 0.45rem; margin-left:3px;">Cancel</button>` : ''}
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:#ef4444;">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function viewJobLogs(jobId) {
+      const pane = document.getElementById('job-logs-pane');
+      const idEl = document.getElementById('job-logs-id');
+      const content = document.getElementById('job-logs-content');
+
+      if (!pane || !content) return;
+      pane.style.display = 'block';
+      if (idEl) idEl.innerText = jobId;
+      content.innerText = 'Loading logs...';
+
+      try {
+        const res = await apiRequest(`/api/v1/integrations/jobs/${jobId}`);
+        if (res.ok && res.data) {
+          const j = res.data.data || res.data;
+          const logs = Array.isArray(j.logs) ? j.logs.join('\n') : (j.logs || 'No logs recorded for this job yet.');
+          content.innerText = logs;
+        } else {
+          content.innerText = 'Failed to load logs: ' + (res.data && res.data.error);
+        }
+      } catch (err) {
+        content.innerText = 'Error fetching logs: ' + err.message;
+      }
+    }
+
+    function closeJobLogsPane() {
+      const pane = document.getElementById('job-logs-pane');
+      if (pane) pane.style.display = 'none';
+    }
+
+    async function cancelIntegrationJob(jobId) {
+      if (!confirm(`Cancel background job ${jobId}?`)) return;
+      try {
+        const res = await apiRequest(`/api/v1/integrations/jobs/${jobId}/cancel`, { method: 'POST' });
+        if (res.ok) {
+          showToast(`Job ${jobId} cancellation requested`, 'info');
+          fetchAndRenderIntegrationJobs();
+        } else {
+          showToast(`Failed to cancel job: ${(res.data && res.data.error) || 'HTTP ' + res.status}`, 'error');
+        }
+      } catch (err) {
+        showToast('Cancel error: ' + err.message, 'error');
+      }
+    }
+
+    // =========================================================================
+    // REMOTE DESKTOP ENGINE SWITCHER & AUTHENTICATED EMBEDDED PROVIDERS
+    // =========================================================================
+    function switchDesktopEngine(engine) {
+      const tabs = document.getElementById('desktop-engine-tabs');
+      if (tabs) {
+        tabs.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      }
+
+      const activeBtn = document.getElementById(`btn-engine-${engine}`);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      const nativeCont = document.getElementById('desktop-engine-container-native');
+      const meshCont = document.getElementById('desktop-engine-container-meshcentral');
+      const guacCont = document.getElementById('desktop-engine-container-guacamole');
+      const badge = document.getElementById('desktop-engine-status-badge');
+
+      if (nativeCont) nativeCont.style.display = (engine === 'native') ? 'block' : 'none';
+      if (meshCont) meshCont.style.display = (engine === 'meshcentral') ? 'block' : 'none';
+      if (guacCont) guacCont.style.display = (engine === 'guacamole') ? 'block' : 'none';
+
+      if (badge) {
+        if (engine === 'native') {
+          badge.innerHTML = '<span class="badge badge-cyan" style="font-size:0.72rem;">Zero-Install GDI+ Engine Active</span>';
+        } else if (engine === 'meshcentral') {
+          badge.innerHTML = '<span class="badge badge-purple" style="font-size:0.72rem;">MeshCentral Web Engine Active</span>';
+        } else if (engine === 'guacamole') {
+          badge.innerHTML = '<span class="badge badge-success" style="font-size:0.72rem;">Apache Guacamole Gateway Active</span>';
+        }
+      }
+    }
+
+    async function checkMeshCentralStatus() {
+      showToast('Testing MeshCentral adapter status...', 'info');
+      try {
+        const res = await apiRequest('/api/v1/integrations/meshcentral/test', { method: 'POST' });
+        const data = res.data || {};
+        if (data.success) {
+          showToast(`MeshCentral: Connected (${data.latencyMs}ms)`, 'success');
+        } else {
+          showToast(`MeshCentral: ${data.message || 'Standby/Unconfigured'}`, 'warning');
+        }
+      } catch (e) {
+        showToast('MeshCentral status check error: ' + e.message, 'error');
+      }
+    }
+
+    async function connectMeshCentralDesktop() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+
+      showToast('Minting authenticated MeshCentral single-use session token...', 'info');
+      try {
+        const res = await apiRequest('/api/v1/integrations/meshcentral/operations/get_session_token', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId })
+        });
+
+        if (res.ok && res.data && res.data.session_token) {
+          const webUrl = res.data.web_url || 'about:blank';
+          const token = res.data.session_token;
+          const standby = document.getElementById('meshcentral-standby');
+          const iframe = document.getElementById('meshcentral-iframe');
+
+          if (standby) standby.style.display = 'none';
+          if (iframe) {
+            iframe.style.display = 'block';
+            iframe.src = `${webUrl}?token=${encodeURIComponent(token)}`;
+          }
+          showToast('MeshCentral authenticated session connected!', 'success');
+        } else {
+          const unconfNote = document.getElementById('meshcentral-unconfigured-note');
+          if (unconfNote) unconfNote.style.display = 'block';
+          showToast('MeshCentral adapter is unconfigured. Configure in Open-Source Hub or use Native Live HD.', 'warning');
+        }
+      } catch (err) {
+        showToast('MeshCentral connection error: ' + err.message, 'error');
+      }
+    }
+
+    async function connectGuacamoleDesktop() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+      const protoSelect = document.getElementById('guacamole-protocol-select');
+      const protocol = (protoSelect && protoSelect.value) || 'rdp';
+
+      showToast(`Minting Guacamole connection token for ${protocol.toUpperCase()}...`, 'info');
+      try {
+        const res = await apiRequest('/api/v1/integrations/guacamole/operations/get_connection_token', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId, protocol: protocol })
+        });
+
+        if (res.ok && res.data && res.data.token) {
+          const clientUrl = res.data.client_url || 'about:blank';
+          const standby = document.getElementById('guacamole-standby');
+          const iframe = document.getElementById('guacamole-iframe');
+
+          if (standby) standby.style.display = 'none';
+          if (iframe) {
+            iframe.style.display = 'block';
+            iframe.src = clientUrl;
+          }
+          showToast(`Guacamole ${protocol.toUpperCase()} gateway session launched!`, 'success');
+        } else {
+          const unconfNote = document.getElementById('guacamole-unconfigured-note');
+          if (unconfNote) unconfNote.style.display = 'block';
+          showToast('Guacamole gateway is unconfigured. Configure in Open-Source Hub or use Native Live HD.', 'warning');
+        }
+      } catch (err) {
+        showToast('Guacamole connection error: ' + err.message, 'error');
       }
     }
 
@@ -13397,29 +14500,28 @@ class StationApiClient {
     const params = new URLSearchParams(filters);
     return this.request(`/api/v1/audit/logs?${params.toString()}`);
   }
+  async triggerMachineAction(machineId, action, params = {}) {
+    return this.request(`/api/v1/machines/${encodeURIComponent(machineId)}/action`, {
+      method: 'POST',
+      body: JSON.stringify({ action, params })
+    });
+  }
   async mintRemoteDesktopSession(machineId, options = {}) {
     return this.request('/api/v1/remote-desktop/session', {
       method: 'POST',
-      body: JSON.stringify({
-        machine_id: machineId,
-        desktop_mode: options.desktop_mode !== false,
-        interactive: options.interactive !== false,
-        fps: options.fps || 30,
-        quality: options.quality || 70,
-        pairing_key: this.store.get('pairingKey') || ''
-      })
+      body: JSON.stringify({ machine_id: machineId, ...options })
     });
   }
-  async getRemoteDesktopStatus(machineId = '') {
-    const q = machineId ? `?machine_id=${encodeURIComponent(machineId)}` : '';
-    return this.request(`/api/v1/remote-desktop/status${q}`);
+  async getRemoteDesktopStatus(machineId) {
+    return this.request(`/api/v1/remote-desktop/status?machine_id=${encodeURIComponent(machineId)}`);
   }
-  async provisionRemoteDesktopEngine(machineId, engine = 'meshcentral') {
+  async provisionRemoteDesktopEngine(machineId, engine = 'native_hd') {
     return this.request('/api/v1/remote-desktop/provision', {
       method: 'POST',
       body: JSON.stringify({ machine_id: machineId, engine })
     });
   }
+  async getSettings() { return this.request('/api/v1/settings'); }
   async getBlackoutStatus(machineId) {
     return this.request(`/api/v1/security/blackout/status?machine_id=${encodeURIComponent(machineId)}`);
   }
@@ -13462,7 +14564,42 @@ class StationApiClient {
   async getPillarIncidents(machineId) {
     return this.request(`/api/v1/security/pillar/incidents?machine_id=${encodeURIComponent(machineId)}`);
   }
-  async getSettings() { return this.request('/api/v1/settings'); }
+  async getIntegrations(summaryOnly = false) {
+    return this.request(`/api/v1/integrations${summaryOnly ? '?summary=true' : ''}`);
+  }
+  async getIntegration(id) {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(id)}`);
+  }
+  async testIntegration(id, config = null) {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+      body: JSON.stringify({ config })
+    });
+  }
+  async updateIntegrationConfig(id, config) {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(id)}/config`, {
+      method: 'POST',
+      body: JSON.stringify({ config })
+    });
+  }
+  async executeIntegrationOperation(id, operation, params = {}) {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(id)}/operations/${encodeURIComponent(operation)}`, {
+      method: 'POST',
+      body: JSON.stringify({ params })
+    });
+  }
+  async getIntegrationJobs(filters = {}) {
+    const q = new URLSearchParams(filters).toString();
+    return this.request(`/api/v1/integrations/jobs${q ? '?' + q : ''}`);
+  }
+  async getIntegrationJob(jobId) {
+    return this.request(`/api/v1/integrations/jobs/${encodeURIComponent(jobId)}`);
+  }
+  async cancelIntegrationJob(jobId) {
+    return this.request(`/api/v1/integrations/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: 'POST'
+    });
+  }
   async saveSettings(settings) {
     return this.request('/api/v1/settings', {
       method: 'POST',
@@ -13738,6 +14875,15 @@ class FleetView {
                   <button class="btn-sm" onclick="FleetView.openTerminal('${node.id}')">Terminal</button>
                   <button class="btn-sm" onclick="FleetView.openFiles('${node.id}')">Files</button>
                   <button class="btn-sm" onclick="FleetView.openApps('${node.id}')">Apps</button>
+                  <select class="btn-sm lifecycle-select" onchange="FleetView.handleLifecycleAction('${node.id}', this)" title="Remote Lifecycle Actions">
+                    <option value="" disabled selected>⚡ Action</option>
+                    <option value="restart">🔄 Restart Agent</option>
+                    <option value="stop">⏹️ Stop Agent</option>
+                    <option value="repair">🛠️ Repair / Heal</option>
+                    <option value="update">🚀 Update Agent</option>
+                    <option value="reboot">💻 Reboot Host</option>
+                    <option value="uninstall">🗑️ Uninstall Agent</option>
+                  </select>
                   <button class="btn-sm btn-danger" onclick="FleetView.revoke('${node.id}')">Revoke</button>
                 </td>
               </tr>
@@ -13758,6 +14904,45 @@ class FleetView {
 
   static openApps(machineId) {
     window.location.hash = `#apps?machine_id=${machineId}`;
+  }
+
+  static async handleLifecycleAction(machineId, selectEl) {
+    const action = selectEl.value;
+    selectEl.value = '';
+    if (!action) return;
+
+    const actionLabels = {
+      restart: 'restart the CyberVPS Host Agent on',
+      stop: 'STOP the CyberVPS Host Agent on (will take node offline)',
+      repair: 'trigger autonomous self-healing and shadow mirror check on',
+      update: 'pull the latest CyberVPS release and rebuild agent on',
+      reboot: 'REBOOT the host machine',
+      uninstall: 'completely UNINSTALL the CyberVPS Host Agent from'
+    };
+
+    const confirmMsg = `Are you sure you want to ${actionLabels[action] || action} [${machineId}]?`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      const api = window.stationApp.api;
+      if (window.stationApp.state && window.stationApp.state.addNotification) {
+        window.stationApp.state.addNotification('info', `Dispatching remote ${action} to ${machineId}...`);
+      }
+      const res = await api.triggerMachineAction(machineId, action);
+      if (res && (res.success || res.status)) {
+        if (window.stationApp.state && window.stationApp.state.addNotification) {
+          window.stationApp.state.addNotification('success', `Remote ${action} acknowledged for ${machineId}: ${res.message || 'Dispatched'}`);
+        }
+      } else {
+        alert(`Action dispatched: ${JSON.stringify(res)}`);
+      }
+      setTimeout(() => window.stationApp.refreshFleet(), 1200);
+    } catch (err) {
+      alert(`Remote action failed: ${err.message}`);
+      if (window.stationApp.state && window.stationApp.state.addNotification) {
+        window.stationApp.state.addNotification('error', `Action ${action} failed: ${err.message}`);
+      }
+    }
   }
 
   static async revoke(machineId) {

@@ -441,7 +441,7 @@ if (-not $PythonExe) {
         Write-Host "================================================================" -ForegroundColor Green
         Write-Host "Host:        $env:COMPUTERNAME (Windows Pure PowerShell)" -ForegroundColor White
         Write-Host "Backend:     $Server (Connected)" -ForegroundColor White
-        Write-Host "Status:      ONLINE (Zero external dependencies required)" -ForegroundColor Green
+        Write-Host "Status:      HANDSHAKE ACTIVE (Ghost Bridge Running - Enrollment Syncing)" -ForegroundColor Cyan
         Write-Host "Ghost PID:   $($ghostProc.Id) (100% Invisible Background Daemon)" -ForegroundColor Green
         Write-Host "Machine ID:  $MachineId" -ForegroundColor White
         Write-Host "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Yellow

@@ -208,6 +208,42 @@ class StationApiClient {
   async getPillarIncidents(machineId) {
     return this.request(`/api/v1/security/pillar/incidents?machine_id=${encodeURIComponent(machineId)}`);
   }
+  async getIntegrations(summaryOnly = false) {
+    return this.request(`/api/v1/integrations${summaryOnly ? '?summary=true' : ''}`);
+  }
+  async getIntegration(id) {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(id)}`);
+  }
+  async testIntegration(id, config = null) {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+      body: JSON.stringify({ config })
+    });
+  }
+  async updateIntegrationConfig(id, config) {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(id)}/config`, {
+      method: 'POST',
+      body: JSON.stringify({ config })
+    });
+  }
+  async executeIntegrationOperation(id, operation, params = {}) {
+    return this.request(`/api/v1/integrations/${encodeURIComponent(id)}/operations/${encodeURIComponent(operation)}`, {
+      method: 'POST',
+      body: JSON.stringify({ params })
+    });
+  }
+  async getIntegrationJobs(filters = {}) {
+    const q = new URLSearchParams(filters).toString();
+    return this.request(`/api/v1/integrations/jobs${q ? '?' + q : ''}`);
+  }
+  async getIntegrationJob(jobId) {
+    return this.request(`/api/v1/integrations/jobs/${encodeURIComponent(jobId)}`);
+  }
+  async cancelIntegrationJob(jobId) {
+    return this.request(`/api/v1/integrations/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: 'POST'
+    });
+  }
   async saveSettings(settings) {
     return this.request('/api/v1/settings', {
       method: 'POST',
