@@ -70,11 +70,19 @@ class BeszelAdapter extends BaseAdapter {
       }
 
       case 'get_system_metrics': {
-        const { system_id } = params;
-        if (!system_id) throw new Error('system_id is required');
+        const system_id = params.system_id || params.machine_id;
+        if (!system_id) throw new Error('system_id or machine_id is required');
         const res = await this.httpRequest(`${this.getHubBase()}/api/system/${encodeURIComponent(system_id)}/records`);
         if (res.statusCode !== 200) throw new Error(`HTTP ${res.statusCode}`);
         return res.json;
+      }
+
+      case 'get_container_metrics': {
+        const system_id = params.system_id || params.machine_id;
+        if (!system_id) throw new Error('system_id or machine_id is required');
+        const res = await this.httpRequest(`${this.getHubBase()}/api/system/${encodeURIComponent(system_id)}/containers`);
+        if (res.statusCode !== 200) return [];
+        return Array.isArray(res.json) ? res.json : [];
       }
 
       default:

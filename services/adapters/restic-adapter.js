@@ -171,6 +171,7 @@ class ResticAdapter extends BaseAdapter {
         return { success: true, summary };
       }
 
+      case 'check_integrity':
       case 'verify_integrity': {
         if (jobContext) {
           jobContext.startJob(jobContext.id);

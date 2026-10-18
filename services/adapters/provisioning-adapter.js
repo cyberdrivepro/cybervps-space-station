@@ -123,6 +123,7 @@ class ProvisioningAdapter extends BaseAdapter {
         return { success: true, output: res.stdout };
       }
 
+      case 'plan':
       case 'tofu_plan': {
         const wsName = params.workspace || 'default';
         const wsDir = this.resolveWorkspaceDir(wsName);
@@ -145,10 +146,12 @@ class ProvisioningAdapter extends BaseAdapter {
         return result;
       }
 
+      case 'apply':
       case 'tofu_apply': {
         const wsName = params.workspace || 'default';
         const wsDir = this.resolveWorkspaceDir(wsName);
-        if (!params.approved) {
+        const isApproved = params.approved !== undefined ? params.approved : params.confirmed;
+        if (!isApproved) {
           throw new Error('Approval required: OpenTofu apply modifies physical resources and requires explicit approved=true.');
         }
         if (jobContext) {

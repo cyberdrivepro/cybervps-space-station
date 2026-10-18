@@ -128,7 +128,8 @@ class CoolifyAdapter extends BaseAdapter {
       }
 
       case 'deploy_application': {
-        const { app_uuid, force_rebuild = false } = params;
+        const app_uuid = params.app_uuid || params.application_uuid || params.uuid;
+        const force_rebuild = Boolean(params.force_rebuild);
         if (!app_uuid) throw new Error('app_uuid is required');
 
         if (jobContext) jobContext.appendLog('info', `Triggering deployment for application [${app_uuid}]...`);
@@ -160,7 +161,7 @@ class CoolifyAdapter extends BaseAdapter {
       }
 
       case 'get_deployment_status': {
-        const { deployment_uuid } = params;
+        const deployment_uuid = params.deployment_uuid || params.uuid;
         if (!deployment_uuid) throw new Error('deployment_uuid is required');
         const res = await this.httpRequest(`${this.getApiBase()}/api/v1/deployments/${encodeURIComponent(deployment_uuid)}`, {
           method: 'GET',
@@ -170,8 +171,9 @@ class CoolifyAdapter extends BaseAdapter {
         return res.json;
       }
 
+      case 'get_build_logs':
       case 'get_deployment_logs': {
-        const { deployment_uuid } = params;
+        const deployment_uuid = params.deployment_uuid || params.uuid;
         if (!deployment_uuid) throw new Error('deployment_uuid is required');
         const res = await this.httpRequest(`${this.getApiBase()}/api/v1/deployments/${encodeURIComponent(deployment_uuid)}/logs`, {
           method: 'GET',

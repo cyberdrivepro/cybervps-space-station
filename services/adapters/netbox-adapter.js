@@ -94,6 +94,7 @@ class NetBoxAdapter extends BaseAdapter {
       case 'test':
         return await this.testConnection();
 
+      case 'get_inventory':
       case 'list_devices': {
         const res = await this.httpRequest(`${this.getApiBase()}/api/dcim/devices/?limit=100`, {
           method: 'GET',
@@ -135,6 +136,7 @@ class NetBoxAdapter extends BaseAdapter {
         return (res.json && res.json.results) ? res.json.results : [];
       }
 
+      case 'detect_drift':
       case 'compare_telemetry': {
         const observedMachines = params.observed_machines || [];
         const plannedDevices = await this.executeOperation('list_devices');

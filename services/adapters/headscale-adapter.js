@@ -111,6 +111,7 @@ class HeadscaleAdapter extends BaseAdapter {
         }));
       }
 
+      case 'create_preauth_key':
       case 'create_preauthkey': {
         const user = params.user || this.config.user || 'cybervps';
         const res = await this.httpRequest(`${this.getApiBase()}/api/v1/preauthkey`, {

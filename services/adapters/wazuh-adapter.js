@@ -148,6 +148,7 @@ class WazuhAdapter extends BaseAdapter {
         }));
       }
 
+      case 'get_syscheck_events':
       case 'get_fim_events': {
         const agentId = params.agent_id || '000';
         const headers = await this.getAuthHeaders();
@@ -168,6 +169,7 @@ class WazuhAdapter extends BaseAdapter {
         }));
       }
 
+      case 'query_alerts':
       case 'get_security_alerts': {
         // Fetch recent security alerts from manager
         const headers = await this.getAuthHeaders();

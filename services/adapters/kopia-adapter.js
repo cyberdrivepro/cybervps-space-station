@@ -82,6 +82,7 @@ class KopiaAdapter extends BaseAdapter {
         return { success: true, output: res.stdout };
       }
 
+      case 'verify_repository':
       case 'verify': {
         const res = await this.runSubprocess(binary, ['snapshot', 'verify'], { env: this.getEnv(), timeout: 30000 });
         return { verified: res.code === 0, output: res.stdout, error: res.stderr };

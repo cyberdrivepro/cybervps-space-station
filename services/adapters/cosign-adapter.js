@@ -83,6 +83,23 @@ class CosignAdapter extends BaseAdapter {
         return { file_path, sha256: hash };
       }
 
+      case 'verify_artifact': {
+        const filePath = params.artifact_path || params.file_path || params.update_file || params.blob_path;
+        if (!filePath) throw new Error('artifact_path is required');
+        const sigPath = params.signature_path || params.signature_file;
+        if (sigPath && this.config.public_key_path) {
+          return await this.executeOperation('verify_blob', {
+            blob_path: filePath,
+            signature_path: sigPath,
+            key_path: params.key_path || this.config.public_key_path
+          });
+        }
+        return await this.executeOperation('verify_agent_update', {
+          update_file: filePath,
+          signature_file: sigPath
+        });
+      }
+
       case 'verify_blob': {
         const { blob_path, signature_path, key_path } = params;
         if (!blob_path) throw new Error('blob_path is required');

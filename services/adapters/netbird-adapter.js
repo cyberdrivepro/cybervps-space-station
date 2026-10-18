@@ -123,6 +123,7 @@ class NetBirdAdapter extends BaseAdapter {
         }));
       }
 
+      case 'list_routes':
       case 'get_routes': {
         const res = await this.httpRequest(`${this.getApiBase()}/api/routes`, {
           method: 'GET',

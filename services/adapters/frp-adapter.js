@@ -209,6 +209,7 @@ use_compression = true
         return tunnelObj;
       }
 
+      case 'remove_tunnel':
       case 'delete_tunnel': {
         const { name } = params;
         if (!name) throw new Error('Tunnel name is required');

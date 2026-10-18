@@ -92,6 +92,7 @@ class CrowdSecAdapter extends BaseAdapter {
       case 'test':
         return await this.testConnection();
 
+      case 'query_alerts':
       case 'list_alerts': {
         const res = await this.httpRequest(`${this.getApiBase()}/v1/alerts?limit=50`, {
           method: 'GET',
@@ -110,8 +111,12 @@ class CrowdSecAdapter extends BaseAdapter {
         return Array.isArray(res.json) ? res.json : [];
       }
 
+      case 'add_decision':
       case 'apply_decision': {
-        const { value, type = 'ban', duration = '4h', reason = 'Manual CyberVPS Security Block' } = params;
+        const value = params.value || params.ip;
+        const type = params.type || 'ban';
+        const duration = params.duration || '4h';
+        const reason = params.reason || 'Manual CyberVPS Security Block';
         if (!value) throw new Error('Target value (IP address or range) is required');
 
         const payload = [{
@@ -135,8 +140,9 @@ class CrowdSecAdapter extends BaseAdapter {
         return { success: true, target: value, type, duration };
       }
 
+      case 'remove_decision':
       case 'delete_decision': {
-        const { ip } = params;
+        const ip = params.ip || params.value;
         if (!ip) throw new Error('IP is required to revoke decision');
         const res = await this.httpRequest(`${this.getApiBase()}/v1/decisions?ip=${encodeURIComponent(ip)}`, {
           method: 'DELETE',
