@@ -2701,6 +2701,302 @@ class CyberVPSAgent:
                 "payload": {"request_id": req_id, "success": False, "error": str(e)}
             })
 
+    def handle_file_chunk_write(self, payload):
+        req_id = payload.get("request_id")
+        raw_path = payload.get("path")
+        offset = int(payload.get("offset", 0))
+        chunk_b64 = payload.get("chunk_data_base64") or payload.get("content_base64", "")
+        is_first = bool(payload.get("is_first", False) or offset == 0)
+        is_last = bool(payload.get("is_last", False))
+        try:
+            target_path = self._sanitize_path(raw_path)
+            parent = os.path.dirname(target_path)
+            if parent and not os.path.exists(parent):
+                os.makedirs(parent, exist_ok=True)
+
+            chunk_bytes = base64.b64decode(chunk_b64)
+            mode = "wb" if (is_first and (not os.path.exists(target_path) or offset == 0)) else ("r+b" if os.path.exists(target_path) else "wb")
+
+            with open(target_path, mode) as f:
+                f.seek(offset)
+                f.write(chunk_bytes)
+                f.flush()
+
+            file_size = os.path.getsize(target_path)
+            res = {
+                "path": target_path.replace("\\", "/"),
+                "native_path": target_path,
+                "offset": offset,
+                "bytes_written": len(chunk_bytes),
+                "committed_offset": offset + len(chunk_bytes),
+                "total_size": file_size,
+                "is_last": is_last
+            }
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_file_chunk_read(self, payload):
+        req_id = payload.get("request_id")
+        raw_path = payload.get("path")
+        offset = int(payload.get("offset", 0))
+        length = int(payload.get("length", 2 * 1024 * 1024))
+        try:
+            target_path = self._sanitize_path(raw_path)
+            if not os.path.isfile(target_path):
+                raise FileNotFoundError(f"File not found: {target_path}")
+
+            file_size = os.path.getsize(target_path)
+            with open(target_path, "rb") as f:
+                f.seek(offset)
+                chunk = f.read(length)
+
+            res = {
+                "path": target_path.replace("\\", "/"),
+                "filename": os.path.basename(target_path),
+                "offset": offset,
+                "length": len(chunk),
+                "file_size": file_size,
+                "is_eof": (offset + len(chunk)) >= file_size,
+                "chunk_base64": base64.b64encode(chunk).decode("ascii")
+            }
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_file_run(self, payload):
+        req_id = payload.get("request_id")
+        raw_path = payload.get("path")
+        args = payload.get("args") or []
+        if isinstance(args, str):
+            import shlex
+            args = shlex.split(args) if args.strip() else []
+        interpreter = (payload.get("interpreter") or "auto").lower()
+        working_dir = payload.get("working_dir")
+        run_in_background = bool(payload.get("background", False))
+        job_id = payload.get("job_id") or f"run_{int(time.time()*1000)}"
+
+        try:
+            target_path = self._sanitize_path(raw_path)
+            if not os.path.isfile(target_path):
+                raise FileNotFoundError(f"File to execute not found: {target_path}")
+
+            if not working_dir or not os.path.isdir(working_dir):
+                working_dir = os.path.dirname(target_path) or os.getcwd()
+
+            ext = os.path.splitext(target_path)[1].lower()
+            cmd = []
+            sys_os = platform.system()
+
+            if sys_os == "Windows":
+                if ext in [".bat", ".cmd"]:
+                    cmd = ["cmd.exe", "/c", target_path] + list(args)
+                elif ext == ".ps1":
+                    cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", target_path] + list(args)
+                elif ext == ".py":
+                    cmd = [sys.executable, target_path] + list(args)
+                elif ext == ".msi":
+                    cmd = ["msiexec.exe", "/i", target_path] + list(args)
+                elif ext == ".exe":
+                    cmd = [target_path] + list(args)
+                else:
+                    if interpreter == "python":
+                        cmd = [sys.executable, target_path] + list(args)
+                    elif interpreter in ["powershell", "ps1"]:
+                        cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", target_path] + list(args)
+                    elif interpreter in ["cmd", "batch"]:
+                        cmd = ["cmd.exe", "/c", target_path] + list(args)
+                    else:
+                        cmd = [target_path] + list(args)
+            else:
+                # Linux / Unix
+                if ext == ".sh":
+                    cmd = ["/bin/bash", target_path] + list(args)
+                elif ext == ".py":
+                    cmd = ["python3", target_path] + list(args)
+                elif ext in [".js", ".mjs"]:
+                    cmd = ["node", target_path] + list(args)
+                else:
+                    try:
+                        st = os.stat(target_path)
+                        os.chmod(target_path, st.st_mode | 0o111)
+                    except Exception:
+                        pass
+                    cmd = [target_path] + list(args)
+
+            if run_in_background:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=working_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False
+                )
+                res = {
+                    "job_id": job_id,
+                    "pid": proc.pid,
+                    "running": True,
+                    "background": True,
+                    "cmd": " ".join(cmd),
+                    "exit_code": None
+                }
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=working_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    shell=False
+                )
+                try:
+                    stdout, stderr = proc.communicate(timeout=20)
+                    out_text = stdout.decode("utf-8", errors="replace")[:65536]
+                    err_text = stderr.decode("utf-8", errors="replace")[:65536]
+                    res = {
+                        "job_id": job_id,
+                        "pid": proc.pid,
+                        "running": False,
+                        "exit_code": proc.returncode,
+                        "stdout": out_text,
+                        "stderr": err_text,
+                        "cmd": " ".join(cmd)
+                    }
+                except subprocess.TimeoutExpired:
+                    res = {
+                        "job_id": job_id,
+                        "pid": proc.pid,
+                        "running": True,
+                        "background": True,
+                        "cmd": " ".join(cmd),
+                        "stdout": "[Execution running in background (timeout > 20s)]",
+                        "stderr": "",
+                        "exit_code": None
+                    }
+
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_file_archive_zip(self, payload):
+        req_id = payload.get("request_id")
+        raw_path = payload.get("path")
+        dest_zip = payload.get("dest_zip")
+        try:
+            import zipfile
+            target_path = self._sanitize_path(raw_path)
+            if not os.path.exists(target_path):
+                raise FileNotFoundError(f"Path to archive not found: {target_path}")
+
+            if not dest_zip:
+                dest_zip = target_path.rstrip("/\\") + ".zip"
+            else:
+                dest_zip = self._sanitize_path(dest_zip)
+
+            parent = os.path.dirname(dest_zip)
+            if parent and not os.path.exists(parent):
+                os.makedirs(parent, exist_ok=True)
+
+            total_files = 0
+            with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                if os.path.isdir(target_path):
+                    for root, dirs, files in os.walk(target_path):
+                        for file in files:
+                            full_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(full_path, target_path)
+                            zf.write(full_path, rel_path)
+                            total_files += 1
+                else:
+                    zf.write(target_path, os.path.basename(target_path))
+                    total_files = 1
+
+            zip_size = os.path.getsize(dest_zip)
+            res = {
+                "archive_path": dest_zip.replace("\\", "/"),
+                "native_path": dest_zip,
+                "filename": os.path.basename(dest_zip),
+                "total_files": total_files,
+                "total_size": zip_size
+            }
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_file_archive_extract(self, payload):
+        req_id = payload.get("request_id")
+        archive_path = payload.get("archive_path")
+        dest_dir = payload.get("dest_dir")
+        try:
+            import zipfile, tarfile
+            src_archive = self._sanitize_path(archive_path)
+            if not os.path.isfile(src_archive):
+                raise FileNotFoundError(f"Archive not found: {src_archive}")
+
+            if not dest_dir:
+                dest_dir = os.path.dirname(src_archive)
+            else:
+                dest_dir = self._sanitize_path(dest_dir)
+
+            os.makedirs(dest_dir, exist_ok=True)
+            real_dest = os.path.abspath(dest_dir)
+            extracted_count = 0
+
+            if zipfile.is_zipfile(src_archive):
+                with zipfile.ZipFile(src_archive, "r") as zf:
+                    for member in zf.infolist():
+                        target = os.path.abspath(os.path.join(real_dest, member.filename))
+                        if not (target == real_dest or target.startswith(real_dest + os.sep)):
+                            raise PermissionError(f"ZIP Slip vulnerability detected: illegal path '{member.filename}'")
+                        zf.extract(member, real_dest)
+                        extracted_count += 1
+            elif tarfile.is_tarfile(src_archive):
+                with tarfile.open(src_archive, "r:*") as tf:
+                    for member in tf.getmembers():
+                        target = os.path.abspath(os.path.join(real_dest, member.name))
+                        if not (target == real_dest or target.startswith(real_dest + os.sep)):
+                            raise PermissionError(f"Tar traversal detected: illegal path '{member.name}'")
+                        tf.extract(member, real_dest)
+                        extracted_count += 1
+            else:
+                raise ValueError("Unsupported archive format. Only .zip, .tar, .tar.gz supported.")
+
+            res = {
+                "dest_dir": dest_dir.replace("\\", "/"),
+                "extracted_files": extracted_count
+            }
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
     # =========================================================================
     # Task Manager: Universal Process & Service Management Engine
     # =========================================================================
@@ -5900,6 +6196,54 @@ class CyberVPSAgent:
         if not stream_id:
             return
 
+        # Milestone: Send immediate authenticated agent delivery acknowledgement
+        self.send_agent_event({
+            "type": "RemoteDesktopStarted",
+            "payload": {
+                "stream_id": stream_id,
+                "correlation_id": correlation_id,
+                "machine_id": self.machine_id,
+                "status": "agent_acknowledged",
+                "desktop_mode": desktop_mode,
+                "timestamp": int(time.time() * 1000)
+            }
+        })
+
+        # Preflight Display Checks
+        sys_os = platform.system()
+        if sys_os == "Windows" and desktop_mode:
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                proc_session = ctypes.c_ulong()
+                kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(proc_session))
+                active_console = kernel32.WTSGetActiveConsoleSessionId()
+                if proc_session.value == 0 and active_console != 0:
+                    self.send_agent_event({
+                        "type": "AppStreamStatus",
+                        "payload": {
+                            "stream_id": stream_id,
+                            "correlation_id": correlation_id,
+                            "status": "session_0_isolated",
+                            "error": "Windows Session 0 Isolation: Agent service cannot capture active user display directly. Connect via 1-Click RDP Bridge or run agent in active user session."
+                        }
+                    })
+            except Exception:
+                pass
+        elif sys_os == "Linux" and desktop_mode:
+            import glob
+            has_disp = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or glob.glob("/tmp/.X11-unix/X*"))
+            if not has_disp:
+                self.send_agent_event({
+                    "type": "AppStreamStatus",
+                    "payload": {
+                        "stream_id": stream_id,
+                        "correlation_id": correlation_id,
+                        "status": "no_display",
+                        "error": "Headless Linux Host: No active graphical display found (/tmp/.X11-unix/X* is empty). Start Xvfb or an X11/Wayland desktop session."
+                    }
+                })
+
         with self.lock:
             self.active_app_streams[stream_id] = {
                 "running": True,
@@ -7047,6 +7391,16 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_file_mkdir, args=(payload,), daemon=True).start()
         elif c_type == "FileStat":
             threading.Thread(target=self.handle_file_stat, args=(payload,), daemon=True).start()
+        elif c_type == "FileChunkWrite":
+            threading.Thread(target=self.handle_file_chunk_write, args=(payload,), daemon=True).start()
+        elif c_type == "FileChunkRead":
+            threading.Thread(target=self.handle_file_chunk_read, args=(payload,), daemon=True).start()
+        elif c_type == "FileRun":
+            threading.Thread(target=self.handle_file_run, args=(payload,), daemon=True).start()
+        elif c_type == "FileArchiveZip":
+            threading.Thread(target=self.handle_file_archive_zip, args=(payload,), daemon=True).start()
+        elif c_type == "FileArchiveExtract":
+            threading.Thread(target=self.handle_file_archive_extract, args=(payload,), daemon=True).start()
         elif c_type == "ProcessList":
             threading.Thread(target=self.handle_process_list, args=(payload,), daemon=True).start()
         elif c_type == "ProcessKill":

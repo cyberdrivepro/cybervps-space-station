@@ -3988,7 +3988,7 @@
   <div id="modal-fm-upload" class="modal-backdrop">
     <div class="modal">
       <div class="modal-header">
-        <strong style="color:var(--text-primary); font-size:1rem;">Upload File to Remote Machine</strong>
+        <strong style="color:var(--text-primary); font-size:1rem;">Upload File to Remote Machine (Streamed 100 GB+)</strong>
         <button class="btn-icon" onclick="closeFmUploadModal()">&times;</button>
       </div>
       <div class="modal-body">
@@ -4003,10 +4003,71 @@
         <div id="fm-upload-preview" style="display:none; font-size:0.8rem; color:var(--text-secondary); margin-top:0.5rem;">
           Selected: <strong id="fm-upload-preview-name" style="color:var(--accent-cyan);"></strong> (<span id="fm-upload-preview-size"></span>)
         </div>
+        <div id="fm-upload-progress-container" style="display:none; margin-top:1rem; padding:0.75rem; background:rgba(0,0,0,0.25); border:1px solid var(--border-color); border-radius:6px;">
+          <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:0.4rem;">
+            <span id="fm-upload-status-text" style="color:var(--accent-cyan); font-weight:600;">Streaming chunks...</span>
+            <span id="fm-upload-percent-text" style="color:var(--text-primary); font-weight:700;">0%</span>
+          </div>
+          <div style="background:rgba(255,255,255,0.08); border-radius:4px; height:8px; overflow:hidden;">
+            <div id="fm-upload-progress-bar" style="background:linear-gradient(90deg, #3b82f6, #06b6d4); height:100%; width:0%; transition:width 0.15s ease;"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-secondary); margin-top:0.4rem;">
+            <span id="fm-upload-transferred-text">0 MB / 0 MB</span>
+            <span id="fm-upload-speed-text">0 MB/s</span>
+            <span id="fm-upload-eta-text">ETA: --</span>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeFmUploadModal()">Cancel</button>
         <button class="btn btn-primary" id="btn-submit-upload" onclick="submitFmUpload()">⬆️ Start Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: REMOTE FILE EXECUTION (RUN / RUN WITH) -->
+  <div id="modal-fm-run" class="modal-backdrop">
+    <div class="modal" style="max-width:620px;">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">⚡ Remote Process Execution</strong>
+        <button class="btn-icon" onclick="closeFmRunModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:6px; padding:0.6rem 0.8rem; margin-bottom:1rem; font-size:0.8rem; color:#f87171;">
+          ⚠️ <strong>Explicit Execution Authorization:</strong> This command will execute on host <span id="fm-run-host-id" style="font-weight:700;"></span> directly.
+        </div>
+        <div class="form-group">
+          <label class="form-label">Executable File Target</label>
+          <input type="text" id="fm-run-target-path" class="form-control" readonly style="font-family:var(--font-mono); font-size:0.85rem;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Detected Execution Runner</label>
+          <input type="text" id="fm-run-interpreter" class="form-control" readonly style="font-size:0.85rem; color:var(--accent-cyan);">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Command Line Arguments (Optional)</label>
+          <input type="text" id="fm-run-args" class="form-control" placeholder="e.g. --verbose --port 8080" style="font-family:var(--font-mono); font-size:0.85rem;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Working Directory</label>
+          <input type="text" id="fm-run-cwd" class="form-control" style="font-family:var(--font-mono); font-size:0.85rem;">
+        </div>
+        <div id="fm-run-results-box" style="display:none; margin-top:1rem;">
+          <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:0.4rem;">
+            <span style="font-weight:600; color:var(--text-primary);">Execution Output (stdout / stderr)</span>
+            <span id="fm-run-status-badge" class="badge"></span>
+          </div>
+          <pre id="fm-run-output" style="background:#090d16; border:1px solid var(--border-color); border-radius:6px; padding:0.75rem; font-family:var(--font-mono); font-size:0.78rem; max-height:220px; overflow-y:auto; white-space:pre-wrap; color:#e2e8f0;"></pre>
+          <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-secondary); margin-top:0.35rem;">
+            <span id="fm-run-pid-text">PID: --</span>
+            <span id="fm-run-exitcode-text">Exit Code: --</span>
+            <span id="fm-run-duration-text">Duration: -- ms</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeFmRunModal()">Close</button>
+        <button class="btn btn-primary" id="btn-submit-run" onclick="submitFmRun()">⚡ Execute Now</button>
       </div>
     </div>
   </div>
@@ -7716,6 +7777,14 @@
               ws.send(JSON.stringify({ type: 'ping', client_time: Date.now() }));
             }
           }, 2000);
+
+          // Client-side Safety Timeout (15s) in case server or agent hangs silently
+          if (webDesktopState.clientTimeoutTimer) clearTimeout(webDesktopState.clientTimeoutTimer);
+          webDesktopState.clientTimeoutTimer = setTimeout(() => {
+            if (!webDesktopState.firstFrameReceived && currentSessionId === webDesktopState.sessionId) {
+              showWebDesktopError('Timed out waiting for desktop capture worker (15s). The agent or display service did not stream video frames.', 'Connection Timeout');
+            }
+          }, 15000);
         };
 
         ws.onmessage = (event) => {
@@ -7769,13 +7838,28 @@
               ? 'Agent notified. Awaiting hardware desktop frame...'
               : 'Target host is currently offline or reconnecting...';
           }
+        } else if (msg.stage === 'agent_acknowledged') {
+          const loadingDesc = document.getElementById('desktop-ws-loading-desc');
+          if (loadingDesc) {
+            loadingDesc.innerText = 'Agent acknowledged! Hardware capture worker active, streaming video...';
+          }
         }
         return;
       }
 
       if (msg.type === 'status') {
+        if (webDesktopState.clientTimeoutTimer) {
+          clearTimeout(webDesktopState.clientTimeoutTimer);
+          webDesktopState.clientTimeoutTimer = null;
+        }
         if (msg.status === 'unauthorized') {
           showWebDesktopError('Unauthorized: ' + (msg.error || 'Token expired'));
+        } else if (msg.status === 'agent_offline') {
+          showWebDesktopError(msg.error || 'Host machine is offline. Remote desktop requires an online agent.', 'Agent Offline');
+        } else if (msg.status === 'agent_ack_timeout') {
+          showWebDesktopError(msg.error || 'Agent did not acknowledge remote desktop stream within 5s.', 'Agent Unresponsive');
+        } else if (msg.status === 'first_frame_timeout') {
+          showWebDesktopError(msg.error || 'Timed out waiting for initial desktop frame (12s). Verify display server is running.', 'Video Frame Timeout');
         } else if (msg.status === 'session_0_isolated') {
           showWebDesktopError(msg.error || 'Windows Session 0 Isolation: Background service cannot capture Session 1 display directly. Use 1-Click RDP Bridge or run agent in active user session.', 'Windows Session 0 Isolation Detected');
         } else if (msg.status === 'permission_denied') {
@@ -7824,6 +7908,11 @@
         img.onload = () => {
           webDesktopState.isImageDecoding = false;
           if (sessionId && sessionId !== webDesktopState.sessionId) return;
+
+          if (webDesktopState.clientTimeoutTimer) {
+            clearTimeout(webDesktopState.clientTimeoutTimer);
+            webDesktopState.clientTimeoutTimer = null;
+          }
 
           webDesktopState.firstFrameReceived = true;
           setWebDesktopUiState('streaming');
@@ -7882,6 +7971,10 @@
       if (webDesktopState.pingTimer) {
         clearInterval(webDesktopState.pingTimer);
         webDesktopState.pingTimer = null;
+      }
+      if (webDesktopState.clientTimeoutTimer) {
+        clearTimeout(webDesktopState.clientTimeoutTimer);
+        webDesktopState.clientTimeoutTimer = null;
       }
       if (webDesktopState.ws) {
         try {
@@ -12166,14 +12259,21 @@
         }
 
         let actionsHtml = '';
+        const ext = (it.name.split('.').pop() || '').toLowerCase();
+        const isArchive = ['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz'].includes(ext);
+        const isRunnable = ['exe', 'bat', 'cmd', 'ps1', 'msi', 'py', 'sh', 'js'].includes(ext);
+
         if (it.is_directory) {
           actionsHtml = `
             <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="initFileManager('${appState.selectedMachineId}', '${safePath}')">Open</button>
+            <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="downloadDirectoryAsZip('${safePath}', '${safeName}')">📦 ZIP</button>
             <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptRenameFile('${safePath}', '${safeName}')">Rename</button>
             <button class="btn btn-danger" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptDeleteFile('${safePath}', '${safeName}', true)">Delete</button>
           `;
         } else {
           actionsHtml = `
+            ${isRunnable ? `<button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; color:var(--accent-cyan); font-weight:600;" onclick="openFmRunModal('${safePath}', '${safeName}')">⚡ Run</button>` : ''}
+            ${isArchive ? `<button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; color:#f59e0b;" onclick="promptExtractArchive('${safePath}', '${safeName}')">📂 Extract</button>` : ''}
             <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="openFileInEditor('${safePath}', '${safeName}', ${it.size || 0})">Edit</button>
             <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem; margin-left:3px;" onclick="downloadFile('${safePath}', '${safeName}')">Download</button>
             <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptRenameFile('${safePath}', '${safeName}')">Rename</button>
@@ -12406,47 +12506,88 @@
       btn.disabled = true;
       btn.innerText = 'Uploading...';
 
+      const progressContainer = document.getElementById('fm-upload-progress-container');
+      const progressBar = document.getElementById('fm-upload-progress-bar');
+      const percentText = document.getElementById('fm-upload-percent-text');
+      const statusText = document.getElementById('fm-upload-status-text');
+      const transferredText = document.getElementById('fm-upload-transferred-text');
+      const speedText = document.getElementById('fm-upload-speed-text');
+      const etaText = document.getElementById('fm-upload-eta-text');
+
+      if (progressContainer) progressContainer.style.display = 'block';
+
+      let destPath = appState.currentFmPath || '';
+      if (destPath.endsWith('/') || destPath.endsWith('\\')) {
+        destPath += file.name;
+      } else {
+        const sep = destPath.includes('\\') ? '\\' : '/';
+        destPath = destPath ? `${destPath}${sep}${file.name}` : file.name;
+      }
+
       try {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-          const dataUrl = e.target.result;
-          const base64Index = dataUrl.indexOf(';base64,');
-          const base64Data = base64Index !== -1 ? dataUrl.substring(base64Index + 8) : btoa(dataUrl);
+        const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB slice per chunk
+        const totalSize = file.size;
+        let offset = 0;
+        const startTime = performance.now();
 
-          let destPath = appState.currentFmPath;
-          if (destPath.endsWith('/') || destPath.endsWith('\\')) {
-            destPath += file.name;
-          } else {
-            const sep = destPath.includes('\\') ? '\\' : '/';
-            destPath = destPath ? `${destPath}${sep}${file.name}` : file.name;
+        while (offset < totalSize) {
+          const sliceEnd = Math.min(offset + CHUNK_SIZE, totalSize);
+          const chunkBlob = file.slice(offset, sliceEnd);
+          const chunkBuffer = await chunkBlob.arrayBuffer();
+
+          // Bounded conversion to base64
+          let binary = '';
+          const bytes = new Uint8Array(chunkBuffer);
+          const len = bytes.byteLength;
+          for (let i = 0; i < len; i += 32768) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 32768, len)));
           }
+          const chunkBase64 = btoa(binary);
+          const isFirst = (offset === 0);
+          const isLast = (sliceEnd >= totalSize);
 
-          const res = await apiRequest('/api/v1/files/upload', {
+          const res = await apiRequest('/api/v1/files/upload-chunk', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               machine_id: appState.selectedMachineId,
               path: destPath,
-              data_base64: base64Data
+              offset,
+              total_size: totalSize,
+              chunk_base64: chunkBase64,
+              is_first: isFirst,
+              is_last: isLast
             })
           });
 
-          btn.disabled = false;
-          btn.innerText = '⬆️ Start Upload';
-
           if (!res.ok) {
-            showToast('Upload failed: ' + res.error, 'error');
-            return;
+            throw new Error(res.error || 'Chunk upload failed at offset ' + offset);
           }
 
-          closeFmUploadModal();
-          showToast(`File "${file.name}" uploaded successfully!`, 'success');
-          fmRefresh();
-        };
-        reader.readAsDataURL(file);
+          offset = sliceEnd;
+          const percent = Math.min(100, Math.round((offset / totalSize) * 100));
+          const elapsedSec = Math.max(0.001, (performance.now() - startTime) / 1000);
+          const bytesPerSec = offset / elapsedSec;
+          const remainingBytes = Math.max(0, totalSize - offset);
+          const etaSec = bytesPerSec > 0 ? Math.round(remainingBytes / bytesPerSec) : 0;
+
+          if (progressBar) progressBar.style.width = percent + '%';
+          if (percentText) percentText.innerText = percent + '%';
+          if (statusText) statusText.innerText = isLast ? 'Finalizing...' : 'Streaming chunk...';
+          if (transferredText) transferredText.innerText = `${formatBytes(offset)} / ${formatBytes(totalSize)}`;
+          if (speedText) speedText.innerText = `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+          if (etaText) etaText.innerText = isLast ? 'Complete' : `ETA: ${Math.floor(etaSec / 60)}m ${etaSec % 60}s`;
+        }
+
+        btn.disabled = false;
+        btn.innerText = '⬆️ Start Upload';
+        closeFmUploadModal();
+        showToast(`File "${file.name}" (${formatBytes(totalSize)}) uploaded successfully!`, 'success');
+        fmRefresh();
       } catch (err) {
         btn.disabled = false;
         btn.innerText = '⬆️ Start Upload';
+        if (statusText) statusText.innerText = 'Upload Error';
         showToast('Upload error: ' + err.message, 'error');
       }
     }
@@ -12574,16 +12715,180 @@
       fmRefresh();
     }
 
-    function downloadFile(path, name) {
+    async function downloadFile(path, name) {
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
-      const url = `${base}/api/v1/files/download?machine_id=${encodeURIComponent(appState.selectedMachineId)}&path=${encodeURIComponent(path)}`;
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      showToast(`Downloading "${name}"...`, 'info');
+      showToast(`Preparing secure download for "${name}"...`, 'info');
+      try {
+        const ticketRes = await apiRequest('/api/v1/files/ticket', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: appState.selectedMachineId,
+            path,
+            filename: name
+          })
+        });
+
+        let url = '';
+        if (ticketRes.ok && ticketRes.ticket) {
+          url = `${base}/api/v1/files/download?ticket=${encodeURIComponent(ticketRes.ticket)}`;
+        } else {
+          url = `${base}/api/v1/files/download?machine_id=${encodeURIComponent(appState.selectedMachineId)}&path=${encodeURIComponent(path)}`;
+        }
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast(`Streaming "${name}" from remote host...`, 'success');
+      } catch (err) {
+        showToast('Download error: ' + err.message, 'error');
+      }
+    }
+
+    function openFmRunModal(path, name) {
+      if (!appState.selectedMachineId) return showToast('Select a machine first', 'warning');
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      let runner = 'Native Executable';
+      if (ext === 'ps1') runner = 'Windows PowerShell (powershell.exe -ExecutionPolicy Bypass)';
+      else if (ext === 'bat' || ext === 'cmd') runner = 'Windows Command Shell (cmd.exe /c)';
+      else if (ext === 'py') runner = 'Python 3 Interpreter';
+      else if (ext === 'sh' || ext === 'bash') runner = 'POSIX Shell (/bin/bash)';
+      else if (ext === 'js' || ext === 'mjs') runner = 'Node.js Runtime';
+      else if (ext === 'msi') runner = 'Windows Installer (msiexec.exe /i)';
+
+      let cwd = path.replace(/[\\/]+[^\\/]+$/, '');
+      if (!cwd) cwd = path.includes('\\') ? 'C:\\' : '/';
+
+      document.getElementById('fm-run-host-id').innerText = appState.selectedMachineId;
+      document.getElementById('fm-run-target-path').value = path;
+      document.getElementById('fm-run-interpreter').value = runner;
+      document.getElementById('fm-run-args').value = '';
+      document.getElementById('fm-run-cwd').value = cwd;
+      document.getElementById('fm-run-results-box').style.display = 'none';
+      document.getElementById('fm-run-output').innerText = '';
+      document.getElementById('btn-submit-run').disabled = false;
+      document.getElementById('btn-submit-run').innerText = '⚡ Execute Now';
+
+      document.getElementById('modal-fm-run').style.display = 'flex';
+    }
+
+    function closeFmRunModal() {
+      document.getElementById('modal-fm-run').style.display = 'none';
+    }
+
+    async function submitFmRun() {
+      const path = document.getElementById('fm-run-target-path').value.trim();
+      const argsStr = document.getElementById('fm-run-args').value.trim();
+      const cwd = document.getElementById('fm-run-cwd').value.trim();
+      const btn = document.getElementById('btn-submit-run');
+
+      if (!path) return;
+      btn.disabled = true;
+      btn.innerText = 'Executing...';
+
+      try {
+        const res = await apiRequest('/api/v1/files/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: appState.selectedMachineId,
+            path,
+            args: argsStr,
+            cwd
+          })
+        });
+
+        btn.disabled = false;
+        btn.innerText = '⚡ Execute Again';
+
+        document.getElementById('fm-run-results-box').style.display = 'block';
+        const badge = document.getElementById('fm-run-status-badge');
+        const outputEl = document.getElementById('fm-run-output');
+        const pidEl = document.getElementById('fm-run-pid-text');
+        const exitEl = document.getElementById('fm-run-exitcode-text');
+        const durEl = document.getElementById('fm-run-duration-text');
+
+        if (!res.ok) {
+          badge.className = 'badge badge-danger';
+          badge.innerText = 'Execution Failed';
+          outputEl.innerText = res.error || 'Remote command execution failed';
+          return;
+        }
+
+        const data = res.data || res;
+        const isSuccess = data.exit_code === 0;
+        badge.className = isSuccess ? 'badge badge-success' : 'badge badge-warning';
+        badge.innerText = isSuccess ? 'Exit 0 (Success)' : `Exit ${data.exit_code} (Non-zero)`;
+
+        let out = '';
+        if (data.stdout) out += `[stdout]\n${data.stdout}\n`;
+        if (data.stderr) out += `[stderr]\n${data.stderr}\n`;
+        if (!out) out = '(Process completed with no output)';
+        outputEl.innerText = out;
+
+        if (pidEl) pidEl.innerText = `PID: ${data.pid || 'N/A'}`;
+        if (exitEl) exitEl.innerText = `Exit Code: ${data.exit_code !== undefined ? data.exit_code : 'N/A'}`;
+        if (durEl) durEl.innerText = `Duration: ${data.execution_time_ms || 0} ms`;
+
+        showToast(`Process executed (Exit code: ${data.exit_code})`, isSuccess ? 'success' : 'warning');
+      } catch (err) {
+        btn.disabled = false;
+        btn.innerText = '⚡ Execute Again';
+        showToast('Run error: ' + err.message, 'error');
+      }
+    }
+
+    async function downloadDirectoryAsZip(dirPath, dirName) {
+      if (!confirm(`Create ZIP archive of remote directory "${dirName}"?`)) return;
+      showToast(`Compressing directory "${dirName}" on host...`, 'info');
+      try {
+        const res = await apiRequest('/api/v1/files/archive/zip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: appState.selectedMachineId,
+            dir_path: dirPath
+          })
+        });
+
+        if (!res.ok) {
+          return showToast('Archive creation failed: ' + res.error, 'error');
+        }
+
+        showToast(`ZIP created (${res.total_files} files, ${formatBytes(res.archive_size_bytes)}). Starting download...`, 'success');
+        downloadFile(res.zip_path, dirName + '.zip');
+      } catch (err) {
+        showToast('Archive error: ' + err.message, 'error');
+      }
+    }
+
+    async function promptExtractArchive(archivePath, archiveName) {
+      let destDir = prompt(`Extract archive "${archiveName}" to folder:`, appState.currentFmPath || '/');
+      if (!destDir) return;
+      showToast(`Extracting "${archiveName}" on remote host...`, 'info');
+      try {
+        const res = await apiRequest('/api/v1/files/archive/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: appState.selectedMachineId,
+            archive_path: archivePath,
+            dest_dir: destDir.trim()
+          })
+        });
+
+        if (!res.ok) {
+          return showToast('Extraction failed: ' + res.error, 'error');
+        }
+
+        showToast(`Extracted ${res.extracted_files} files (${formatBytes(res.total_extracted_bytes)}) into ${res.dest_dir}!`, 'success');
+        fmRefresh();
+      } catch (err) {
+        showToast('Extraction error: ' + err.message, 'error');
+      }
     }
 
     // 14. TASK MANAGER: PROCESSES & SYSTEM SERVICES CONTROLLER
@@ -16653,8 +16958,12 @@ class FileManagerView {
     FileManagerView.loadCurrentPath();
   }
 
-  static downloadFile(path) {
-    alert(`Initiating download for: ${path}`);
+  static downloadFile(path, name) {
+    if (typeof window !== 'undefined' && typeof window.downloadFile === 'function') {
+      window.downloadFile(path, name || path.split(/[\\/]/).pop());
+    } else {
+      alert(`Initiating download for: ${path}`);
+    }
   }
 
   static deleteItem(path) {

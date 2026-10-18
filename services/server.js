@@ -120,7 +120,8 @@ const db = {
   deletedBackends: new Set(), // Set of backend_ids deleted by user
   blackoutStates: new Map(), // machine_id -> { active, incident }
   pillarProtectedFiles: new Map(), // machine_id -> [ProtectedFile]
-  pillarIncidents: new Map() // machine_id -> [Incident]
+  pillarIncidents: new Map(), // machine_id -> [Incident]
+  downloadTickets: new Map() // ticket -> { ticket, machine_id, path, filename, created_at, expires_at, user }
 };
 
 const canaryRolloutManager = new CanaryRolloutManager({ db });
@@ -1167,6 +1168,24 @@ function verifyAdminAuthorization(req) {
 
   // 3. Custom headers: X-Admin-Token, X-Session-Token, X-CVPS-Pairing-Key, X-Pairing-Key
   const customToken = req.headers['x-admin-token'] || req.headers['x-session-token'] || req.headers['x-cvps-pairing-key'] || req.headers['x-pairing-key'];
+
+  // 4. Single-use / short-lived download ticket authentication (e.g. ?ticket=cvps_dl_...)
+  let queryTicket = '';
+  try {
+    const rawUrl = req.url || '';
+    const qIndex = rawUrl.indexOf('?');
+    if (qIndex !== -1) {
+      const qParams = new URLSearchParams(rawUrl.substring(qIndex));
+      queryTicket = qParams.get('ticket') || '';
+    }
+  } catch (_) {}
+
+  if (queryTicket && db.downloadTickets && db.downloadTickets.has(queryTicket)) {
+    const ticketData = db.downloadTickets.get(queryTicket);
+    if (ticketData && ticketData.expires_at > Date.now()) {
+      return { authorized: true, user: ticketData.user || 'download_client', role: 'operator', source: 'download_ticket', ticket: ticketData };
+    }
+  }
 
   const candidates = [
     { token: bearerToken, source: 'bearer' },
@@ -3852,19 +3871,79 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/v1/files/ticket' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { machine_id, path: filePath, filename } = JSON.parse(body || '{}');
+        if (!machine_id || !filePath) throw new Error('machine_id and path required');
+        const ticket = 'cvps_dl_' + crypto.randomBytes(16).toString('hex');
+        db.downloadTickets.set(ticket, {
+          ticket,
+          machine_id,
+          path: filePath,
+          filename: filename || filePath.split(/[\\/]/).pop() || 'download',
+          created_at: Date.now(),
+          expires_at: Date.now() + 5 * 60 * 1000
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ticket, expires_at: Date.now() + 300000 }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
   if (pathname === '/api/v1/files/upload' && method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { machine_id, path: destPath, filename, content_base64 } = JSON.parse(body || '{}');
-        if (!machine_id || !destPath || !filename) throw new Error('machine_id, path and filename required');
-        const sep = destPath.includes('\\') ? '\\' : '/';
-        const targetFile = destPath.endsWith(sep) ? destPath + filename : destPath + sep + filename;
-        const data = await sendAgentRequest(machine_id, 'FileWrite', { path: targetFile, content: content_base64, is_base64: true }, 25000);
+        const payload = JSON.parse(body || '{}');
+        const machine_id = payload.machine_id;
+        let destPath = payload.path || '';
+        const filename = payload.filename || '';
+        const content_base64 = payload.content_base64 || payload.data_base64 || '';
+
+        if (!machine_id || !destPath) throw new Error('machine_id and path required');
+
+        let targetFile = destPath;
+        if (filename && !destPath.endsWith(filename)) {
+          const sep = destPath.includes('\\') ? '\\' : '/';
+          targetFile = destPath.endsWith(sep) ? destPath + filename : destPath + sep + filename;
+        }
+
+        const data = await sendAgentRequest(machine_id, 'FileWrite', { path: targetFile, content: content_base64, is_base64: true }, 30000);
         logAudit('file_uploaded', 'user', machine_id, `Uploaded file: ${targetFile}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, path: targetFile, filename }));
+        res.end(JSON.stringify({ success: true, path: targetFile, filename: filename || targetFile.split(/[\\/]/).pop(), result: data }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/upload-chunk' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, path: destPath, offset, chunk_base64, chunk_data_base64, content_base64, is_first, is_last, total_size } = JSON.parse(body || '{}');
+        if (!machine_id || !destPath) throw new Error('machine_id and path required');
+        const chunkData = chunk_base64 || chunk_data_base64 || content_base64 || '';
+        const data = await sendAgentRequest(machine_id, 'FileChunkWrite', {
+          path: destPath,
+          offset: offset || 0,
+          chunk_data_base64: chunkData,
+          is_first: Boolean(is_first),
+          is_last: Boolean(is_last),
+          total_size
+        }, 30000);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...data }));
       } catch (err) {
         sendHttpError(res, err);
       }
@@ -3873,28 +3952,156 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/v1/files/download' && method === 'GET') {
-    const machineId = parsedUrl.searchParams.get('machine_id');
-    const filePath = parsedUrl.searchParams.get('path');
+    let machineId = parsedUrl.searchParams.get('machine_id');
+    let filePath = parsedUrl.searchParams.get('path');
+    let filename = '';
+    const ticket = parsedUrl.searchParams.get('ticket');
+
+    if (ticket && db.downloadTickets && db.downloadTickets.has(ticket)) {
+      const ticketData = db.downloadTickets.get(ticket);
+      if (ticketData && ticketData.expires_at > Date.now()) {
+        machineId = machineId || ticketData.machine_id;
+        filePath = filePath || ticketData.path;
+        filename = ticketData.filename;
+      }
+    }
+
     if (!machineId || !filePath) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'machine_id and path required', code: 'BAD_REQUEST' }));
       return;
     }
+
     try {
-      const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, download: true, max_bytes: 500 * 1024 * 1024 }, 60000);
-      const filename = data.filename || 'download';
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-      if (data.is_binary && data.content_base64) {
-        res.setHeader('Content-Type', 'application/octet-stream');
-        res.end(Buffer.from(data.content_base64, 'base64'));
-      } else {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.end(data.content || '');
+      // Chunked streaming download with bounded memory for arbitrary file sizes up to 100 GB+
+      const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB per slice
+      let offset = 0;
+      let isFirst = true;
+
+      while (!res.destroyed && !res.writableEnded) {
+        const chunkData = await sendAgentRequest(machineId, 'FileChunkRead', {
+          path: filePath,
+          offset,
+          length: CHUNK_SIZE
+        }, 35000);
+
+        if (isFirst) {
+          const downloadName = filename || chunkData.filename || filePath.split(/[\\/]/).pop() || 'download';
+          res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(downloadName)}"`);
+          res.setHeader('Content-Type', 'application/octet-stream');
+          if (chunkData.file_size !== undefined) {
+            res.setHeader('Content-Length', chunkData.file_size);
+          }
+          res.writeHead(200);
+          isFirst = false;
+        }
+
+        if (chunkData.chunk_base64) {
+          const buffer = Buffer.from(chunkData.chunk_base64, 'base64');
+          res.write(buffer);
+          offset += buffer.length;
+        }
+
+        if (chunkData.is_eof || (chunkData.file_size !== undefined && offset >= chunkData.file_size)) {
+          break;
+        }
       }
-      logAudit('file_downloaded', 'user', machineId, `Downloaded file: ${filePath}`);
+
+      if (!res.writableEnded) {
+        res.end();
+      }
+      logAudit('file_downloaded', 'user', machineId, `Downloaded file: ${filePath} (${offset} bytes transferred)`);
     } catch (err) {
-      sendHttpError(res, err);
+      // Graceful fallback to classic FileRead if FileChunkRead is not supported or failed on initial chunk
+      try {
+        if (!res.headersSent) {
+          const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, download: true, max_bytes: 500 * 1024 * 1024 }, 60000);
+          const downloadName = filename || data.filename || 'download';
+          res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(downloadName)}"`);
+          if (data.is_binary && data.content_base64) {
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.end(Buffer.from(data.content_base64, 'base64'));
+          } else {
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.end(data.content || '');
+          }
+          logAudit('file_downloaded', 'user', machineId, `Downloaded file: ${filePath}`);
+        } else {
+          res.end();
+        }
+      } catch (fallbackErr) {
+        if (!res.headersSent) {
+          sendHttpError(res, fallbackErr);
+        } else {
+          res.destroy();
+        }
+      }
     }
+    return;
+  }
+
+  if (pathname === '/api/v1/files/run' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, path: execPath, args, cwd, timeout_ms } = JSON.parse(body || '{}');
+        if (!machine_id || !execPath) throw new Error('machine_id and path required');
+        const data = await sendAgentRequest(machine_id, 'FileRun', {
+          path: execPath,
+          args: args || [],
+          cwd: cwd || '',
+          timeout_ms: timeout_ms || 30000
+        }, (timeout_ms || 30000) + 10000);
+        logAudit('file_executed', 'user', machine_id, `Executed file: ${execPath} (PID: ${data.pid || 'N/A'}, ExitCode: ${data.exit_code})`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...data }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/archive/zip' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, dir_path, zip_path } = JSON.parse(body || '{}');
+        if (!machine_id || !dir_path) throw new Error('machine_id and dir_path required');
+        const data = await sendAgentRequest(machine_id, 'FileArchiveZip', {
+          dir_path,
+          zip_path
+        }, 120000);
+        logAudit('archive_created', 'user', machine_id, `Created ZIP archive: ${data.zip_path} from ${dir_path}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...data }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/archive/extract' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, archive_path, dest_dir } = JSON.parse(body || '{}');
+        if (!machine_id || !archive_path) throw new Error('machine_id and archive_path required');
+        const data = await sendAgentRequest(machine_id, 'FileArchiveExtract', {
+          archive_path,
+          dest_dir
+        }, 120000);
+        logAudit('archive_extracted', 'user', machine_id, `Extracted archive ${archive_path} into ${data.dest_dir}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...data }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
     return;
   }
 
@@ -7497,6 +7704,27 @@ wssAppStream.on('connection', (ws, request) => {
   const isDesktopMode = Boolean(auth.desktopMode || (parsed.searchParams.get('desktop_mode') === 'true') || (!pid && !hwnd));
   const isInteractive = Boolean(auth.interactive !== false && (parsed.searchParams.get('view_only') !== 'true'));
 
+  const streamObj = db.appStreams.get(streamId);
+  if (streamObj) {
+    streamObj.desktopMode = isDesktopMode;
+    streamObj.agentAcked = false;
+  }
+
+  if (!isAgentConnected) {
+    try {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'status',
+          status: 'agent_offline',
+          stream_id: streamId,
+          correlation_id: correlationId,
+          error: `Target host '${machineId}' is currently offline. Cannot initiate live desktop stream.`
+        }));
+      }
+    } catch (_) {}
+    return;
+  }
+
   sendServerCommand(machineId, {
     type: isDesktopMode ? 'RemoteDesktopStart' : 'AppStreamStart',
     payload: {
@@ -7521,13 +7749,41 @@ wssAppStream.on('connection', (ws, request) => {
         stage: 'agent_notified',
         stream_id: streamId,
         correlation_id: correlationId,
-        agent_online: isAgentConnected,
+        agent_online: true,
         desktop_mode: isDesktopMode,
         interactive: isInteractive,
         timestamp: Date.now()
       }));
     }
   } catch (_) {}
+
+  // 5-second Agent Acknowledgement Timeout Guard
+  if (streamObj) {
+    streamObj.ackTimer = setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN && !streamObj.agentAcked) {
+        ws.send(JSON.stringify({
+          type: 'status',
+          status: 'agent_ack_timeout',
+          stream_id: streamId,
+          correlation_id: correlationId,
+          error: `Host machine '${machineId}' did not acknowledge remote desktop stream within 5 seconds. The agent might be unresponsive or stopping.`
+        }));
+      }
+    }, 5000);
+
+    // 12-second First Frame Timeout Guard
+    streamObj.firstFrameTimer = setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN && (!streamObj.frameCount || streamObj.frameCount === 0)) {
+        ws.send(JSON.stringify({
+          type: 'status',
+          status: 'first_frame_timeout',
+          stream_id: streamId,
+          correlation_id: correlationId,
+          error: `Timed out waiting for initial desktop frame from '${machineId}' (12s). Verify display server or virtual display is running.`
+        }));
+      }
+    }, 12000);
+  }
 
   ws.on('message', (data) => {
     try {
@@ -7582,6 +7838,11 @@ wssAppStream.on('connection', (ws, request) => {
   });
 
   ws.on('close', () => {
+    const stream = db.appStreams.get(streamId);
+    if (stream) {
+      if (stream.ackTimer) clearTimeout(stream.ackTimer);
+      if (stream.firstFrameTimer) clearTimeout(stream.firstFrameTimer);
+    }
     sendServerCommand(machineId, {
       type: isDesktopMode ? 'RemoteDesktopStop' : 'AppStreamStop',
       payload: { stream_id: streamId }
@@ -8010,10 +8271,44 @@ function handleAgentMessage(ws, msg) {
     return { success: true };
   }
 
+  else if (type === 'RemoteDesktopStarted') {
+    const { stream_id } = payload;
+    const stream = db.appStreams.get(stream_id);
+    if (stream) {
+      stream.agentAcked = true;
+      if (stream.ackTimer) {
+        clearTimeout(stream.ackTimer);
+        stream.ackTimer = null;
+      }
+      if (stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
+        stream.wsBrowser.send(JSON.stringify({
+          type: 'stage',
+          stage: 'agent_acknowledged',
+          stream_id,
+          correlation_id: stream.correlationId || payload.correlation_id,
+          status: payload.status || 'agent_acknowledged',
+          desktop_mode: payload.desktop_mode,
+          timestamp: Date.now()
+        }));
+      }
+    }
+    return { success: true };
+  }
+
   else if (type === 'AppStreamFrame' || type === 'RemoteDesktopFrame') {
     const { stream_id } = payload;
     const stream = db.appStreams.get(stream_id);
     if (stream) {
+      if (stream.ackTimer) {
+        clearTimeout(stream.ackTimer);
+        stream.ackTimer = null;
+      }
+      if (stream.firstFrameTimer) {
+        clearTimeout(stream.firstFrameTimer);
+        stream.firstFrameTimer = null;
+      }
+      stream.agentAcked = true;
+
       if (stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
         // Backpressure check: if browser socket buffer has backed up, drop this frame!
         // This enforces latest-frame delivery and eliminates multi-second stream backlog.
@@ -8044,13 +8339,23 @@ function handleAgentMessage(ws, msg) {
   else if (type === 'AppStreamStatus' || type === 'RemoteDesktopStatus') {
     const { stream_id } = payload;
     const stream = db.appStreams.get(stream_id);
-    if (stream && stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
-      stream.wsBrowser.send(JSON.stringify({
-        type: 'status',
-        ...payload,
-        correlation_id: stream.correlationId || payload.correlation_id,
-        server_relay_timestamp: Date.now()
-      }));
+    if (stream) {
+      if (stream.ackTimer) {
+        clearTimeout(stream.ackTimer);
+        stream.ackTimer = null;
+      }
+      if (stream.firstFrameTimer) {
+        clearTimeout(stream.firstFrameTimer);
+        stream.firstFrameTimer = null;
+      }
+      if (stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
+        stream.wsBrowser.send(JSON.stringify({
+          type: 'status',
+          ...payload,
+          correlation_id: stream.correlationId || payload.correlation_id,
+          server_relay_timestamp: Date.now()
+        }));
+      }
     }
     return { success: true };
   }

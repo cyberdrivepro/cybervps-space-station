@@ -137,8 +137,12 @@ class FileManagerView {
     FileManagerView.loadCurrentPath();
   }
 
-  static downloadFile(path) {
-    alert(`Initiating download for: ${path}`);
+  static downloadFile(path, name) {
+    if (typeof window !== 'undefined' && typeof window.downloadFile === 'function') {
+      window.downloadFile(path, name || path.split(/[\\/]/).pop());
+    } else {
+      alert(`Initiating download for: ${path}`);
+    }
   }
 
   static deleteItem(path) {
