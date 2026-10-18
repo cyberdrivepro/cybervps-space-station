@@ -3846,6 +3846,38 @@
        JAVASCRIPT APPLICATION ENGINE (ZERO FAKE DATA / PURE API DRIVEN)
        ========================================================================== -->
   <script>
+    // Global Safe String Escaping Helpers for HTML & JS inline event handlers
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+    function escapeJs(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+    function escapeJsSafe(str) {
+      return escapeJs(str);
+    }
+    function escapeHtmlSafe(str) {
+      return escapeHtml(str);
+    }
+    window.escapeHtml = escapeHtml;
+    window.escapeJs = escapeJs;
+    window.escapeJsSafe = escapeJs;
+    window.escapeHtmlSafe = escapeHtml;
+
     // Global fetch interceptor: automatically attach pairing key & admin token to all internal API calls
     const _nativeFetch = window.fetch;
     window.fetch = function(url, options = {}) {
@@ -6575,7 +6607,11 @@
       } else if (viewName === 'details') {
         const select = document.getElementById('details-machine-select');
         const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
-        if (mId) loadDeviceDetails(mId);
+        if (mId) {
+          loadDeviceDetails(mId);
+        } else {
+          loadClusterBackends();
+        }
       } else if (viewName === 'files') {
         const select = document.getElementById('fm-machine-select');
         const mId = select?.value || appState.selectedMachineId || (appState.machines[0]?.id);
@@ -7293,8 +7329,9 @@
         container.innerHTML = `
           <div style="text-align:center; padding:2rem; color:var(--text-muted); background:var(--bg-card); border-radius:6px; border:1px dashed var(--border-color);">
             No backend installations found matching your criteria.<br/>
-            <div style="margin-top:0.75rem; display:flex; gap:0.5rem; justify-content:center;">
+            <div style="margin-top:0.75rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
               <button class="btn btn-primary btn-sm" onclick="openAddBackendModal()">➕ Register Custom Backend</button>
+              <button class="btn btn-secondary btn-sm" onclick="document.getElementById('backend-inventory-scope').value='cluster'; onBackendScopeChanged();">🌐 View All Cluster Backends</button>
               <button class="btn btn-secondary btn-sm" onclick="scanSelectedMachineInventory()">🔍 Scan Backends</button>
             </div>
           </div>
@@ -13334,13 +13371,27 @@ function escapeHtmlSafe(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function escapeJsSafe(str) {
+function escapeJs(str) {
   if (str === null || str === undefined) return '';
-  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return String(str)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeJsSafe(str) {
+  return escapeJs(str);
 }
 
 if (typeof window !== 'undefined') {
   window.PathRegistryView = PathRegistryView;
+  window.escapeJs = escapeJs;
+  window.escapeJsSafe = escapeJsSafe;
+  window.escapeHtmlSafe = escapeHtmlSafe;
 }
 
 if (typeof module !== 'undefined' && module.exports) {

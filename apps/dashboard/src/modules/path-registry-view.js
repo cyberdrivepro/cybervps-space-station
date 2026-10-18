@@ -500,13 +500,27 @@ function escapeHtmlSafe(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function escapeJsSafe(str) {
+function escapeJs(str) {
   if (str === null || str === undefined) return '';
-  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return String(str)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeJsSafe(str) {
+  return escapeJs(str);
 }
 
 if (typeof window !== 'undefined') {
   window.PathRegistryView = PathRegistryView;
+  window.escapeJs = escapeJs;
+  window.escapeJsSafe = escapeJsSafe;
+  window.escapeHtmlSafe = escapeHtmlSafe;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
