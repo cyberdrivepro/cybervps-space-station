@@ -24,4 +24,7 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 
+# Binary distribution artifacts
+dist/
+
 

@@ -2979,7 +2979,9 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        if (action === 'reboot') {
+        const normAction = (action || '').toLowerCase().trim();
+
+        if (normAction === 'reboot' || normAction === 'reboot_host') {
           m.status = 'restarting';
           logAudit('machine_reboot', 'admin', mId, `Initiated remote reboot on machine ${mId}`);
           try {
@@ -2993,28 +2995,72 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        if (action === 'restart_agent') {
+        if (normAction === 'restart' || normAction === 'restart_agent') {
+          m.status = 'restarting';
           logAudit('agent_restart', 'admin', mId, `Initiated agent service restart on machine ${mId}`);
           try {
             const data = await sendAgentRequest(mId, 'RestartAgent', {}, 8000);
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Agent restart dispatched', result: data }));
+            res.end(JSON.stringify({ success: true, status: 'restarting', message: 'Agent restart dispatched', result: data }));
           } catch (err) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Agent restart in progress' }));
+            res.end(JSON.stringify({ success: true, status: 'restarting', message: 'Agent restart in progress' }));
           }
           return;
         }
 
-        if (action === 'rebuild_agent') {
-          logAudit('agent_rebuild', 'admin', mId, `Initiated GitHub rebuild on machine ${mId}`);
+        if (normAction === 'stop' || normAction === 'stop_agent') {
+          m.status = 'stopping';
+          logAudit('agent_stop', 'admin', mId, `Initiated agent shutdown on machine ${mId}`);
+          try {
+            const data = await sendAgentRequest(mId, 'StopAgent', {}, 8000);
+            m.status = 'offline';
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, status: 'offline', message: 'Agent stopped successfully', result: data }));
+          } catch (err) {
+            m.status = 'offline';
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, status: 'offline', message: 'Agent stop dispatched' }));
+          }
+          return;
+        }
+
+        if (normAction === 'repair' || normAction === 'repair_agent' || normAction === 'heal') {
+          logAudit('agent_repair', 'admin', mId, `Initiated autonomous self-healing on machine ${mId}`);
+          try {
+            const data = await sendAgentRequest(mId, 'RepairAgent', {}, 15000);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Agent repaired and self-healed successfully', result: data }));
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Repair failed: ${err.message}` }));
+          }
+          return;
+        }
+
+        if (normAction === 'rebuild' || normAction === 'rebuild_agent' || normAction === 'update' || normAction === 'update_agent') {
+          logAudit('agent_update', 'admin', mId, `Initiated agent update/rebuild on machine ${mId}`);
           try {
             const data = await sendAgentRequest(mId, 'RebuildAgent', {}, 25000);
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Agent rebuilt from GitHub successfully', result: data }));
+            res.end(JSON.stringify({ success: true, message: 'Agent updated and rebuilt successfully', result: data }));
           } catch (err) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: `Rebuild failed: ${err.message}` }));
+            res.end(JSON.stringify({ error: `Update failed: ${err.message}` }));
+          }
+          return;
+        }
+
+        if (normAction === 'uninstall' || normAction === 'uninstall_agent') {
+          m.status = 'uninstalled';
+          logAudit('agent_uninstall', 'admin', mId, `Initiated remote agent uninstallation on machine ${mId}`);
+          try {
+            const data = await sendAgentRequest(mId, 'UninstallAgent', {}, 10000);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, status: 'uninstalled', message: 'Agent uninstalled successfully', result: data }));
+          } catch (err) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, status: 'uninstalled', message: 'Uninstall command dispatched to host' }));
           }
           return;
         }

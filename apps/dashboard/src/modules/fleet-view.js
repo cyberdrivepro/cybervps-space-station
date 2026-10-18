@@ -83,6 +83,15 @@ class FleetView {
                   <button class="btn-sm" onclick="FleetView.openTerminal('${node.id}')">Terminal</button>
                   <button class="btn-sm" onclick="FleetView.openFiles('${node.id}')">Files</button>
                   <button class="btn-sm" onclick="FleetView.openApps('${node.id}')">Apps</button>
+                  <select class="btn-sm lifecycle-select" onchange="FleetView.handleLifecycleAction('${node.id}', this)" title="Remote Lifecycle Actions">
+                    <option value="" disabled selected>⚡ Action</option>
+                    <option value="restart">🔄 Restart Agent</option>
+                    <option value="stop">⏹️ Stop Agent</option>
+                    <option value="repair">🛠️ Repair / Heal</option>
+                    <option value="update">🚀 Update Agent</option>
+                    <option value="reboot">💻 Reboot Host</option>
+                    <option value="uninstall">🗑️ Uninstall Agent</option>
+                  </select>
                   <button class="btn-sm btn-danger" onclick="FleetView.revoke('${node.id}')">Revoke</button>
                 </td>
               </tr>
@@ -103,6 +112,45 @@ class FleetView {
 
   static openApps(machineId) {
     window.location.hash = `#apps?machine_id=${machineId}`;
+  }
+
+  static async handleLifecycleAction(machineId, selectEl) {
+    const action = selectEl.value;
+    selectEl.value = '';
+    if (!action) return;
+
+    const actionLabels = {
+      restart: 'restart the CyberVPS Host Agent on',
+      stop: 'STOP the CyberVPS Host Agent on (will take node offline)',
+      repair: 'trigger autonomous self-healing and shadow mirror check on',
+      update: 'pull the latest CyberVPS release and rebuild agent on',
+      reboot: 'REBOOT the host machine',
+      uninstall: 'completely UNINSTALL the CyberVPS Host Agent from'
+    };
+
+    const confirmMsg = `Are you sure you want to ${actionLabels[action] || action} [${machineId}]?`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      const api = window.stationApp.api;
+      if (window.stationApp.state && window.stationApp.state.addNotification) {
+        window.stationApp.state.addNotification('info', `Dispatching remote ${action} to ${machineId}...`);
+      }
+      const res = await api.triggerMachineAction(machineId, action);
+      if (res && (res.success || res.status)) {
+        if (window.stationApp.state && window.stationApp.state.addNotification) {
+          window.stationApp.state.addNotification('success', `Remote ${action} acknowledged for ${machineId}: ${res.message || 'Dispatched'}`);
+        }
+      } else {
+        alert(`Action dispatched: ${JSON.stringify(res)}`);
+      }
+      setTimeout(() => window.stationApp.refreshFleet(), 1200);
+    } catch (err) {
+      alert(`Remote action failed: ${err.message}`);
+      if (window.stationApp.state && window.stationApp.state.addNotification) {
+        window.stationApp.state.addNotification('error', `Action ${action} failed: ${err.message}`);
+      }
+    }
   }
 
   static async revoke(machineId) {

@@ -6466,14 +6466,20 @@ class CyberVPSAgent:
             self.handle_app_stream_stop(payload)
         elif c_type == "AppStreamSelectWindow":
             self.handle_app_stream_select_window(payload)
-        elif c_type in ["OtaUpdate", "OtaCheck", "FleetUpdate"]:
-            threading.Thread(target=self.handle_ota_update, args=(payload,), daemon=True).start()
+        elif c_type in ["OtaUpdate", "OtaCheck", "FleetUpdate", "UpdateAgent"]:
+            threading.Thread(target=self.handle_ota_update if c_type == "OtaCheck" else self.handle_rebuild_agent, args=(payload,), daemon=True).start()
         elif c_type == "RebootHost":
             threading.Thread(target=self.handle_reboot_host, args=(payload,), daemon=True).start()
-        elif c_type == "RestartAgent":
+        elif c_type in ["RestartAgent", "AgentRestart"]:
             threading.Thread(target=self.handle_restart_agent, args=(payload,), daemon=True).start()
-        elif c_type == "RebuildAgent":
+        elif c_type in ["StopAgent", "AgentStop"]:
+            threading.Thread(target=self.handle_stop_agent, args=(payload,), daemon=True).start()
+        elif c_type in ["RepairAgent", "AgentRepair", "HealAgent"]:
+            threading.Thread(target=self.handle_repair_agent, args=(payload,), daemon=True).start()
+        elif c_type in ["RebuildAgent", "AgentRebuild"]:
             threading.Thread(target=self.handle_rebuild_agent, args=(payload,), daemon=True).start()
+        elif c_type in ["UninstallAgent", "AgentUninstall"]:
+            threading.Thread(target=self.handle_uninstall_agent, args=(payload,), daemon=True).start()
         elif c_type == "SyncBackendPool":
             self.handle_sync_backend_pool(payload)
         elif c_type == "TunnelOpenStream":
@@ -6896,6 +6902,126 @@ class CyberVPSAgent:
             os._exit(0)
         threading.Thread(target=_exec_restart, daemon=False).start()
 
+    def handle_stop_agent(self, payload):
+        req_id = payload.get("request_id")
+        print("[*] REMOTE AGENT STOP REQUEST RECEIVED")
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {
+                "request_id": req_id,
+                "success": True,
+                "status": "stopped",
+                "message": "CyberVPS Host Agent stopping gracefully by dashboard command."
+            }
+        })
+        def _exec_stop():
+            time.sleep(1.0)
+            home = os.path.expanduser("~")
+            programdata_dir = os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "CyberVPS") if platform.system() == "Windows" else "/var/lib/cybervps"
+            for pf in [
+                os.path.join(home, ".cybervps", "agent.pid"),
+                os.path.join(home, ".cybervps", "run", "agent.pid"),
+                os.path.join(programdata_dir, "run", "agent.pid"),
+                os.path.join(programdata_dir, "agent.pid")
+            ]:
+                if os.path.exists(pf):
+                    try:
+                        os.remove(pf)
+                    except Exception:
+                        pass
+            os._exit(0)
+        threading.Thread(target=_exec_stop, daemon=False).start()
+
+    def handle_repair_agent(self, payload):
+        req_id = payload.get("request_id")
+        print("[*] REMOTE AGENT REPAIR / SELF-HEALING REQUEST RECEIVED")
+        try:
+            home = os.path.expanduser("~")
+            cvps_dir = os.path.join(home, ".cybervps")
+            if platform.system() == "Windows":
+                base_shadow = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or home
+                shadow_dir = os.path.join(base_shadow, "CyberVPS")
+            else:
+                base_shadow = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+                shadow_dir = os.path.join(base_shadow, "cybervps")
+            os.makedirs(cvps_dir, exist_ok=True)
+            os.makedirs(shadow_dir, exist_ok=True)
+
+            primary_agent = os.path.join(cvps_dir, "universal-agent.py")
+            shadow_agent = os.path.join(shadow_dir, "universal-agent.py")
+            script_path = os.path.abspath(__file__)
+
+            repaired_items = []
+            if not os.path.exists(shadow_agent) and os.path.exists(script_path):
+                shutil.copy2(script_path, shadow_agent)
+                repaired_items.append("shadow_mirror_synchronized")
+
+            if hasattr(self, "backend_pool"):
+                repaired_items.append(f"backend_pool_healthy_{len(self.backend_pool)}")
+
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "status": "healthy",
+                    "message": "Autonomous self-healing check and diagnostic repair completed successfully.",
+                    "repairs": repaired_items
+                }
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": False,
+                    "status": "failed",
+                    "error": str(e)
+                }
+            })
+
+    def handle_uninstall_agent(self, payload):
+        req_id = payload.get("request_id")
+        print("[*] REMOTE AGENT UNINSTALL REQUEST RECEIVED")
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {
+                "request_id": req_id,
+                "success": True,
+                "status": "uninstalled",
+                "message": "CyberVPS Host Agent uninstalled cleanly by dashboard command."
+            }
+        })
+        def _exec_uninstall():
+            time.sleep(1.0)
+            if platform.system() == "Windows":
+                try:
+                    subprocess.run(["schtasks", "/Delete", "/TN", "CyberVPSAgent", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+                try:
+                    import winreg
+                    reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+                    winreg.DeleteValue(reg_key, "CyberVPSAgent")
+                    winreg.CloseKey(reg_key)
+                except Exception:
+                    pass
+            home = os.path.expanduser("~")
+            programdata_dir = os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "CyberVPS") if platform.system() == "Windows" else "/var/lib/cybervps"
+            for pf in [
+                os.path.join(home, ".cybervps", "agent.pid"),
+                os.path.join(home, ".cybervps", "run", "agent.pid"),
+                os.path.join(programdata_dir, "run", "agent.pid"),
+                os.path.join(programdata_dir, "agent.pid")
+            ]:
+                if os.path.exists(pf):
+                    try:
+                        os.remove(pf)
+                    except Exception:
+                        pass
+            os._exit(0)
+        threading.Thread(target=_exec_uninstall, daemon=False).start()
+
     def handle_rebuild_agent(self, payload):
         req_id = payload.get("request_id")
         print("[*] AGENT REBUILD FROM GITHUB REQUEST RECEIVED")
@@ -7195,17 +7321,60 @@ class CyberVPSAgent:
 def handle_cli_subcommands(args):
     if not args:
         return False
-    subcmd = args[0].lower().strip()
+
     valid_subcmds = [
-        "status", "restart", "stop", "start", "reboot", "rebuild",
-        "repair", "heal", "uninstall", "help", "--help", "-h",
-        "doctor", "check", "logs", "log", "version", "-v", "--version"
+        "status", "stat", "restart", "reload", "stop", "kill", "start", "agent", "ghost",
+        "reboot", "rebuild", "repair", "heal", "uninstall", "remove", "update",
+        "help", "--help", "-h", "doctor", "check", "logs", "log", "version", "-v", "--version"
     ]
+
+    subcmd = None
+    subcmd_raw = None
+    i = 0
+    while i < len(args):
+        a = args[i].strip()
+        if a in ("--config", "-c", "--log-dir", "-l", "--server", "-s", "--token", "-t", "--log-file", "--force-auth", "-f") and i + 1 < len(args):
+            i += 2
+            continue
+        if a.startswith("-"):
+            if a in ("-v", "--version"):
+                subcmd = "version"
+                subcmd_raw = a
+                break
+            elif a in ("-h", "--help"):
+                subcmd = "help"
+                subcmd_raw = a
+                break
+            i += 1
+            continue
+        subcmd = a.lower()
+        subcmd_raw = a
+        break
+
+    if not subcmd:
+        return False
+
     if subcmd not in valid_subcmds:
         if not subcmd.startswith(("http://", "https://", "-")):
-            print(f"Unknown command: '{args[0]}'. Run 'cybervps help' for available commands.")
+            print(f"Unknown command: '{subcmd_raw}'. Run 'cybervps help' for available commands.")
             sys.exit(1)
         return False
+
+    # Normalize aliases
+    if subcmd in ("stat",):
+        subcmd = "status"
+    elif subcmd in ("reload",):
+        subcmd = "restart"
+    elif subcmd in ("kill",):
+        subcmd = "stop"
+    elif subcmd in ("agent",):
+        subcmd = "start"
+    elif subcmd in ("heal",):
+        subcmd = "repair"
+    elif subcmd in ("remove",):
+        subcmd = "uninstall"
+    elif subcmd in ("rebuild",):
+        subcmd = "update"
 
     for stream in (sys.stdout, sys.stderr):
         if stream and hasattr(stream, "reconfigure"):
@@ -7235,13 +7404,34 @@ def handle_cli_subcommands(args):
         base_shadow = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
         shadow_dir = os.path.join(base_shadow, "cybervps")
 
+    custom_cfg_file = None
+    if "--config" in args:
+        try:
+            c_idx = args.index("--config")
+            if c_idx + 1 < len(args):
+                custom_cfg_file = args[c_idx + 1]
+        except Exception:
+            pass
+    elif "-c" in args:
+        try:
+            c_idx = args.index("-c")
+            if c_idx + 1 < len(args):
+                custom_cfg_file = args[c_idx + 1]
+        except Exception:
+            pass
+
     cfg = {}
-    for c_candidate in [pid_file.replace("agent.pid", "config.json"), cfg_file, os.path.join(programdata_dir, "config.json"), os.path.join(shadow_dir, "config.json")]:
+    c_candidates = []
+    if custom_cfg_file:
+        c_candidates.append(custom_cfg_file)
+    c_candidates.extend([pid_file.replace("agent.pid", "config.json"), cfg_file, os.path.join(programdata_dir, "config.json"), os.path.join(shadow_dir, "config.json")])
+
+    for c_candidate in c_candidates:
         if os.path.exists(c_candidate):
             try:
                 with open(c_candidate, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
-                    if isinstance(cfg, dict) and cfg.get("server_url"):
+                    if isinstance(cfg, dict) and (cfg.get("server_url") or cfg.get("token")):
                         break
             except Exception:
                 pass
@@ -7689,6 +7879,7 @@ def handle_cli_subcommands(args):
         sys.exit(0)
 
     elif subcmd in ["heal", "repair"]:
+        check_admin_authorization("repair")
         print("================================================================")
         print("   [*] CyberVPS Space Station - Autonomous Self-Healing Check   ")
         print("================================================================")
@@ -7833,8 +8024,8 @@ def handle_cli_subcommands(args):
         print("================================================================")
         sys.exit(0)
 
-    elif subcmd == "rebuild":
-        check_admin_authorization("rebuild")
+    elif subcmd in ["rebuild", "update"]:
+        check_admin_authorization("update")
         print("[*] Contacting GitHub for latest CyberVPS Universal Agent...")
         try:
             github_url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"

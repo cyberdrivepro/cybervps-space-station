@@ -1,0 +1,92 @@
+name: Build & Release Windows Installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'installers/windows/**'
+      - 'agent/**'
+      - 'bin/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. 1.0.0)'
+        required: false
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Native Windows Installers (x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm ci || npm install
+
+      - name: Verify Agent & CLI syntax
+        run: |
+          python -m py_compile agent/universal-agent.py
+          python -m py_compile bin/cybervps.py
+          node -c bin/cybervps
+
+      - name: Build Windows Installers (.EXE & .MSI)
+        shell: powershell
+        run: |
+          $ver = "${{ github.event.inputs.version }}"
+          if (-not $ver) { $ver = "1.0.0" }
+          & installers/windows/build-windows-installers.ps1 -Version $ver
+
+      - name: Run Windows Installer Verification Test
+        shell: powershell
+        run: |
+          node tests/test-lifecycle-and-windows-installer.js
+
+      - name: Upload Artifacts to Run
+        uses: actions/upload-artifact@v4
+        with:
+          name: cybervps-windows-installers
+          path: |
+            dist/windows/CyberVPS-Setup-x64.exe
+            dist/windows/CyberVPS-Setup-Admin-x64.exe
+            dist/windows/CyberVPS-Setup-User-x64.exe
+            dist/windows/CyberVPS-Host-Agent-x64.msi
+            dist/windows/checksums.sha256
+            dist/windows/release-manifest.json
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/windows/CyberVPS-Setup-x64.exe
+            dist/windows/CyberVPS-Setup-Admin-x64.exe
+            dist/windows/CyberVPS-Setup-User-x64.exe
+            dist/windows/CyberVPS-Host-Agent-x64.msi
+            dist/windows/checksums.sha256
+            dist/windows/release-manifest.json
+          generate_release_notes: true
+          draft: false
+          prerelease: false

@@ -2009,6 +2009,22 @@ async function runTests() {
   assert.strictEqual(topoData.summary.routing_loops_count, 0, 'Clean topology graph must have 0 harmful routing loops');
   console.log(`  ✅ Connection Topology Graph verified: ${topoData.nodes.length} nodes, ${topoData.edges.length} edges, 0 routing loops.`);
 
+  // [TEST 46] Testing Remote Lifecycle Control, Shared RDP Security & Windows Installers...
+  console.log('\n[TEST 46] Testing Remote Lifecycle Control, Shared RDP Security & Windows Installers...');
+  const lifecycleTest = execSync(`node "${require('path').join(__dirname, 'test-lifecycle-and-windows-installer.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(lifecycleTest.includes('ALL LIFECYCLE & WINDOWS INSTALLER TESTS PASSED'), 'Lifecycle and Windows installer tests must pass');
+  console.log('  ✅ Remote Lifecycle Control, Shared RDP Security & Windows Native Installers verified.');
+
+  // [TEST 47] Testing Agent Crash Prevention, Token Self-Healing & CLI Subcommands...
+  console.log('\n[TEST 47] Testing Agent Crash Prevention, Token Self-Healing & CLI Subcommands...');
+  const crashTest = execSync(`node "${require('path').join(__dirname, 'test-agent-crash-and-cli-repair.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(crashTest.includes('ALL AGENT CRASH & CLI REPAIR TESTS PASSED'), 'Agent crash and CLI repair tests must pass');
+  console.log('  ✅ Agent Crash Prevention, Token Self-Healing & CLI Subcommands verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2016,7 +2032,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 45 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA, PATH OWNERSHIP & TOPOLOGY TESTS PASSED!');
+  console.log('🎉 ALL 47 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA, PATH OWNERSHIP, LIFECYCLE & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

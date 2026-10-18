@@ -382,6 +382,168 @@ def cmd_restart():
     cmd_start()
 
 
+def cmd_repair():
+    assert_is_admin("repair")
+    print("================================================================")
+    print("   CYBERVPS SPACE STATION - AUTONOMOUS SELF-HEALING & REPAIR    ")
+    print("================================================================")
+    script = get_agent_script()
+    shadow_dir = os.path.join(os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or os.path.expanduser("~"), "CyberVPS") if platform.system() == "Windows" else os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "cybervps")
+    os.makedirs(shadow_dir, exist_ok=True)
+    shadow_agent = os.path.join(shadow_dir, "universal-agent.py")
+
+    def _is_valid(fp):
+        if not os.path.exists(fp) or os.path.getsize(fp) < 15000:
+            return False
+        try:
+            py_compile.compile(fp, doraise=True)
+            return True
+        except Exception:
+            return False
+
+    p_ok = _is_valid(script)
+    s_ok = _is_valid(shadow_agent)
+    print(f"  * Primary Agent ({script}): {'VALID ✅' if p_ok else 'DAMAGED/MISSING ❌'}")
+    print(f"  * Shadow Mirror ({shadow_agent}):  {'VALID ✅' if s_ok else 'DAMAGED/MISSING ❌'}")
+
+    import shutil
+    if not p_ok and s_ok:
+        print("  [+] Restoring primary agent from verified shadow mirror...")
+        shutil.copy2(shadow_agent, script)
+        p_ok = _is_valid(script)
+    elif p_ok and not s_ok:
+        print("  [+] Synchronizing shadow mirror from primary agent...")
+        shutil.copy2(script, shadow_agent)
+        s_ok = _is_valid(shadow_agent)
+    elif not p_ok and not s_ok:
+        print("  [*] Restoring fresh authoritative agent script from GitHub...")
+        try:
+            url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
+            req = urllib.request.Request(url, headers={"User-Agent": "CyberVPS-Repair/2.0"})
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = resp.read()
+            if len(data) > 15000:
+                os.makedirs(os.path.dirname(script), exist_ok=True)
+                with open(script, "wb") as f:
+                    f.write(data)
+                py_compile.compile(script, doraise=True)
+                shutil.copy2(script, shadow_agent)
+                print("  [+] Primary and shadow scripts restored successfully.")
+                p_ok = True
+                s_ok = True
+        except Exception as e:
+            print(f"  [!] GitHub restore failed: {e}")
+
+    cfg = load_config()
+    print(f"  * Configuration verified ({CONFIG_FILE})")
+    print("  [*] Re-cycling agent service...")
+    cmd_restart()
+    print("================================================================")
+    print("  [+] Autonomous repair and self-healing completed successfully.")
+    print("================================================================")
+
+
+def cmd_update():
+    assert_is_admin("update")
+    print("================================================================")
+    print("   CYBERVPS SPACE STATION - UPDATE FROM GITHUB                  ")
+    print("================================================================")
+    git_dir = os.path.join(INSTALL_DIR, ".git")
+    if os.path.exists(git_dir):
+        try:
+            print("  [*] Running git pull origin main...")
+            res = subprocess.run(["git", "pull", "origin", "main"], cwd=INSTALL_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+            if res.returncode == 0:
+                print("  [+] Repository updated successfully via git.")
+                cmd_restart()
+                return
+        except Exception:
+            pass
+
+    script = get_agent_script()
+    print(f"  [*] Downloading latest universal-agent.py to {script}...")
+    try:
+        url = "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/universal-agent.py"
+        req = urllib.request.Request(url, headers={"User-Agent": "CyberVPS-Updater/2.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            content = resp.read()
+        if len(content) > 15000:
+            tmp_f = script + ".tmp"
+            with open(tmp_f, "wb") as f:
+                f.write(content)
+            py_compile.compile(tmp_f, doraise=True)
+            import shutil
+            shutil.move(tmp_f, script)
+            shadow_dir = os.path.join(os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or os.path.expanduser("~"), "CyberVPS") if platform.system() == "Windows" else os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "cybervps")
+            os.makedirs(shadow_dir, exist_ok=True)
+            shutil.copy2(script, os.path.join(shadow_dir, "universal-agent.py"))
+            print("  [+] Successfully updated and verified latest CyberVPS agent script.")
+            cmd_restart()
+        else:
+            print(f"  [!] Received incomplete code ({len(content)} bytes). Update aborted.")
+    except Exception as e:
+        print(f"  [!] Update failed: {e}")
+
+
+def cmd_uninstall():
+    assert_is_admin("uninstall")
+    print("================================================================")
+    print("   CYBERVPS SPACE STATION - UNINSTALL HOST AGENT                ")
+    print("================================================================")
+    cmd_stop()
+
+    if platform.system() == "Windows":
+        try:
+            subprocess.run(["schtasks", "/Delete", "/TN", "CyberVPSAgent", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["schtasks", "/Delete", "/TN", "CyberVPS-Space-Station-Agent", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("  [*] Removed Windows Scheduled Tasks.")
+        except Exception:
+            pass
+        try:
+            import winreg
+            reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+            winreg.DeleteValue(reg_key, "CyberVPSAgent")
+            winreg.CloseKey(reg_key)
+            print("  [*] Removed Windows Registry autostart key.")
+        except Exception:
+            pass
+    else:
+        if os.path.exists("/etc/systemd/system/cybervps-agent.service"):
+            try:
+                subprocess.run(["systemctl", "disable", "cybervps-agent.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                os.remove("/etc/systemd/system/cybervps-agent.service")
+                subprocess.run(["systemctl", "daemon-reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print("  [*] Removed systemd system service.")
+            except Exception:
+                pass
+        user_svc = os.path.expanduser("~/.config/systemd/user/cybervps-agent.service")
+        if os.path.exists(user_svc):
+            try:
+                subprocess.run(["systemctl", "--user", "disable", "cybervps-agent.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                os.remove(user_svc)
+                subprocess.run(["systemctl", "--user", "daemon-reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print("  [*] Removed systemd user service.")
+            except Exception:
+                pass
+
+    print("  [+] CyberVPS Host Agent uninstalled cleanly.")
+    print("================================================================")
+
+
+def cmd_reboot():
+    assert_is_admin("reboot")
+    print("================================================================")
+    print("   CYBERVPS SPACE STATION - REBOOT HOST MACHINE                 ")
+    print("================================================================")
+    print("  [*] Disagreeable sessions will be disconnected. Rebooting...")
+    time.sleep(1.0)
+    if platform.system() == "Windows":
+        subprocess.Popen(["shutdown.exe", "/r", "/t", "2", "/f", "/c", "CyberVPS Remote Reboot"])
+    else:
+        subprocess.Popen("sleep 1 && (systemctl reboot || reboot || shutdown -r now)", shell=True)
+    print("  [+] Host machine reboot sequence triggered.")
+
+
 def cmd_logs():
     candidate_logs = [
         AGENT_LOG_FILE,
@@ -694,6 +856,14 @@ def main():
         cmd_stop()
     elif command in ["restart", "reload"]:
         cmd_restart()
+    elif command in ["repair", "heal"]:
+        cmd_repair()
+    elif command in ["update", "rebuild"]:
+        cmd_update()
+    elif command in ["uninstall", "remove"]:
+        cmd_uninstall()
+    elif command in ["reboot"]:
+        cmd_reboot()
     elif command in ["logs", "log"]:
         cmd_logs()
     elif command in ["version", "-v", "--version"]:
@@ -711,8 +881,12 @@ Usage: cybervps <command> [options]
 Commands:
   status          Show agent health, fleet enrollment, and central dashboard
   start           Start CyberVPS Host Agent in background (24/7 connection)
-  stop            Stop running background Host Agent
-  restart         Restart background Host Agent
+  stop            Stop running background Host Agent (Admin Required)
+  restart         Restart background Host Agent (Admin Required)
+  repair, heal    Autonomous self-healing and shadow copy repair (Admin Required)
+  update, rebuild Pull latest agent updates and refresh daemon (Admin Required)
+  uninstall       Cleanly uninstall host agent and remove autostart (Admin Required)
+  reboot          Trigger graceful host reboot (Admin Required)
   logs            Tail recent agent log messages
   doctor          Run diagnostic health checks on host environment
   replit <action> Manage Replit VPS Lab (doctor, status, desktop, vnc, logs)

@@ -144,6 +144,12 @@ class StationApiClient {
     const params = new URLSearchParams(filters);
     return this.request(`/api/v1/audit/logs?${params.toString()}`);
   }
+  async triggerMachineAction(machineId, action, params = {}) {
+    return this.request(`/api/v1/machines/${encodeURIComponent(machineId)}/action`, {
+      method: 'POST',
+      body: JSON.stringify({ action, params })
+    });
+  }
   async getSettings() { return this.request('/api/v1/settings'); }
   async saveSettings(settings) {
     return this.request('/api/v1/settings', {

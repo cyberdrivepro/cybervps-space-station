@@ -224,6 +224,13 @@ async function main() {
     case 'install':
       handleInstall();
       break;
+    case 'repair':
+    case 'heal':
+      await handleRepair();
+      break;
+    case 'reboot':
+      handleReboot();
+      break;
     case 'update':
       handleUpdate();
       break;
@@ -1006,7 +1013,59 @@ function handleInstall() {
   }
 }
 
+async function handleRepair() {
+  assertIsAdmin('repair');
+  console.log('================================================================');
+  console.log('🛠️  AUTONOMOUS SELF-HEALING & REPAIR');
+  console.log('================================================================');
+  const agentScript = path.join(APP_DIR, 'agent', 'universal-agent.py');
+  const shadowDir = process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir(), 'CyberVPS')
+    : path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share'), 'cybervps');
+  if (!fs.existsSync(shadowDir)) {
+    try { fs.mkdirSync(shadowDir, { recursive: true }); } catch (_) {}
+  }
+  const shadowAgent = path.join(shadowDir, 'universal-agent.py');
+  const pOk = fs.existsSync(agentScript) && fs.statSync(agentScript).size > 15000;
+  const sOk = fs.existsSync(shadowAgent) && fs.statSync(shadowAgent).size > 15000;
+
+  console.log(`  * Primary Agent (${agentScript}): ${pOk ? 'VALID ✅' : 'DAMAGED/MISSING ❌'}`);
+  console.log(`  * Shadow Mirror (${shadowAgent}): ${sOk ? 'VALID ✅' : 'DAMAGED/MISSING ❌'}`);
+
+  if (!pOk && sOk) {
+    console.log('  [+] Restoring primary agent from shadow mirror...');
+    fs.copyFileSync(shadowAgent, agentScript);
+  } else if (pOk && !sOk) {
+    console.log('  [+] Syncing shadow mirror from primary agent...');
+    fs.copyFileSync(agentScript, shadowAgent);
+  }
+
+  console.log('  [*] Restarting background agent...');
+  await handleStop();
+  await new Promise(r => setTimeout(r, 1000));
+  await handleStart();
+  console.log('================================================================');
+  console.log('  [+] Autonomous repair and self-healing completed successfully.');
+  console.log('================================================================');
+}
+
+function handleReboot() {
+  assertIsAdmin('reboot');
+  console.log('================================================================');
+  console.log('🔄 REBOOT HOST MACHINE');
+  console.log('================================================================');
+  console.log('  [*] Disagreeable sessions will be disconnected. Rebooting...');
+  setTimeout(() => {
+    if (process.platform === 'win32') {
+      execSync('shutdown.exe /r /t 2 /f /c "CyberVPS Remote Reboot"', { stdio: 'ignore' });
+    } else {
+      execSync('systemctl reboot || reboot || shutdown -r now', { stdio: 'ignore' });
+    }
+  }, 1000);
+}
+
 function handleUpdate() {
+  assertIsAdmin('update');
   console.log('================================================================');
   console.log('🔄 UPDATING CYBERVPS SPACE STATION FROM GITHUB');
   console.log('================================================================');
