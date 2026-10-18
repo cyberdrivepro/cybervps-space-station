@@ -89,7 +89,10 @@ class FileManagerView {
         return;
       }
 
-      tableBody.innerHTML = entries.map(item => `
+      tableBody.innerHTML = entries.map(item => {
+        const ext = (item.name.split('.').pop() || '').toLowerCase();
+        const isRunnable = !item.is_dir && ['exe', 'msi', 'bat', 'cmd', 'ps1', 'py', 'sh', 'bin'].includes(ext);
+        return `
         <tr>
           <td>${item.is_dir ? '📁' : '📄'}</td>
           <td>
@@ -102,13 +105,22 @@ class FileManagerView {
           <td><small>${item.size_bytes ? Math.round(item.size_bytes / 1024) + ' KB' : '-'}</small></td>
           <td><small>${item.modified_at ? new Date(item.modified_at).toLocaleDateString() : '-'}</small></td>
           <td>
+            ${isRunnable ? `<button class="btn-sm" style="color:var(--accent-cyan); font-weight:600;" onclick="FileManagerView.runItem('${item.path}', '${item.name}')">⚡ Run</button>` : ''}
             ${!item.is_dir ? `<button class="btn-sm" onclick="FileManagerView.downloadFile('${item.path}')">Download</button>` : ''}
             <button class="btn-sm btn-danger" onclick="FileManagerView.deleteItem('${item.path}')">Delete</button>
           </td>
         </tr>
-      `).join('');
+      `}).join('');
     } catch (err) {
       tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">Error: ${err.message}</td></tr>`;
+    }
+  }
+
+  static runItem(path, name) {
+    if (typeof window !== 'undefined' && typeof window.openFmRunModal === 'function') {
+      window.openFmRunModal(path, name || path.split(/[\\/]/).pop());
+    } else {
+      alert(`Initiating execution for: ${path}`);
     }
   }
 

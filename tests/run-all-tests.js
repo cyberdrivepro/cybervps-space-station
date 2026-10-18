@@ -2041,6 +2041,14 @@ async function runTests() {
   assert(adapterTest.includes('ALL OPEN-SOURCE ADAPTERS & ARCHITECTURE TESTS PASSED'), 'Open-source adapters tests must pass');
   console.log('  ✅ Open-Source Adapters, 17 Providers, Destination Guards & Job Tracking verified.');
 
+  // [TEST 50] Testing Hardcore Executable, PE Binary Subsystems, Ring Buffer & MSI Process Engine...
+  console.log('\n[TEST 50] Testing Hardcore Executable, PE Binary Subsystems, Ring Buffer & MSI Process Engine...');
+  const msiExecTest = execSync(`node "${require('path').join(__dirname, 'test-hardcore-executable-and-msi.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(msiExecTest.includes('ALL HARDCORE EXECUTABLE & MSI EXECUTION TESTS PASSED'), 'Hardcore executable and MSI tests must pass');
+  console.log('  ✅ Hardcore PE inspection, non-blocking ring buffer execution, MSI 3010 reboot code & process termination verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2048,7 +2056,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 49 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 50 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

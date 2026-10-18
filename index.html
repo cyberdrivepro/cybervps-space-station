@@ -4027,15 +4027,50 @@
 
   <!-- MODAL: REMOTE FILE EXECUTION (RUN / RUN WITH) -->
   <div id="modal-fm-run" class="modal-backdrop">
-    <div class="modal" style="max-width:620px;">
+    <div class="modal" style="max-width:680px;">
       <div class="modal-header">
-        <strong style="color:var(--text-primary); font-size:1rem;">⚡ Remote Process Execution</strong>
+        <strong style="color:var(--text-primary); font-size:1rem;">⚡ Remote Process Execution & Installer Control</strong>
         <button class="btn-icon" onclick="closeFmRunModal()">&times;</button>
       </div>
       <div class="modal-body">
-        <div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:6px; padding:0.6rem 0.8rem; margin-bottom:1rem; font-size:0.8rem; color:#f87171;">
+        <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:0.6rem 0.8rem; margin-bottom:0.75rem; font-size:0.8rem; color:#f87171;">
           ⚠️ <strong>Explicit Execution Authorization:</strong> This command will execute on host <span id="fm-run-host-id" style="font-weight:700;"></span> directly.
         </div>
+
+        <!-- Binary Inspection Summary Card -->
+        <div id="fm-run-inspect-card" style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); border-radius:6px; padding:0.75rem; margin-bottom:1rem; font-size:0.8rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+            <span style="font-weight:600; color:var(--text-primary);">File Inspection & Metadata</span>
+            <span id="fm-run-inspect-status" class="badge" style="background:rgba(6,182,212,0.15); color:var(--accent-cyan);">Inspecting...</span>
+          </div>
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:0.5rem; margin-top:0.4rem;">
+            <div style="background:rgba(0,0,0,0.2); padding:0.4rem 0.6rem; border-radius:4px;">
+              <span style="color:var(--text-secondary); font-size:0.72rem; display:block;">Architecture</span>
+              <strong id="fm-run-meta-arch" style="color:#e2e8f0; font-size:0.8rem;">--</strong>
+            </div>
+            <div style="background:rgba(0,0,0,0.2); padding:0.4rem 0.6rem; border-radius:4px;">
+              <span style="color:var(--text-secondary); font-size:0.72rem; display:block;">Subsystem</span>
+              <strong id="fm-run-meta-subsystem" style="color:#e2e8f0; font-size:0.8rem;">--</strong>
+            </div>
+            <div style="background:rgba(0,0,0,0.2); padding:0.4rem 0.6rem; border-radius:4px;">
+              <span style="color:var(--text-secondary); font-size:0.72rem; display:block;">Authenticode Signature</span>
+              <strong id="fm-run-meta-signed" style="color:#e2e8f0; font-size:0.8rem;">--</strong>
+            </div>
+            <div style="background:rgba(0,0,0,0.2); padding:0.4rem 0.6rem; border-radius:4px;">
+              <span style="color:var(--text-secondary); font-size:0.72rem; display:block;">Host Privilege</span>
+              <strong id="fm-run-meta-privilege" style="color:#e2e8f0; font-size:0.8rem;">--</strong>
+            </div>
+          </div>
+          <div style="margin-top:0.5rem; font-family:var(--font-mono); font-size:0.72rem; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            SHA-256: <span id="fm-run-meta-sha256" style="color:#94a3b8;">--</span>
+          </div>
+        </div>
+
+        <!-- Elevation Warning Banner -->
+        <div id="fm-run-elevation-warning" style="display:none; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.4); border-radius:6px; padding:0.6rem 0.8rem; margin-bottom:1rem; font-size:0.8rem; color:#fbbf24;">
+          <strong>⚠️ Elevation Context Notice:</strong> <span id="fm-run-elevation-msg">Host agent is running under a standard user account.</span>
+        </div>
+
         <div class="form-group">
           <label class="form-label">Executable File Target</label>
           <input type="text" id="fm-run-target-path" class="form-control" readonly style="font-family:var(--font-mono); font-size:0.85rem;">
@@ -4044,18 +4079,55 @@
           <label class="form-label">Detected Execution Runner</label>
           <input type="text" id="fm-run-interpreter" class="form-control" readonly style="font-size:0.85rem; color:var(--accent-cyan);">
         </div>
+
+        <!-- MSI Specific Options (visible when is_msi) -->
+        <div id="fm-run-msi-options" style="display:none; background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.25); border-radius:6px; padding:0.75rem; margin-bottom:1rem;">
+          <label class="form-label" style="color:var(--accent-cyan); font-weight:600; margin-bottom:0.4rem;">Windows Installer (msiexec.exe) Settings</label>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.5rem;">
+            <div>
+              <label class="form-label" style="font-size:0.75rem;">Action Mode</label>
+              <select id="fm-run-msi-mode" class="form-control" style="font-size:0.8rem;">
+                <option value="install" selected>Install Package (/i)</option>
+                <option value="uninstall">Uninstall Product (/x)</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" style="font-size:0.75rem;">UI Level</label>
+              <select id="fm-run-msi-ui" class="form-control" style="font-size:0.8rem;">
+                <option value="qn" selected>Silent / Unattended (/qn)</option>
+                <option value="qb">Basic Progress (/qb)</option>
+                <option value="qf">Full GUI Wizard (/qf)</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.8rem; color:var(--text-secondary);">
+            <input type="checkbox" id="fm-run-msi-log-check" checked>
+            <label for="fm-run-msi-log-check">Generate verbose installer log (/L*v %TEMP%\cvps_msi_&lt;job&gt;.log)</label>
+          </div>
+        </div>
+
         <div class="form-group">
           <label class="form-label">Command Line Arguments (Optional)</label>
-          <input type="text" id="fm-run-args" class="form-control" placeholder="e.g. --verbose --port 8080" style="font-family:var(--font-mono); font-size:0.85rem;">
+          <input type="text" id="fm-run-args" class="form-control" placeholder="e.g. --verbose or ALLUSERS=2" style="font-family:var(--font-mono); font-size:0.85rem;">
         </div>
         <div class="form-group">
           <label class="form-label">Working Directory</label>
           <input type="text" id="fm-run-cwd" class="form-control" style="font-family:var(--font-mono); font-size:0.85rem;">
         </div>
+
+        <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.8rem; color:var(--text-secondary); margin-bottom:0.75rem;">
+          <input type="checkbox" id="fm-run-bg-check">
+          <label for="fm-run-bg-check">Run in background (asynchronous non-blocking daemon job)</label>
+        </div>
+
         <div id="fm-run-results-box" style="display:none; margin-top:1rem;">
-          <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:0.4rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; margin-bottom:0.4rem;">
             <span style="font-weight:600; color:var(--text-primary);">Execution Output (stdout / stderr)</span>
-            <span id="fm-run-status-badge" class="badge"></span>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <button class="btn-sm btn-secondary" id="btn-view-msi-log" style="display:none; padding:0.2rem 0.5rem; font-size:0.72rem;" onclick="viewCurrentMsiLog()">📄 View MSI Log</button>
+              <button class="btn-sm btn-danger" id="btn-stop-run" style="display:none; padding:0.2rem 0.5rem; font-size:0.72rem;" onclick="stopCurrentRunProcess()">⏹ Stop Process</button>
+              <span id="fm-run-status-badge" class="badge"></span>
+            </div>
           </div>
           <pre id="fm-run-output" style="background:#090d16; border:1px solid var(--border-color); border-radius:6px; padding:0.75rem; font-family:var(--font-mono); font-size:0.78rem; max-height:220px; overflow-y:auto; white-space:pre-wrap; color:#e2e8f0;"></pre>
           <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-secondary); margin-top:0.35rem;">
@@ -12583,6 +12655,29 @@
         btn.innerText = '⬆️ Start Upload';
         closeFmUploadModal();
         showToast(`File "${file.name}" (${formatBytes(totalSize)}) uploaded successfully!`, 'success');
+
+        // Post-upload verification: inspect remote file size & SHA-256
+        (async () => {
+          try {
+            const vRes = await apiRequest('/api/v1/files/inspect', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                machine_id: appState.selectedMachineId,
+                path: destPath
+              })
+            });
+            if (vRes.ok) {
+              const vInfo = vRes.result || vRes.data || vRes;
+              if (vInfo.size_bytes === totalSize) {
+                showToast(`✅ Upload Verified: Size matches (${formatBytes(totalSize)}) | SHA-256: ${(vInfo.sha256 || '').substring(0, 10)}...`, 'success');
+              } else {
+                showToast(`⚠️ Upload Size Discrepancy: Local ${totalSize} bytes vs Remote ${vInfo.size_bytes} bytes`, 'warning');
+              }
+            }
+          } catch (_) {}
+        })();
+
         fmRefresh();
       } catch (err) {
         btn.disabled = false;
@@ -12748,7 +12843,11 @@
       }
     }
 
-    function openFmRunModal(path, name) {
+    let currentRunPollingInterval = null;
+    let currentRunJobId = null;
+    let currentRunMsiLogPath = null;
+
+    async function openFmRunModal(path, name) {
       if (!appState.selectedMachineId) return showToast('Select a machine first', 'warning');
       const ext = (name.split('.').pop() || '').toLowerCase();
       let runner = 'Native Executable';
@@ -12762,6 +12861,13 @@
       let cwd = path.replace(/[\\/]+[^\\/]+$/, '');
       if (!cwd) cwd = path.includes('\\') ? 'C:\\' : '/';
 
+      if (currentRunPollingInterval) {
+        clearInterval(currentRunPollingInterval);
+        currentRunPollingInterval = null;
+      }
+      currentRunJobId = null;
+      currentRunMsiLogPath = null;
+
       document.getElementById('fm-run-host-id').innerText = appState.selectedMachineId;
       document.getElementById('fm-run-target-path').value = path;
       document.getElementById('fm-run-interpreter').value = runner;
@@ -12771,11 +12877,85 @@
       document.getElementById('fm-run-output').innerText = '';
       document.getElementById('btn-submit-run').disabled = false;
       document.getElementById('btn-submit-run').innerText = '⚡ Execute Now';
+      document.getElementById('btn-stop-run').style.display = 'none';
+      document.getElementById('btn-view-msi-log').style.display = 'none';
+      document.getElementById('fm-run-elevation-warning').style.display = 'none';
+      document.getElementById('fm-run-msi-options').style.display = (ext === 'msi') ? 'block' : 'none';
+
+      const inspectStatus = document.getElementById('fm-run-inspect-status');
+      inspectStatus.innerText = 'Inspecting binary...';
+      inspectStatus.style.background = 'rgba(6,182,212,0.15)';
+      inspectStatus.style.color = 'var(--accent-cyan)';
+      document.getElementById('fm-run-meta-arch').innerText = 'Inspecting...';
+      document.getElementById('fm-run-meta-subsystem').innerText = 'Inspecting...';
+      document.getElementById('fm-run-meta-signed').innerText = 'Inspecting...';
+      document.getElementById('fm-run-meta-privilege').innerText = 'Checking...';
+      document.getElementById('fm-run-meta-sha256').innerText = 'Calculating...';
 
       document.getElementById('modal-fm-run').style.display = 'flex';
+
+      try {
+        const inspectRes = await apiRequest('/api/v1/files/inspect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: appState.selectedMachineId,
+            path
+          })
+        });
+
+        if (inspectRes.ok) {
+          const info = inspectRes.result || inspectRes.data || inspectRes;
+          inspectStatus.innerText = 'Verified';
+          inspectStatus.style.background = 'rgba(34,197,94,0.15)';
+          inspectStatus.style.color = '#4ade80';
+
+          document.getElementById('fm-run-meta-arch').innerText = info.arch || (info.file_type ? info.file_type.toUpperCase() : 'x64');
+          document.getElementById('fm-run-meta-subsystem').innerText = info.subsystem_name || 'Standard';
+          document.getElementById('fm-run-meta-signed').innerHTML = info.is_signed ?
+            '<span style="color:#4ade80;">✓ Authenticode Signed</span>' :
+            '<span style="color:#94a3b8;">Unsigned</span>';
+
+          const privText = info.is_admin ?
+            '<span style="color:#4ade80;">Administrator (Elevated)</span>' :
+            '<span style="color:#f59e0b;">Standard User (Session ' + (info.session_id !== undefined ? info.session_id : '1') + ')</span>';
+          document.getElementById('fm-run-meta-privilege').innerHTML = privText;
+
+          document.getElementById('fm-run-meta-sha256').innerText = info.sha256 || 'N/A';
+
+          if (info.suggested_runner) {
+            document.getElementById('fm-run-interpreter').value = info.suggested_runner;
+          }
+
+          if (info.is_msi) {
+            document.getElementById('fm-run-msi-options').style.display = 'block';
+            if (!document.getElementById('fm-run-args').value && info.recommended_args && info.recommended_args.length) {
+              document.getElementById('fm-run-args').value = info.recommended_args.join(' ');
+            }
+          }
+
+          if (info.elevation_warning) {
+            const warnEl = document.getElementById('fm-run-elevation-warning');
+            const msgEl = document.getElementById('fm-run-elevation-msg');
+            msgEl.innerText = info.elevation_message || 'Standard user privilege: host agent running unprivileged.';
+            warnEl.style.display = 'block';
+          }
+        } else {
+          inspectStatus.innerText = 'Static Fallback';
+          inspectStatus.style.background = 'rgba(245,158,11,0.15)';
+          inspectStatus.style.color = '#f59e0b';
+        }
+      } catch (err) {
+        inspectStatus.innerText = 'Unchecked';
+        inspectStatus.style.color = 'var(--text-secondary)';
+      }
     }
 
     function closeFmRunModal() {
+      if (currentRunPollingInterval) {
+        clearInterval(currentRunPollingInterval);
+        currentRunPollingInterval = null;
+      }
       document.getElementById('modal-fm-run').style.display = 'none';
     }
 
@@ -12783,11 +12963,34 @@
       const path = document.getElementById('fm-run-target-path').value.trim();
       const argsStr = document.getElementById('fm-run-args').value.trim();
       const cwd = document.getElementById('fm-run-cwd').value.trim();
+      const isBg = document.getElementById('fm-run-bg-check').checked;
+      const msiMode = document.getElementById('fm-run-msi-mode').value;
+      const msiUi = document.getElementById('fm-run-msi-ui').value;
+      const msiLog = document.getElementById('fm-run-msi-log-check').checked;
       const btn = document.getElementById('btn-submit-run');
 
       if (!path) return;
       btn.disabled = true;
-      btn.innerText = 'Executing...';
+      btn.innerText = '⚡ Starting Process...';
+
+      if (currentRunPollingInterval) {
+        clearInterval(currentRunPollingInterval);
+        currentRunPollingInterval = null;
+      }
+
+      const resultsBox = document.getElementById('fm-run-results-box');
+      const badge = document.getElementById('fm-run-status-badge');
+      const outputEl = document.getElementById('fm-run-output');
+      const pidEl = document.getElementById('fm-run-pid-text');
+      const exitEl = document.getElementById('fm-run-exitcode-text');
+      const durEl = document.getElementById('fm-run-duration-text');
+      const btnStop = document.getElementById('btn-stop-run');
+      const btnMsiLog = document.getElementById('btn-view-msi-log');
+
+      resultsBox.style.display = 'block';
+      badge.className = 'badge badge-info';
+      badge.innerText = 'Launching...';
+      outputEl.innerText = 'Dispatching execution RPC to remote agent...\n';
 
       try {
         const res = await apiRequest('/api/v1/files/run', {
@@ -12797,47 +13000,183 @@
             machine_id: appState.selectedMachineId,
             path,
             args: argsStr,
-            cwd
+            cwd,
+            background: isBg,
+            msi_mode: msiMode,
+            msi_ui: msiUi,
+            msi_logging: msiLog
           })
         });
 
-        btn.disabled = false;
-        btn.innerText = '⚡ Execute Again';
-
-        document.getElementById('fm-run-results-box').style.display = 'block';
-        const badge = document.getElementById('fm-run-status-badge');
-        const outputEl = document.getElementById('fm-run-output');
-        const pidEl = document.getElementById('fm-run-pid-text');
-        const exitEl = document.getElementById('fm-run-exitcode-text');
-        const durEl = document.getElementById('fm-run-duration-text');
-
         if (!res.ok) {
+          btn.disabled = false;
+          btn.innerText = '⚡ Execute Again';
           badge.className = 'badge badge-danger';
           badge.innerText = 'Execution Failed';
           outputEl.innerText = res.error || 'Remote command execution failed';
           return;
         }
 
-        const data = res.data || res;
-        const isSuccess = data.exit_code === 0;
-        badge.className = isSuccess ? 'badge badge-success' : 'badge badge-warning';
-        badge.innerText = isSuccess ? 'Exit 0 (Success)' : `Exit ${data.exit_code} (Non-zero)`;
+        const data = res.result || res.data || res;
+        currentRunJobId = data.job_id;
+        currentRunMsiLogPath = data.msi_log_path;
 
-        let out = '';
-        if (data.stdout) out += `[stdout]\n${data.stdout}\n`;
-        if (data.stderr) out += `[stderr]\n${data.stderr}\n`;
-        if (!out) out = '(Process completed with no output)';
-        outputEl.innerText = out;
+        if (currentRunMsiLogPath) {
+          btnMsiLog.style.display = 'inline-block';
+        }
 
-        if (pidEl) pidEl.innerText = `PID: ${data.pid || 'N/A'}`;
-        if (exitEl) exitEl.innerText = `Exit Code: ${data.exit_code !== undefined ? data.exit_code : 'N/A'}`;
-        if (durEl) durEl.innerText = `Duration: ${data.execution_time_ms || 0} ms`;
+        if (data.running) {
+          badge.className = 'badge badge-warning';
+          badge.innerText = `RUNNING (PID: ${data.pid})`;
+          btnStop.style.display = 'inline-block';
+          btn.disabled = false;
+          btn.innerText = '⚡ Execute Again';
+          if (pidEl) pidEl.innerText = `PID: ${data.pid}`;
+          if (exitEl) exitEl.innerText = 'Exit Code: Pending...';
+          if (data.stdout) outputEl.innerText = data.stdout;
 
-        showToast(`Process executed (Exit code: ${data.exit_code})`, isSuccess ? 'success' : 'warning');
+          startPollingRunStatus(data.job_id);
+        } else {
+          btn.disabled = false;
+          btn.innerText = '⚡ Execute Again';
+          btnStop.style.display = 'none';
+
+          const isSuccess = data.exit_code === 0 || data.exit_code === 3010;
+          if (data.exit_code === 3010) {
+            badge.className = 'badge badge-info';
+            badge.innerText = 'Exit 3010 (Reboot Required)';
+          } else if (isSuccess) {
+            badge.className = 'badge badge-success';
+            badge.innerText = 'Exit 0 (Success)';
+          } else {
+            badge.className = 'badge badge-danger';
+            badge.innerText = `Exit ${data.exit_code} (${data.exit_reason || 'Failed'})`;
+          }
+
+          let out = '';
+          if (data.stdout) out += `[stdout]\n${data.stdout}\n`;
+          if (data.stderr) out += `[stderr]\n${data.stderr}\n`;
+          if (!out) out = '(Process completed with no output)';
+          outputEl.innerText = out;
+
+          if (pidEl) pidEl.innerText = `PID: ${data.pid || 'N/A'}`;
+          if (exitEl) exitEl.innerText = `Exit Code: ${data.exit_code !== undefined ? data.exit_code : 'N/A'}`;
+          if (durEl) durEl.innerText = `Duration: ${data.duration_ms || 0} ms`;
+
+          showToast(`Process finished with exit code ${data.exit_code}`, isSuccess ? 'success' : 'warning');
+        }
       } catch (err) {
         btn.disabled = false;
         btn.innerText = '⚡ Execute Again';
+        badge.className = 'badge badge-danger';
+        badge.innerText = 'Error';
+        outputEl.innerText = err.message;
         showToast('Run error: ' + err.message, 'error');
+      }
+    }
+
+    function startPollingRunStatus(jobId) {
+      if (currentRunPollingInterval) clearInterval(currentRunPollingInterval);
+      currentRunPollingInterval = setInterval(async () => {
+        try {
+          const res = await apiRequest(`/api/v1/files/process/status?machine_id=${encodeURIComponent(appState.selectedMachineId)}&job_id=${encodeURIComponent(jobId)}`);
+          if (!res.ok) return;
+
+          const data = res.result || res.data || res;
+          const badge = document.getElementById('fm-run-status-badge');
+          const outputEl = document.getElementById('fm-run-output');
+          const pidEl = document.getElementById('fm-run-pid-text');
+          const exitEl = document.getElementById('fm-run-exitcode-text');
+          const durEl = document.getElementById('fm-run-duration-text');
+          const btnStop = document.getElementById('btn-stop-run');
+
+          if (data.msi_log_path) {
+            currentRunMsiLogPath = data.msi_log_path;
+            document.getElementById('btn-view-msi-log').style.display = 'inline-block';
+          }
+
+          if (data.running) {
+            badge.className = 'badge badge-warning';
+            badge.innerText = `RUNNING (PID: ${data.pid})`;
+            let out = '';
+            if (data.stdout) out += `[stdout]\n${data.stdout}\n`;
+            if (data.stderr) out += `[stderr]\n${data.stderr}\n`;
+            if (out) outputEl.innerText = out;
+          } else {
+            clearInterval(currentRunPollingInterval);
+            currentRunPollingInterval = null;
+            btnStop.style.display = 'none';
+
+            const isSuccess = data.exit_code === 0 || data.exit_code === 3010;
+            if (data.exit_code === 3010) {
+              badge.className = 'badge badge-info';
+              badge.innerText = 'Exit 3010 (Reboot Required)';
+            } else if (isSuccess) {
+              badge.className = 'badge badge-success';
+              badge.innerText = 'Exit 0 (Success)';
+            } else {
+              badge.className = 'badge badge-danger';
+              badge.innerText = `Exit ${data.exit_code} (${data.exit_reason || 'Failed'})`;
+            }
+
+            let out = '';
+            if (data.stdout) out += `[stdout]\n${data.stdout}\n`;
+            if (data.stderr) out += `[stderr]\n${data.stderr}\n`;
+            if (!out) out = '(Process finished with no output)';
+            outputEl.innerText = out;
+
+            if (pidEl) pidEl.innerText = `PID: ${data.pid || 'N/A'}`;
+            if (exitEl) exitEl.innerText = `Exit Code: ${data.exit_code !== undefined ? data.exit_code : 'N/A'}`;
+            if (durEl) durEl.innerText = `Duration: ${data.duration_ms || 0} ms`;
+
+            showToast(`Process (PID ${data.pid}) exited with code ${data.exit_code}`, isSuccess ? 'success' : 'warning');
+          }
+        } catch (_) {}
+      }, 1500);
+    }
+
+    async function stopCurrentRunProcess() {
+      if (!currentRunJobId || !appState.selectedMachineId) return;
+      if (!confirm('Are you sure you want to stop this process tree?')) return;
+      showToast('Terminating remote process...', 'info');
+      try {
+        const res = await apiRequest('/api/v1/files/process/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: appState.selectedMachineId,
+            job_id: currentRunJobId,
+            kill: true
+          })
+        });
+        if (res.ok) {
+          showToast('Process termination signaled successfully', 'success');
+        } else {
+          showToast('Failed to terminate process: ' + res.error, 'error');
+        }
+      } catch (err) {
+        showToast('Stop process error: ' + err.message, 'error');
+      }
+    }
+
+    async function viewCurrentMsiLog() {
+      if (!appState.selectedMachineId) return;
+      try {
+        const q = new URLSearchParams({ machine_id: appState.selectedMachineId });
+        if (currentRunJobId) q.set('job_id', currentRunJobId);
+        if (currentRunMsiLogPath) q.set('log_path', currentRunMsiLogPath);
+        const res = await apiRequest(`/api/v1/files/installer-log?${q.toString()}`);
+        if (res.ok) {
+          const data = res.result || res.data || res;
+          const tail = data.log_tail || '(Log file is currently empty)';
+          const outputEl = document.getElementById('fm-run-output');
+          outputEl.innerText = `=== VERBOSE MSI LOG (${data.log_path || ''}) ===\n${tail}`;
+          showToast('Loaded verbose MSI installer log', 'info');
+        } else {
+          showToast('Unable to read MSI log: ' + res.error, 'warning');
+        }
+      } catch (err) {
+        showToast('MSI log error: ' + err.message, 'error');
       }
     }
 
@@ -16188,6 +16527,33 @@ class StationApiClient {
   async listFiles(machineId, dirPath = '/') {
     return this.request(`/api/v1/files/list?machine_id=${encodeURIComponent(machineId)}&path=${encodeURIComponent(dirPath)}`);
   }
+  async inspectFile(machineId, path) {
+    return this.request('/api/v1/files/inspect', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, path })
+    });
+  }
+  async runFile(machineId, options = {}) {
+    return this.request('/api/v1/files/run', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, ...options })
+    });
+  }
+  async getProcessStatus(machineId, jobId) {
+    return this.request(`/api/v1/files/process/status?machine_id=${encodeURIComponent(machineId)}&job_id=${encodeURIComponent(jobId)}`);
+  }
+  async stopProcess(machineId, jobId, kill = false) {
+    return this.request('/api/v1/files/process/stop', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, job_id: jobId, kill })
+    });
+  }
+  async getInstallerLog(machineId, jobId, logPath = '') {
+    const q = new URLSearchParams({ machine_id: machineId });
+    if (jobId) q.set('job_id', jobId);
+    if (logPath) q.set('log_path', logPath);
+    return this.request(`/api/v1/files/installer-log?${q.toString()}`);
+  }
   async getBridgeMappings() { return this.request('/api/v1/bridge/mappings'); }
   async createBridgeMapping(machineId, targetPort, alias = '') {
     return this.request('/api/v1/bridge/mappings', {
@@ -16910,7 +17276,10 @@ class FileManagerView {
         return;
       }
 
-      tableBody.innerHTML = entries.map(item => `
+      tableBody.innerHTML = entries.map(item => {
+        const ext = (item.name.split('.').pop() || '').toLowerCase();
+        const isRunnable = !item.is_dir && ['exe', 'msi', 'bat', 'cmd', 'ps1', 'py', 'sh', 'bin'].includes(ext);
+        return `
         <tr>
           <td>${item.is_dir ? '📁' : '📄'}</td>
           <td>
@@ -16923,13 +17292,22 @@ class FileManagerView {
           <td><small>${item.size_bytes ? Math.round(item.size_bytes / 1024) + ' KB' : '-'}</small></td>
           <td><small>${item.modified_at ? new Date(item.modified_at).toLocaleDateString() : '-'}</small></td>
           <td>
+            ${isRunnable ? `<button class="btn-sm" style="color:var(--accent-cyan); font-weight:600;" onclick="FileManagerView.runItem('${item.path}', '${item.name}')">⚡ Run</button>` : ''}
             ${!item.is_dir ? `<button class="btn-sm" onclick="FileManagerView.downloadFile('${item.path}')">Download</button>` : ''}
             <button class="btn-sm btn-danger" onclick="FileManagerView.deleteItem('${item.path}')">Delete</button>
           </td>
         </tr>
-      `).join('');
+      `}).join('');
     } catch (err) {
       tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">Error: ${err.message}</td></tr>`;
+    }
+  }
+
+  static runItem(path, name) {
+    if (typeof window !== 'undefined' && typeof window.openFmRunModal === 'function') {
+      window.openFmRunModal(path, name || path.split(/[\\/]/).pop());
+    } else {
+      alert(`Initiating execution for: ${path}`);
     }
   }
 

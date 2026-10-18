@@ -124,6 +124,33 @@ class StationApiClient {
   async listFiles(machineId, dirPath = '/') {
     return this.request(`/api/v1/files/list?machine_id=${encodeURIComponent(machineId)}&path=${encodeURIComponent(dirPath)}`);
   }
+  async inspectFile(machineId, path) {
+    return this.request('/api/v1/files/inspect', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, path })
+    });
+  }
+  async runFile(machineId, options = {}) {
+    return this.request('/api/v1/files/run', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, ...options })
+    });
+  }
+  async getProcessStatus(machineId, jobId) {
+    return this.request(`/api/v1/files/process/status?machine_id=${encodeURIComponent(machineId)}&job_id=${encodeURIComponent(jobId)}`);
+  }
+  async stopProcess(machineId, jobId, kill = false) {
+    return this.request('/api/v1/files/process/stop', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, job_id: jobId, kill })
+    });
+  }
+  async getInstallerLog(machineId, jobId, logPath = '') {
+    const q = new URLSearchParams({ machine_id: machineId });
+    if (jobId) q.set('job_id', jobId);
+    if (logPath) q.set('log_path', logPath);
+    return this.request(`/api/v1/files/installer-log?${q.toString()}`);
+  }
   async getBridgeMappings() { return this.request('/api/v1/bridge/mappings'); }
   async createBridgeMapping(machineId, targetPort, alias = '') {
     return this.request('/api/v1/bridge/mappings', {

@@ -4040,26 +4040,97 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === '/api/v1/files/run' && method === 'POST') {
+  if (pathname === '/api/v1/files/inspect' && method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { machine_id, path: execPath, args, cwd, timeout_ms } = JSON.parse(body || '{}');
-        if (!machine_id || !execPath) throw new Error('machine_id and path required');
-        const data = await sendAgentRequest(machine_id, 'FileRun', {
-          path: execPath,
-          args: args || [],
-          cwd: cwd || '',
-          timeout_ms: timeout_ms || 30000
-        }, (timeout_ms || 30000) + 10000);
-        logAudit('file_executed', 'user', machine_id, `Executed file: ${execPath} (PID: ${data.pid || 'N/A'}, ExitCode: ${data.exit_code})`);
+        const { machine_id, path: filePath } = JSON.parse(body || '{}');
+        if (!machine_id || !filePath) throw new Error('machine_id and path required');
+        const data = await sendAgentRequest(machine_id, 'FileInspect', { path: filePath }, 20000);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ...data }));
       } catch (err) {
         sendHttpError(res, err);
       }
     });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/run' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, path: execPath, command, args, cwd, working_dir, timeout_ms, background, msi_mode, msi_ui, msi_logging } = JSON.parse(body || '{}');
+        const targetPath = execPath || command;
+        if (!machine_id || !targetPath) throw new Error('machine_id and path required');
+        const data = await sendAgentRequest(machine_id, 'FileRun', {
+          path: targetPath,
+          command: targetPath,
+          args: args || [],
+          cwd: cwd || working_dir || '',
+          working_dir: cwd || working_dir || '',
+          background: Boolean(background),
+          msi_mode: msi_mode || 'install',
+          msi_ui: msi_ui || 'qn',
+          msi_logging: msi_logging !== false,
+          timeout_s: timeout_ms ? Math.round(timeout_ms / 1000) : 10
+        }, (timeout_ms || 25000) + 10000);
+        logAudit('file_executed', 'user', machine_id, `Executed: ${targetPath} (PID: ${data.pid || 'N/A'}, Running: ${Boolean(data.running)}, ExitCode: ${data.exit_code})`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...data }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/process/status' && method === 'GET') {
+    try {
+      const machine_id = parsedUrl.searchParams.get('machine_id');
+      const job_id = parsedUrl.searchParams.get('job_id');
+      if (!machine_id || !job_id) throw new Error('machine_id and job_id query parameters required');
+      const data = await sendAgentRequest(machine_id, 'ProcessStatus', { job_id }, 15000);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, ...data }));
+    } catch (err) {
+      sendHttpError(res, err);
+    }
+    return;
+  }
+
+  if (pathname === '/api/v1/files/process/stop' && method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { machine_id, job_id, kill } = JSON.parse(body || '{}');
+        if (!machine_id || !job_id) throw new Error('machine_id and job_id required');
+        const data = await sendAgentRequest(machine_id, 'ProcessStop', { job_id, kill: Boolean(kill) }, 15000);
+        logAudit('file_process_stopped', 'user', machine_id, `Terminated managed process job ${job_id} (PID: ${data.pid || 'N/A'})`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...data }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/v1/files/installer-log' && method === 'GET') {
+    try {
+      const machine_id = parsedUrl.searchParams.get('machine_id');
+      const job_id = parsedUrl.searchParams.get('job_id');
+      const log_path = parsedUrl.searchParams.get('log_path');
+      if (!machine_id) throw new Error('machine_id query parameter required');
+      const data = await sendAgentRequest(machine_id, 'InstallerLog', { job_id, log_path }, 20000);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, ...data }));
+    } catch (err) {
+      sendHttpError(res, err);
+    }
     return;
   }
 

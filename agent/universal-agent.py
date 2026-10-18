@@ -33,6 +33,9 @@ import datetime
 import hmac
 import hashlib
 import binascii
+import collections
+import tempfile
+
 
 def _iso_now():
     try:
@@ -726,6 +729,8 @@ class CyberVPSAgent:
         self.pillar_registry_file = os.path.join(self.protected_vault_dir, "pillar_registry.json")
         self.pillar_incidents_file = os.path.join(self.protected_vault_dir, "pillar_incidents.json")
         self._init_pillar_storage()
+        self.managed_processes = {}
+        self.managed_processes_lock = threading.Lock()
 
         try:
             threading.Thread(target=self._prewarm_apps_inventory, daemon=True).start()
@@ -2776,22 +2781,326 @@ class CyberVPSAgent:
                 "payload": {"request_id": req_id, "success": False, "error": str(e)}
             })
 
-    def handle_file_run(self, payload):
+    def handle_file_inspect(self, payload):
         req_id = payload.get("request_id")
         raw_path = payload.get("path")
+        try:
+            target_path = self._sanitize_path(raw_path)
+            if not os.path.exists(target_path):
+                raise FileNotFoundError(f"File not found: {target_path}")
+
+            stat_res = os.stat(target_path)
+            size_bytes = stat_res.st_size
+            filename = os.path.basename(target_path)
+            ext = os.path.splitext(filename)[1].lower()
+
+            # Hash calculation (up to 100MB)
+            sha256_hash = hashlib.sha256()
+            with open(target_path, "rb") as f:
+                bytes_hashed = 0
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    sha256_hash.update(chunk)
+                    bytes_hashed += len(chunk)
+                    if bytes_hashed > 100 * 1024 * 1024:
+                        break
+            file_hash = sha256_hash.hexdigest()
+
+            # Host privilege and session context
+            is_admin = False
+            is_elevated = False
+            session_id = 0
+            if platform.system() == "Windows":
+                try:
+                    if ctypes and hasattr(ctypes, "windll") and hasattr(ctypes.windll, "shell32"):
+                        is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin() != 0)
+                        is_elevated = is_admin
+                except Exception:
+                    pass
+                try:
+                    if ctypes and hasattr(ctypes, "windll") and hasattr(ctypes.windll, "kernel32"):
+                        sess_id_c = ctypes.c_ulong()
+                        if ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sess_id_c)):
+                            session_id = int(sess_id_c.value)
+                except Exception:
+                    pass
+            else:
+                is_admin = (os.geteuid() == 0) if hasattr(os, "geteuid") else False
+                is_elevated = is_admin
+
+            file_type = "unknown"
+            arch = "unknown"
+            subsystem = "unknown"
+            subsystem_name = "Unknown"
+            is_signed = False
+            elevation_warning = False
+            elevation_message = ""
+            recommended_args = []
+            suggested_runner = "system"
+
+            # Check PE (Portable Executable - Windows EXE/DLL)
+            if ext in [".exe", ".dll", ".sys", ".scr"] or size_bytes >= 64:
+                try:
+                    with open(target_path, "rb") as f:
+                        dos_hdr = f.read(64)
+                        if len(dos_hdr) >= 64 and dos_hdr[:2] == b"MZ":
+                            e_lfanew = struct.unpack_from("<I", dos_hdr, 0x3c)[0]
+                            if 0 < e_lfanew < size_bytes - 24:
+                                f.seek(e_lfanew)
+                                pe_sig = f.read(4)
+                                if pe_sig == b"PE\0\0":
+                                    file_type = "pe"
+                                    coff_hdr = f.read(20)
+                                    if len(coff_hdr) >= 20:
+                                        machine, num_sections, timedate, sym_ptr, num_syms, opt_hdr_size, characteristics = struct.unpack_from("<HHIIIHH", coff_hdr, 0)
+                                        if machine == 0x014c:
+                                            arch = "x86 (32-bit)"
+                                        elif machine == 0x8664:
+                                            arch = "x64 (AMD64 / 64-bit)"
+                                        elif machine == 0xaa64:
+                                            arch = "ARM64"
+                                        elif machine == 0x0200:
+                                            arch = "Intel Itanium"
+                                        else:
+                                            arch = f"Machine (0x{machine:04x})"
+
+                                        if opt_hdr_size >= 68:
+                                            opt_hdr = f.read(min(opt_hdr_size, 256))
+                                            magic = struct.unpack_from("<H", opt_hdr, 0)[0]
+                                            subsys_offset = 68
+                                            if len(opt_hdr) >= subsys_offset + 2:
+                                                subsys_val = struct.unpack_from("<H", opt_hdr, subsys_offset)[0]
+                                                subsystem = subsys_val
+                                                if subsys_val == 2:
+                                                    subsystem_name = "Windows GUI (Windowed Application)"
+                                                elif subsys_val == 3:
+                                                    subsystem_name = "Windows CUI (Console Application)"
+                                                elif subsys_val == 9:
+                                                    subsystem_name = "Windows CE GUI"
+                                                elif subsys_val == 14:
+                                                    subsystem_name = "Xbox"
+                                                else:
+                                                    subsystem_name = f"Subsystem ({subsys_val})"
+
+                                            sec_dir_offset = 128 if magic == 0x10b else 144
+                                            if len(opt_hdr) >= sec_dir_offset + 8:
+                                                sec_va, sec_sz = struct.unpack_from("<II", opt_hdr, sec_dir_offset)
+                                                if sec_va > 0 and sec_sz > 0:
+                                                    is_signed = True
+                except Exception:
+                    pass
+
+            # Check MSI (Microsoft Installer)
+            is_msi = (ext == ".msi")
+            if not is_msi and size_bytes >= 8:
+                try:
+                    with open(target_path, "rb") as f:
+                        magic_ole = f.read(8)
+                        if magic_ole == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+                            is_msi = True
+                except Exception:
+                    pass
+
+            if is_msi:
+                file_type = "msi"
+                subsystem_name = "Windows Installer Package (MSI Database)"
+                suggested_runner = "msiexec.exe /i"
+                recommended_args = ["/qn", "/norestart"]
+                if not is_admin:
+                    elevation_warning = True
+                    elevation_message = "Standard User Privilege: Host agent is running in unprivileged user mode. Machine-wide MSI installation typically requires elevation or will exit with code 1603 (Fatal Error). Consider per-user install parameters (e.g. ALLUSERS=2 MSIINSTALLPERUSER=1) or run agent as administrator."
+
+            # Check Linux ELF
+            elif ext not in [".exe", ".bat", ".cmd", ".ps1", ".py", ".sh"] and size_bytes >= 4:
+                try:
+                    with open(target_path, "rb") as f:
+                        magic_elf = f.read(4)
+                        if magic_elf == b"\x7fELF":
+                            file_type = "elf"
+                            elf_class = f.read(1)
+                            arch = "ELF 64-bit" if elf_class == b"\x02" else "ELF 32-bit"
+                            subsystem_name = "Linux Native Binary"
+                            suggested_runner = "native"
+                except Exception:
+                    pass
+
+            # Script types
+            if ext == ".ps1":
+                file_type = "powershell"
+                subsystem_name = "PowerShell Script"
+                suggested_runner = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File"
+            elif ext in [".bat", ".cmd"]:
+                file_type = "batch"
+                subsystem_name = "Windows Command Script"
+                suggested_runner = "cmd.exe /c"
+            elif ext == ".py":
+                file_type = "python"
+                subsystem_name = "Python 3 Script"
+                suggested_runner = sys.executable
+            elif ext == ".sh":
+                file_type = "shell"
+                subsystem_name = "POSIX Shell Script"
+                suggested_runner = "/bin/bash"
+
+            res = {
+                "path": target_path,
+                "filename": filename,
+                "extension": ext,
+                "size_bytes": size_bytes,
+                "sha256": file_hash,
+                "file_type": file_type,
+                "arch": arch,
+                "subsystem": subsystem,
+                "subsystem_name": subsystem_name,
+                "is_signed": is_signed,
+                "is_msi": is_msi,
+                "is_admin": is_admin,
+                "is_elevated": is_elevated,
+                "session_id": session_id,
+                "elevation_warning": elevation_warning,
+                "elevation_message": elevation_message,
+                "suggested_runner": suggested_runner,
+                "recommended_args": recommended_args
+            }
+
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def _start_managed_process(self, cmd, working_dir, job_id, is_msi=False, msi_log_path=None):
+        """Spawns process with non-blocking bounded ring buffer draining (prevents pipe deadlocks)."""
+        proc = subprocess.Popen(
+            cmd,
+            cwd=working_dir,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False
+        )
+
+        stdout_lines = collections.deque(maxlen=1000)
+        stderr_lines = collections.deque(maxlen=1000)
+
+        def _drain_stream(stream, buffer):
+            try:
+                for line in iter(stream.readline, b""):
+                    decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                    buffer.append(decoded)
+            except Exception:
+                pass
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+        t_out = threading.Thread(target=_drain_stream, args=(proc.stdout, stdout_lines), daemon=True)
+        t_err = threading.Thread(target=_drain_stream, args=(proc.stderr, stderr_lines), daemon=True)
+        t_out.start()
+        t_err.start()
+
+        job_info = {
+            "job_id": job_id,
+            "pid": proc.pid,
+            "cmd": " ".join(cmd),
+            "proc": proc,
+            "running": True,
+            "exit_code": None,
+            "exit_reason": "Running",
+            "started_at": _iso_now(),
+            "finished_at": None,
+            "duration_ms": 0,
+            "is_msi": is_msi,
+            "msi_log_path": msi_log_path,
+            "stdout_lines": stdout_lines,
+            "stderr_lines": stderr_lines
+        }
+
+        with self.managed_processes_lock:
+            if len(self.managed_processes) >= 50:
+                finished_keys = [k for k, v in self.managed_processes.items() if not v.get("running")]
+                for old_k in finished_keys[:10]:
+                    self.managed_processes.pop(old_k, None)
+            self.managed_processes[job_id] = job_info
+
+        start_time = time.time()
+
+        def _monitor_proc():
+            try:
+                proc.wait()
+            except Exception:
+                pass
+            finished_time = time.time()
+            duration_ms = int((finished_time - start_time) * 1000)
+            exit_code = proc.returncode
+
+            exit_reason = ""
+            if is_msi:
+                if exit_code == 0:
+                    exit_reason = "Success"
+                elif exit_code == 3010:
+                    exit_reason = "Success (Reboot Required)"
+                elif exit_code == 1602:
+                    exit_reason = "User Cancelled"
+                elif exit_code == 1603:
+                    exit_reason = "Fatal Error (Elevation or prerequisite required)"
+                elif exit_code == 1618:
+                    exit_reason = "Another installation is already in progress"
+                elif exit_code == 1619:
+                    exit_reason = "Package could not be opened"
+                elif exit_code == 1638:
+                    exit_reason = "Another version already installed"
+                else:
+                    exit_reason = f"MSI Exit Code {exit_code}"
+            else:
+                exit_reason = "Success" if exit_code == 0 else f"Process exited with code {exit_code}"
+
+            with self.managed_processes_lock:
+                if job_id in self.managed_processes:
+                    self.managed_processes[job_id]["running"] = False
+                    self.managed_processes[job_id]["exit_code"] = exit_code
+                    self.managed_processes[job_id]["exit_reason"] = exit_reason
+                    self.managed_processes[job_id]["finished_at"] = _iso_now()
+                    self.managed_processes[job_id]["duration_ms"] = duration_ms
+
+        t_mon = threading.Thread(target=_monitor_proc, daemon=True)
+        t_mon.start()
+
+        return proc, job_info
+
+    def handle_file_run(self, payload):
+        req_id = payload.get("request_id")
+        raw_path = payload.get("path") or payload.get("command")
         args = payload.get("args") or []
         if isinstance(args, str):
             import shlex
             args = shlex.split(args) if args.strip() else []
         interpreter = (payload.get("interpreter") or "auto").lower()
-        working_dir = payload.get("working_dir")
+        working_dir = payload.get("working_dir") or payload.get("cwd")
         run_in_background = bool(payload.get("background", False))
         job_id = payload.get("job_id") or f"run_{int(time.time()*1000)}"
+
+        # MSI options
+        msi_mode = (payload.get("msi_mode") or "install").lower()
+        msi_ui = payload.get("msi_ui") or "qn"
+        msi_logging = bool(payload.get("msi_logging", True))
 
         try:
             target_path = self._sanitize_path(raw_path)
             if not os.path.isfile(target_path):
-                raise FileNotFoundError(f"File to execute not found: {target_path}")
+                found_which = shutil.which(raw_path)
+                if found_which and os.path.isfile(found_which):
+                    target_path = found_which
+                else:
+                    raise FileNotFoundError(f"File to execute not found: {target_path}")
 
             if not working_dir or not os.path.isdir(working_dir):
                 working_dir = os.path.dirname(target_path) or os.getcwd()
@@ -2799,16 +3108,26 @@ class CyberVPSAgent:
             ext = os.path.splitext(target_path)[1].lower()
             cmd = []
             sys_os = platform.system()
+            is_msi = False
+            msi_log_path = None
 
             if sys_os == "Windows":
-                if ext in [".bat", ".cmd"]:
+                if ext == ".msi":
+                    is_msi = True
+                    action_flag = "/x" if msi_mode == "uninstall" else "/i"
+                    ui_flag = "/" + msi_ui.lstrip("/")
+                    cmd = ["msiexec.exe", action_flag, target_path, "/norestart"]
+                    if msi_logging:
+                        msi_log_path = os.path.join(tempfile.gettempdir(), f"cvps_msi_{job_id}.log")
+                        cmd.extend(["/L*v", msi_log_path])
+                    cmd.append(ui_flag)
+                    cmd.extend(list(args))
+                elif ext in [".bat", ".cmd"]:
                     cmd = ["cmd.exe", "/c", target_path] + list(args)
                 elif ext == ".ps1":
                     cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", target_path] + list(args)
                 elif ext == ".py":
                     cmd = [sys.executable, target_path] + list(args)
-                elif ext == ".msi":
-                    cmd = ["msiexec.exe", "/i", target_path] + list(args)
                 elif ext == ".exe":
                     cmd = [target_path] + list(args)
                 else:
@@ -2836,53 +3155,66 @@ class CyberVPSAgent:
                         pass
                     cmd = [target_path] + list(args)
 
+            proc, job_info = self._start_managed_process(cmd, working_dir, job_id, is_msi=is_msi, msi_log_path=msi_log_path)
+
             if run_in_background:
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd=working_dir,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    shell=False
-                )
                 res = {
                     "job_id": job_id,
                     "pid": proc.pid,
                     "running": True,
                     "background": True,
                     "cmd": " ".join(cmd),
-                    "exit_code": None
+                    "started_at": job_info["started_at"],
+                    "is_msi": is_msi,
+                    "msi_log_path": msi_log_path,
+                    "exit_code": None,
+                    "exit_reason": "Running"
                 }
             else:
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd=working_dir,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    shell=False
-                )
-                try:
-                    stdout, stderr = proc.communicate(timeout=20)
-                    out_text = stdout.decode("utf-8", errors="replace")[:65536]
-                    err_text = stderr.decode("utf-8", errors="replace")[:65536]
+                wait_sec = min(int(payload.get("timeout_s", 10)), 20)
+                deadline = time.time() + wait_sec
+                while time.time() < deadline:
+                    with self.managed_processes_lock:
+                        if not job_info["running"]:
+                            break
+                    time.sleep(0.1)
+
+                with self.managed_processes_lock:
+                    is_still_running = job_info["running"]
+                    cur_exit_code = job_info["exit_code"]
+                    cur_exit_reason = job_info["exit_reason"]
+                    dur = job_info["duration_ms"]
+                    out_text = "\n".join(list(job_info["stdout_lines"]))
+                    err_text = "\n".join(list(job_info["stderr_lines"]))
+
+                if not is_still_running:
                     res = {
                         "job_id": job_id,
                         "pid": proc.pid,
                         "running": False,
-                        "exit_code": proc.returncode,
+                        "exit_code": cur_exit_code,
+                        "exit_reason": cur_exit_reason,
                         "stdout": out_text,
                         "stderr": err_text,
-                        "cmd": " ".join(cmd)
+                        "cmd": " ".join(cmd),
+                        "duration_ms": dur,
+                        "is_msi": is_msi,
+                        "msi_log_path": msi_log_path
                     }
-                except subprocess.TimeoutExpired:
+                else:
                     res = {
                         "job_id": job_id,
                         "pid": proc.pid,
                         "running": True,
                         "background": True,
                         "cmd": " ".join(cmd),
-                        "stdout": "[Execution running in background (timeout > 20s)]",
-                        "stderr": "",
-                        "exit_code": None
+                        "started_at": job_info["started_at"],
+                        "stdout": out_text or "[Execution continues in background...]",
+                        "stderr": err_text,
+                        "exit_code": None,
+                        "exit_reason": "Running",
+                        "is_msi": is_msi,
+                        "msi_log_path": msi_log_path
                     }
 
             self.send_agent_event({
@@ -2894,6 +3226,129 @@ class CyberVPSAgent:
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": False, "error": str(e)}
             })
+
+    def handle_process_status(self, payload):
+        req_id = payload.get("request_id")
+        job_id = payload.get("job_id")
+        with self.managed_processes_lock:
+            job = self.managed_processes.get(job_id)
+        if not job:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Managed process job not found: {job_id}"}
+            })
+            return
+
+        with self.managed_processes_lock:
+            out_lines = list(job["stdout_lines"])
+            err_lines = list(job["stderr_lines"])
+            res = {
+                "job_id": job["job_id"],
+                "pid": job["pid"],
+                "cmd": job["cmd"],
+                "running": job["running"],
+                "exit_code": job["exit_code"],
+                "exit_reason": job["exit_reason"],
+                "started_at": job["started_at"],
+                "finished_at": job["finished_at"],
+                "duration_ms": job["duration_ms"],
+                "is_msi": job["is_msi"],
+                "msi_log_path": job["msi_log_path"],
+                "stdout": "\n".join(out_lines),
+                "stderr": "\n".join(err_lines)
+            }
+
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {"request_id": req_id, "success": True, "result": res}
+        })
+
+    def handle_process_stop(self, payload):
+        req_id = payload.get("request_id")
+        job_id = payload.get("job_id")
+        with self.managed_processes_lock:
+            job = self.managed_processes.get(job_id)
+        if not job:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Managed process job not found: {job_id}"}
+            })
+            return
+
+        proc = job.get("proc")
+        pid = job.get("pid")
+        stopped = False
+        if proc and job.get("running"):
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, timeout=5)
+                else:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except Exception:
+                        proc.kill()
+                stopped = True
+            except Exception:
+                try:
+                    proc.kill()
+                    stopped = True
+                except Exception:
+                    pass
+
+        with self.managed_processes_lock:
+            job["running"] = False
+            job["exit_reason"] = "Terminated by operator"
+
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {"request_id": req_id, "success": True, "result": {"job_id": job_id, "pid": pid, "stopped": stopped}}
+        })
+
+    def handle_installer_log(self, payload):
+        req_id = payload.get("request_id")
+        job_id = payload.get("job_id")
+        log_path = payload.get("log_path")
+        if not log_path and job_id:
+            with self.managed_processes_lock:
+                job = self.managed_processes.get(job_id)
+                if job:
+                    log_path = job.get("msi_log_path")
+
+        if not log_path or not os.path.exists(log_path):
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": f"Installer log file not found: {log_path}"}
+            })
+            return
+
+        try:
+            size = os.path.getsize(log_path)
+            read_size = min(size, 65536)
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                if size > read_size:
+                    f.seek(size - read_size)
+                content = f.read()
+
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "result": {
+                        "job_id": job_id,
+                        "log_path": log_path,
+                        "size_bytes": size,
+                        "log_tail": content
+                    }
+                }
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
 
     def handle_file_archive_zip(self, payload):
         req_id = payload.get("request_id")
@@ -7395,8 +7850,16 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_file_chunk_write, args=(payload,), daemon=True).start()
         elif c_type == "FileChunkRead":
             threading.Thread(target=self.handle_file_chunk_read, args=(payload,), daemon=True).start()
-        elif c_type == "FileRun":
+        elif c_type == "FileInspect":
+            threading.Thread(target=self.handle_file_inspect, args=(payload,), daemon=True).start()
+        elif c_type in ["FileRun", "ProcessStart"]:
             threading.Thread(target=self.handle_file_run, args=(payload,), daemon=True).start()
+        elif c_type == "ProcessStatus":
+            threading.Thread(target=self.handle_process_status, args=(payload,), daemon=True).start()
+        elif c_type == "ProcessStop":
+            threading.Thread(target=self.handle_process_stop, args=(payload,), daemon=True).start()
+        elif c_type == "InstallerLog":
+            threading.Thread(target=self.handle_installer_log, args=(payload,), daemon=True).start()
         elif c_type == "FileArchiveZip":
             threading.Thread(target=self.handle_file_archive_zip, args=(payload,), daemon=True).start()
         elif c_type == "FileArchiveExtract":
@@ -7405,8 +7868,6 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_process_list, args=(payload,), daemon=True).start()
         elif c_type == "ProcessKill":
             threading.Thread(target=self.handle_process_kill, args=(payload,), daemon=True).start()
-        elif c_type == "ProcessStart":
-            threading.Thread(target=self.handle_process_start, args=(payload,), daemon=True).start()
         elif c_type == "ProcessDetails":
             threading.Thread(target=self.handle_process_details, args=(payload,), daemon=True).start()
         elif c_type == "ServiceList":
