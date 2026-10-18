@@ -100,8 +100,10 @@ try {
     Execute-Sql $db "INSERT INTO Component (Component, ComponentId, Directory_, Attributes, Condition, KeyPath) VALUES ('CyberVPSCoreComponent', '$compGuid', 'INSTALLDIR', 256, NULL, 'AgentScriptFile')"
 
     # 6. POPULATE FILE & MEDIA
+    $agentFile = Join-Path $PSScriptRoot "..\..\agent\universal-agent.py"
+    $agentSize = if (Test-Path $agentFile) { (Get-Item $agentFile).Length } else { 509929 }
     Execute-Sql $db "INSERT INTO Media (DiskId, LastSequence, DiskPrompt, Cabinet, VolumeLabel, Source) VALUES (1, 10, 'Disk 1', NULL, 'DISK1', NULL)"
-    Execute-Sql $db "INSERT INTO File (File, Component_, FileName, FileSize, Version, Language, Attributes, Sequence) VALUES ('AgentScriptFile', 'CyberVPSCoreComponent', 'universal-agent.py', 390000, '$Version', NULL, 512, 1)"
+    Execute-Sql $db "INSERT INTO File (File, Component_, FileName, FileSize, Version, Language, Attributes, Sequence) VALUES ('AgentScriptFile', 'CyberVPSCoreComponent', 'universal-agent.py', $agentSize, '$Version', NULL, 512, 1)"
 
     # 7. POPULATE CUSTOM ACTIONS
     # Type 50 = Standard Command Line Execution of executable

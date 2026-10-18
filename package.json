@@ -5,7 +5,12 @@
   "main": "services/server.js",
   "scripts": {
     "start": "node services/server.js",
-    "test": "node tests/run-all-tests.js"
+    "test": "node tests/run-all-tests.js",
+    "build": "node scripts/build-dashboard.js",
+    "build:dashboard": "node scripts/build-dashboard.js",
+    "build:installers": "powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/build-windows-installers.ps1",
+    "build:all": "node scripts/build-dashboard.js && powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/build-windows-installers.ps1",
+    "release": "node scripts/release/build-release-artifacts.js"
   },
   "dependencies": {
     "ws": "^8.22.0"
