@@ -216,6 +216,18 @@ irm https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/
 curl -sSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.cmd -o "%TEMP%\cvps.cmd" && "%TEMP%\cvps.cmd"
 ```
 
+#### 📦 Native Windows Standalone Installers & MSI (GitHub Releases)
+Download precompiled, standalone Windows 64-bit installers directly from [**GitHub Releases v1.0.0**](https://github.com/cyberdrivepro/cybervps-space-station/releases/tag/v1.0.0):
+
+| Artifact | Privilege Level | Mode & Description | Direct Download |
+|---|---|---|---|
+| **`CyberVPS-Setup-x64.exe`** | Dual Mode | Auto-detects privilege; requests UAC for service, with non-admin fallback | [Download .exe](https://github.com/cyberdrivepro/cybervps-space-station/releases/download/v1.0.0/CyberVPS-Setup-x64.exe) |
+| **`CyberVPS-Setup-Admin-x64.exe`** | Administrator | Embedded `requireAdministrator` manifest; registers 24/7 Windows Service | [Download .exe](https://github.com/cyberdrivepro/cybervps-space-station/releases/download/v1.0.0/CyberVPS-Setup-Admin-x64.exe) |
+| **`CyberVPS-Setup-User-x64.exe`** | Standard User | Embedded `asInvoker` manifest; zero-elevation `%LOCALAPPDATA%` install | [Download .exe](https://github.com/cyberdrivepro/cybervps-space-station/releases/download/v1.0.0/CyberVPS-Setup-User-x64.exe) |
+| **`CyberVPS-Host-Agent-x64.msi`** | Enterprise / IT | Windows Installer database for GPO, Intune, SCCM, and cloud fleet rollout | [Download .msi](https://github.com/cyberdrivepro/cybervps-space-station/releases/download/v1.0.0/CyberVPS-Host-Agent-x64.msi) |
+
+*All releases include verified SHA-256 hashes (`checksums.sha256`) and automated metadata (`release-manifest.json`).*
+
 ---
 
 ### 🐳 Docker Compose Deployment
