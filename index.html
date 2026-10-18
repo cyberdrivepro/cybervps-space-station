@@ -7974,13 +7974,13 @@
             }
           }, 2000);
 
-          // Client-side Safety Timeout (15s) in case server or agent hangs silently
+          // Client-side Safety Timeout (30s) in case server or agent hangs silently
           if (webDesktopState.clientTimeoutTimer) clearTimeout(webDesktopState.clientTimeoutTimer);
           webDesktopState.clientTimeoutTimer = setTimeout(() => {
             if (!webDesktopState.firstFrameReceived && currentSessionId === webDesktopState.sessionId) {
-              showWebDesktopError('Timed out waiting for desktop capture worker (15s). The agent or display service did not stream video frames.', 'Connection Timeout');
+              showWebDesktopError('Timed out waiting for desktop capture worker (30s). The agent or display service did not stream video frames.', 'Connection Timeout');
             }
-          }, 15000);
+          }, 30000);
         };
 
         ws.onmessage = (event) => {
@@ -8027,6 +8027,9 @@
           webDesktopState.streamId = msg.stream_id;
           const loadingDesc = document.getElementById('desktop-ws-loading-desc');
           if (loadingDesc) loadingDesc.innerText = 'Relay stream ready. Requesting host agent capture worker...';
+        } else if (msg.stage === 'agent_connecting') {
+          const loadingDesc = document.getElementById('desktop-ws-loading-desc');
+          if (loadingDesc) loadingDesc.innerText = msg.message || 'Establishing display relay bridge to host agent...';
         } else if (msg.stage === 'agent_notified') {
           const loadingDesc = document.getElementById('desktop-ws-loading-desc');
           if (loadingDesc) {
@@ -8053,9 +8056,9 @@
         } else if (msg.status === 'agent_offline') {
           showWebDesktopError(msg.error || 'Host machine is offline. Remote desktop requires an online agent.', 'Agent Offline');
         } else if (msg.status === 'agent_ack_timeout') {
-          showWebDesktopError(msg.error || 'Agent did not acknowledge remote desktop stream within 5s.', 'Agent Unresponsive');
+          showWebDesktopError(msg.error || 'Agent did not acknowledge remote desktop stream within 12s.', 'Agent Unresponsive');
         } else if (msg.status === 'first_frame_timeout') {
-          showWebDesktopError(msg.error || 'Timed out waiting for initial desktop frame (12s). Verify display server is running.', 'Video Frame Timeout');
+          showWebDesktopError(msg.error || 'Timed out waiting for initial desktop frame (25s). Verify display server is running.', 'Video Frame Timeout');
         } else if (msg.status === 'session_0_isolated') {
           showWebDesktopError(msg.error || 'Windows Session 0 Isolation: Background service cannot capture Session 1 display directly. Use 1-Click RDP Bridge or run agent in active user session.', 'Windows Session 0 Isolation Detected');
         } else if (msg.status === 'permission_denied') {

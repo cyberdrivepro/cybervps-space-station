@@ -7261,83 +7261,99 @@ class CyberVPSAgent:
             })
 
     def handle_app_stream_start(self, payload):
-        stream_id = payload.get("stream_id")
-        pid = payload.get("pid")
-        hwnd = payload.get("hwnd")
-        correlation_id = payload.get("correlation_id")
-        app_id = payload.get("app_id")
-        app_name = payload.get("app_name") or payload.get("name")
-        fps = min(max(int(payload.get("fps", 25)), 1), 60)
-        quality = min(max(int(payload.get("quality", 80)), 30), 95)
-        desktop_mode = bool(payload.get("desktop_mode", False) or (not hwnd and not pid))
+        try:
+            stream_id = payload.get("stream_id")
+            pid = payload.get("pid")
+            hwnd = payload.get("hwnd")
+            correlation_id = payload.get("correlation_id")
+            app_id = payload.get("app_id")
+            app_name = payload.get("app_name") or payload.get("name")
+            fps = min(max(int(payload.get("fps", 25)), 1), 60)
+            quality = min(max(int(payload.get("quality", 80)), 30), 95)
+            desktop_mode = bool(payload.get("desktop_mode", False) or (not hwnd and not pid))
 
-        if not stream_id:
-            return
+            if not stream_id:
+                return
 
-        # Milestone: Send immediate authenticated agent delivery acknowledgement
-        self.send_agent_event({
-            "type": "RemoteDesktopStarted",
-            "payload": {
-                "stream_id": stream_id,
-                "correlation_id": correlation_id,
-                "machine_id": self.machine_id,
-                "status": "agent_acknowledged",
-                "desktop_mode": desktop_mode,
-                "timestamp": int(time.time() * 1000)
-            }
-        })
+            # Milestone: Send immediate authenticated agent delivery acknowledgement
+            self.send_agent_event({
+                "type": "RemoteDesktopStarted",
+                "payload": {
+                    "stream_id": stream_id,
+                    "correlation_id": correlation_id,
+                    "machine_id": self.machine_id,
+                    "status": "agent_acknowledged",
+                    "desktop_mode": desktop_mode,
+                    "timestamp": int(time.time() * 1000)
+                }
+            })
 
-        # Preflight Display Checks
-        sys_os = platform.system()
-        if sys_os == "Windows" and desktop_mode:
-            try:
-                import ctypes
-                kernel32 = ctypes.windll.kernel32
-                proc_session = ctypes.c_ulong()
-                kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(proc_session))
-                active_console = kernel32.WTSGetActiveConsoleSessionId()
-                if proc_session.value == 0 and active_console != 0:
-                    self.send_agent_event({
-                        "type": "AppStreamStatus",
-                        "payload": {
-                            "stream_id": stream_id,
-                            "correlation_id": correlation_id,
-                            "status": "session_0_isolated",
-                            "error": "Windows Session 0 Isolation: Agent service cannot capture active user display directly. Connect via 1-Click RDP Bridge or run agent in active user session."
-                        }
-                    })
-            except Exception:
-                pass
-        elif sys_os == "Linux" and desktop_mode:
-            import glob
-            has_disp = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or glob.glob("/tmp/.X11-unix/X*"))
-            if not has_disp:
+            # Preflight Display Checks
+            sys_os = platform.system()
+            if sys_os == "Windows" and desktop_mode:
+                try:
+                    import ctypes
+                    kernel32 = ctypes.windll.kernel32
+                    proc_session = ctypes.c_ulong()
+                    kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(proc_session))
+                    active_console = kernel32.WTSGetActiveConsoleSessionId()
+                    if proc_session.value == 0 and active_console != 0:
+                        self.send_agent_event({
+                            "type": "AppStreamStatus",
+                            "payload": {
+                                "stream_id": stream_id,
+                                "correlation_id": correlation_id,
+                                "status": "session_0_isolated",
+                                "error": "Windows Session 0 Isolation: Agent service cannot capture active user display directly. Connect via 1-Click RDP Bridge or run agent in active user session."
+                            }
+                        })
+                except Exception:
+                    pass
+            elif sys_os == "Linux" and desktop_mode:
+                try:
+                    import glob
+                    has_disp = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or glob.glob("/tmp/.X11-unix/X*"))
+                    if not has_disp:
+                        self.send_agent_event({
+                            "type": "AppStreamStatus",
+                            "payload": {
+                                "stream_id": stream_id,
+                                "correlation_id": correlation_id,
+                                "status": "no_display",
+                                "error": "Headless Linux Host: No active graphical display found (/tmp/.X11-unix/X* is empty). Start Xvfb or an X11/Wayland desktop session."
+                            }
+                        })
+                except Exception:
+                    pass
+
+            with self.lock:
+                self.active_app_streams[stream_id] = {
+                    "running": True,
+                    "pid": pid,
+                    "hwnd": hwnd,
+                    "fps": fps,
+                    "quality": quality,
+                    "desktop_mode": desktop_mode,
+                    "interactive": bool(payload.get("interactive", True)),
+                    "correlation_id": correlation_id,
+                    "app_id": app_id,
+                    "app_name": app_name,
+                    "start_time": time.time()
+                }
+
+            threading.Thread(target=self._app_stream_worker_loop, args=(stream_id,), daemon=True).start()
+        except Exception as e:
+            print(f"[!] Error in handle_app_stream_start: {e}")
+            if payload and payload.get("stream_id"):
                 self.send_agent_event({
                     "type": "AppStreamStatus",
                     "payload": {
-                        "stream_id": stream_id,
-                        "correlation_id": correlation_id,
-                        "status": "no_display",
-                        "error": "Headless Linux Host: No active graphical display found (/tmp/.X11-unix/X* is empty). Start Xvfb or an X11/Wayland desktop session."
+                        "stream_id": payload.get("stream_id"),
+                        "correlation_id": payload.get("correlation_id"),
+                        "status": "error",
+                        "error": f"Failed to initialize stream worker: {e}"
                     }
                 })
-
-        with self.lock:
-            self.active_app_streams[stream_id] = {
-                "running": True,
-                "pid": pid,
-                "hwnd": hwnd,
-                "fps": fps,
-                "quality": quality,
-                "desktop_mode": desktop_mode,
-                "interactive": bool(payload.get("interactive", True)),
-                "correlation_id": correlation_id,
-                "app_id": app_id,
-                "app_name": app_name,
-                "start_time": time.time()
-            }
-
-        threading.Thread(target=self._app_stream_worker_loop, args=(stream_id,), daemon=True).start()
 
     def handle_app_stream_stop(self, payload):
         stream_id = payload.get("stream_id")
@@ -8583,7 +8599,7 @@ class CyberVPSAgent:
         elif c_type == "AppWindowFrame":
             threading.Thread(target=self.handle_app_window_frame, args=(payload,), daemon=True).start()
         elif c_type in ["AppStreamStart", "RemoteDesktopStart"]:
-            self.handle_app_stream_start(payload)
+            threading.Thread(target=self.handle_app_stream_start, args=(payload,), daemon=True).start()
         elif c_type in ["AppStreamStop", "RemoteDesktopStop"]:
             self.handle_app_stream_stop(payload)
         elif c_type in ["AppStreamSelectWindow", "RemoteDesktopSelectWindow"]:

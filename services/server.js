@@ -2693,16 +2693,18 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        if (!db.machines.has(machine_id)) {
+        const targetMachine = findMachine(machine_id);
+        if (!targetMachine && !db.machines.has(machine_id)) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
           return;
         }
+        const resolvedMachineId = targetMachine ? targetMachine.id : machine_id;
 
         const correlationId = payload.correlation_id || ('corr_stream_' + crypto.randomUUID().slice(0, 8));
         const streamToken = 'app_stream_tok_' + crypto.randomBytes(16).toString('hex');
         db.appStreamAuthTokens.set(streamToken, {
-          machine_id,
+          machine_id: resolvedMachineId,
           pid: pid ? parseInt(pid, 10) : null,
           hwnd: hwnd ? parseInt(hwnd, 10) : null,
           app_id: app_id || null,
@@ -2717,7 +2719,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({
           success: true,
           token: streamToken,
-          machine_id,
+          machine_id: resolvedMachineId,
           pid,
           hwnd,
           correlation_id: correlationId,
@@ -2760,16 +2762,18 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        if (!db.machines.has(machine_id)) {
+        const targetMachine = findMachine(machine_id);
+        if (!targetMachine && !db.machines.has(machine_id)) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
           return;
         }
+        const resolvedMachineId = targetMachine ? targetMachine.id : machine_id;
 
         const correlationId = payload.correlation_id || ('corr_rdp_' + crypto.randomUUID().slice(0, 8));
         const streamToken = 'cvps_rdp_tok_' + crypto.randomBytes(16).toString('hex');
         const sessionRecord = {
-          machine_id,
+          machine_id: resolvedMachineId,
           desktop_mode: true,
           interactive: payload.interactive !== false,
           correlation_id: correlationId,
@@ -2780,13 +2784,13 @@ const server = http.createServer(async (req, res) => {
         db.appStreamAuthTokens.set(streamToken, sessionRecord);
         if (db.remoteDesktopTokens) db.remoteDesktopTokens.set(streamToken, sessionRecord);
 
-        logAudit('remote_desktop_session_created', auth.role || 'operator', machine_id, `Created remote desktop session token for ${machine_id} (interactive: ${sessionRecord.interactive})`);
+        logAudit('remote_desktop_session_created', auth.role || 'operator', resolvedMachineId, `Created remote desktop session token for ${resolvedMachineId} (interactive: ${sessionRecord.interactive})`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
           token: streamToken,
-          machine_id,
+          machine_id: resolvedMachineId,
           desktop_mode: true,
           interactive: sessionRecord.interactive,
           expires_in: 60,
@@ -2802,18 +2806,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 2A-2C. REMOTE DESKTOP CAPABILITY & ENGINE STATUS
-  // 2A-2C. REMOTE DESKTOP CAPABILITY & ENGINE STATUS
   if (pathname === '/api/v1/remote-desktop/status' && method === 'GET') {
-    const machineId = parsedUrl.searchParams.get('machine_id');
-    if (machineId && !db.machines.has(machineId)) {
+    const rawId = parsedUrl.searchParams.get('machine_id');
+    const targetM = rawId ? findMachine(rawId) : null;
+    const machineId = targetM ? targetM.id : rawId;
+    if (machineId && !targetM && !db.machines.has(machineId)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
       return;
     }
 
-    const m = machineId ? db.machines.get(machineId) : null;
+    const m = targetM || (machineId ? db.machines.get(machineId) : null);
     const isOnline = m ? (m.status === 'online') : true;
-    const activeStreams = machineId ? Array.from(db.appStreams.values()).filter(s => s.machineId === machineId) : [];
+    const targetLower = machineId ? String(machineId).toLowerCase().trim() : '';
+    const activeStreams = machineId ? Array.from(db.appStreams.values()).filter(s => String(s.machineId).toLowerCase().trim() === targetLower) : [];
 
     const engines = [
       {
@@ -2882,13 +2888,15 @@ const server = http.createServer(async (req, res) => {
 
   // 2A-2C. REMOTE DESKTOP 360-DEGREE DIAGNOSTICS & DISPLAY PROBE
   if (pathname === '/api/v1/remote-desktop/diagnostics' && method === 'GET') {
-    const machineId = parsedUrl.searchParams.get('machine_id');
-    if (!machineId || !db.machines.has(machineId)) {
+    const rawId = parsedUrl.searchParams.get('machine_id');
+    const targetM = rawId ? findMachine(rawId) : null;
+    const machineId = targetM ? targetM.id : rawId;
+    if (!machineId || (!targetM && !db.machines.has(machineId))) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
       return;
     }
-    const m = db.machines.get(machineId);
+    const m = targetM || db.machines.get(machineId);
     const isOnline = m.status === 'online';
 
     if (!isOnline) {
@@ -2950,19 +2958,23 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const payload = JSON.parse(body || '{}');
-        const machineId = payload.machine_id;
-        if (!machineId || !db.machines.has(machineId)) {
+        const rawId = payload.machine_id;
+        const targetM = rawId ? findMachine(rawId) : null;
+        const machineId = targetM ? targetM.id : rawId;
+        if (!machineId || (!targetM && !db.machines.has(machineId))) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Machine not found in fleet' }));
           return;
         }
 
-        const m = db.machines.get(machineId);
+        const m = targetM || db.machines.get(machineId);
 
         // Terminate any hanging streams for this machine
         let closedStreamsCount = 0;
+        const targetLower = String(machineId).toLowerCase().trim();
         for (const [sId, stream] of db.appStreams.entries()) {
-          if (stream.machineId === machineId) {
+          if (String(stream.machineId).toLowerCase().trim() === targetLower) {
+            if (stream.gracePollTimer) clearInterval(stream.gracePollTimer);
             if (stream.ackTimer) clearTimeout(stream.ackTimer);
             if (stream.firstFrameTimer) clearTimeout(stream.firstFrameTimer);
             if (stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
@@ -7706,9 +7718,11 @@ const wssAppStream = new WebSocketServer({ noServer: true });
 
 function verifyAppStreamAuthorization(request, parsedUrl) {
   const machineId = parsedUrl.searchParams.get('machine_id');
-  if (!machineId || !db.machines.has(machineId)) {
+  const targetMachine = findMachine(machineId);
+  if (!machineId || (!targetMachine && !db.machines.has(machineId))) {
     return { authorized: false, error: 'Machine not found in fleet', status: 404 };
   }
+  const resolvedMachineId = targetMachine ? targetMachine.id : machineId;
 
   // 1. Browser Origin verification: block untrusted cross-origin stream hijack attempts
   const origin = request.headers['origin'];
@@ -7768,13 +7782,15 @@ function verifyAppStreamAuthorization(request, parsedUrl) {
     if (Date.now() > record.expires_at) {
       return { authorized: false, error: 'Unauthorized: Stream token expired', status: 401 };
     }
-    if (record.machine_id !== machineId) {
+    const tokenMachineLower = String(record.machine_id).toLowerCase().trim();
+    const queryMachineLower = String(resolvedMachineId).toLowerCase().trim();
+    if (tokenMachineLower !== queryMachineLower) {
       return { authorized: false, error: 'Forbidden: Stream token not authorized for this machine', status: 403 };
     }
     return {
       authorized: true,
       user: record.user || 'paired_client',
-      machineId,
+      machineId: resolvedMachineId,
       desktopMode: Boolean(record.desktop_mode),
       interactive: record.interactive !== false,
       pid: record.pid,
@@ -8216,21 +8232,33 @@ wssAppStream.on('connection', (ws, request) => {
     return;
   }
 
-  const machineId = auth.machineId;
+  const targetMachine = findMachine(auth.machineId);
+  const resolvedMachineId = targetMachine ? targetMachine.id : auth.machineId;
+  const machineId = resolvedMachineId;
   const pid = parsed.searchParams.get('pid') ? parseInt(parsed.searchParams.get('pid'), 10) : auth.pid;
   const hwnd = parsed.searchParams.get('hwnd') ? parseInt(parsed.searchParams.get('hwnd'), 10) : auth.hwnd;
   const fps = Math.min(Math.max(parseInt(parsed.searchParams.get('fps') || '25', 10), 1), 60);
   const quality = Math.min(Math.max(parseInt(parsed.searchParams.get('quality') || '80', 10), 20), 95);
 
-  if (!machineId || !db.machines.has(machineId)) {
+  if (!machineId || (!targetMachine && !db.machines.has(machineId))) {
     ws.send(JSON.stringify({ type: 'status', status: 'error', error: 'Machine not found' }));
     ws.close();
     return;
   }
 
+  const streamId = 'app_stream_' + crypto.randomUUID().slice(0, 8);
+  const correlationId = auth.correlationId || parsed.searchParams.get('correlation_id') || ('corr_stream_' + crypto.randomUUID().slice(0, 8));
+  const appId = parsed.searchParams.get('app_id') || auth.appId || null;
+  const appName = parsed.searchParams.get('name') || parsed.searchParams.get('app_name') || auth.appName || null;
+  const isDesktopMode = Boolean(auth.desktopMode || (parsed.searchParams.get('desktop_mode') === 'true') || (!pid && !hwnd));
+  const isInteractive = Boolean(auth.interactive !== false && (parsed.searchParams.get('view_only') !== 'true'));
+
   // Remove stale desktop streams for this machine to prevent stream collision
   for (const [existingId, existingStream] of db.appStreams.entries()) {
     if (existingStream.machineId === machineId && existingId !== streamId) {
+      if (existingStream.gracePollTimer) clearInterval(existingStream.gracePollTimer);
+      if (existingStream.ackTimer) clearTimeout(existingStream.ackTimer);
+      if (existingStream.firstFrameTimer) clearTimeout(existingStream.firstFrameTimer);
       try {
         if (existingStream.wsBrowser && existingStream.wsBrowser.readyState === WebSocket.OPEN) {
           existingStream.wsBrowser.close(1000, 'Replaced by newer session');
@@ -8240,12 +8268,7 @@ wssAppStream.on('connection', (ws, request) => {
     }
   }
 
-  const streamId = 'app_stream_' + crypto.randomUUID().slice(0, 8);
-  const correlationId = auth.correlationId || parsed.searchParams.get('correlation_id') || ('corr_stream_' + crypto.randomUUID().slice(0, 8));
-  const appId = parsed.searchParams.get('app_id') || auth.appId || null;
-  const appName = parsed.searchParams.get('name') || parsed.searchParams.get('app_name') || auth.appName || null;
-
-  db.appStreams.set(streamId, {
+  const streamObj = {
     streamId,
     correlationId,
     machineId,
@@ -8254,10 +8277,17 @@ wssAppStream.on('connection', (ws, request) => {
     appId,
     appName,
     wsBrowser: ws,
+    desktopMode: isDesktopMode,
+    interactive: isInteractive,
+    agentAcked: false,
     startedAt: Date.now(),
     frameCount: 0,
-    byteCount: 0
-  });
+    byteCount: 0,
+    gracePollTimer: null,
+    ackTimer: null,
+    firstFrameTimer: null
+  };
+  db.appStreams.set(streamId, streamObj);
 
   logAudit('app_stream_started', auth.user || 'user', machineId, `Live app stream ${streamId} started for PID ${pid || 'active'} (HWND: ${hwnd || 'auto'}) [corr: ${correlationId}]`);
 
@@ -8274,89 +8304,124 @@ wssAppStream.on('connection', (ws, request) => {
     }
   } catch (_) {}
 
-  const isAgentConnected = db.connectedAgents.has(machineId) && db.connectedAgents.get(machineId).readyState === WebSocket.OPEN;
-  const isDesktopMode = Boolean(auth.desktopMode || (parsed.searchParams.get('desktop_mode') === 'true') || (!pid && !hwnd));
-  const isInteractive = Boolean(auth.interactive !== false && (parsed.searchParams.get('view_only') !== 'true'));
+  function dispatchStreamStart() {
+    const activeWs = getAgentSocket(resolvedMachineId);
+    if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return;
 
-  const streamObj = db.appStreams.get(streamId);
-  if (streamObj) {
-    streamObj.desktopMode = isDesktopMode;
-    streamObj.agentAcked = false;
+    sendServerCommand(resolvedMachineId, {
+      type: isDesktopMode ? 'RemoteDesktopStart' : 'AppStreamStart',
+      payload: {
+        stream_id: streamId,
+        correlation_id: correlationId,
+        desktop_mode: isDesktopMode,
+        interactive: isInteractive,
+        pid: pid || null,
+        hwnd: hwnd || null,
+        app_id: appId,
+        app_name: appName,
+        fps,
+        quality
+      }
+    });
+
+    // Milestone 2: Agent command dispatched
+    try {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'stage',
+          stage: 'agent_notified',
+          stream_id: streamId,
+          correlation_id: correlationId,
+          agent_online: true,
+          desktop_mode: isDesktopMode,
+          interactive: isInteractive,
+          timestamp: Date.now()
+        }));
+      }
+    } catch (_) {}
+
+    // 12-second Agent Acknowledgement Timeout Guard (tolerant of WAN latency)
+    if (streamObj) {
+      streamObj.ackTimer = setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN && !streamObj.agentAcked) {
+          ws.send(JSON.stringify({
+            type: 'status',
+            status: 'agent_ack_timeout',
+            stream_id: streamId,
+            correlation_id: correlationId,
+            error: `Host machine '${resolvedMachineId}' did not acknowledge remote desktop stream within 12 seconds. The agent might be unresponsive or stopping.`
+          }));
+        }
+      }, 12000);
+
+      // 25-second First Frame Timeout Guard
+      streamObj.firstFrameTimer = setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN && (!streamObj.frameCount || streamObj.frameCount === 0)) {
+          ws.send(JSON.stringify({
+            type: 'status',
+            status: 'first_frame_timeout',
+            stream_id: streamId,
+            correlation_id: correlationId,
+            error: `Timed out waiting for initial desktop frame from '${resolvedMachineId}' (25s). Verify display server or virtual display is running.`
+          }));
+        }
+      }, 25000);
+    }
   }
 
-  if (!isAgentConnected) {
-    try {
+  let currentAgentWs = getAgentSocket(resolvedMachineId);
+  if (!currentAgentWs || currentAgentWs.readyState !== WebSocket.OPEN) {
+    const status = getMachineStatus(targetMachine);
+    if (status === 'online' || status === 'reconnecting') {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'stage',
+            stage: 'agent_connecting',
+            stream_id: streamId,
+            correlation_id: correlationId,
+            message: 'Establishing direct display relay bridge to host agent...'
+          }));
+        }
+      } catch (_) {}
+
+      let attempts = 0;
+      const maxAttempts = 24; // 24 * 250ms = 6s
+      const gracePollTimer = setInterval(() => {
+        attempts++;
+        currentAgentWs = getAgentSocket(resolvedMachineId);
+        if (currentAgentWs && currentAgentWs.readyState === WebSocket.OPEN) {
+          clearInterval(gracePollTimer);
+          if (streamObj) streamObj.gracePollTimer = null;
+          dispatchStreamStart();
+        } else if (attempts >= maxAttempts) {
+          clearInterval(gracePollTimer);
+          if (streamObj) streamObj.gracePollTimer = null;
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'status',
+              status: 'agent_offline',
+              stream_id: streamId,
+              correlation_id: correlationId,
+              error: `Host machine '${resolvedMachineId}' is offline or agent relay bridge did not connect within grace period.`
+            }));
+          }
+        }
+      }, 250);
+      if (streamObj) streamObj.gracePollTimer = gracePollTimer;
+    } else {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'status',
           status: 'agent_offline',
           stream_id: streamId,
           correlation_id: correlationId,
-          error: `Target host '${machineId}' is currently offline. Cannot initiate live desktop stream.`
+          error: `Target host '${resolvedMachineId}' is currently offline. Cannot initiate live desktop stream.`
         }));
       }
-    } catch (_) {}
-    return;
-  }
-
-  sendServerCommand(machineId, {
-    type: isDesktopMode ? 'RemoteDesktopStart' : 'AppStreamStart',
-    payload: {
-      stream_id: streamId,
-      correlation_id: correlationId,
-      desktop_mode: isDesktopMode,
-      interactive: isInteractive,
-      pid: pid || null,
-      hwnd: hwnd || null,
-      app_id: appId,
-      app_name: appName,
-      fps,
-      quality
     }
-  });
-
-  // Milestone 2: Agent command dispatched
-  try {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'stage',
-        stage: 'agent_notified',
-        stream_id: streamId,
-        correlation_id: correlationId,
-        agent_online: true,
-        desktop_mode: isDesktopMode,
-        interactive: isInteractive,
-        timestamp: Date.now()
-      }));
-    }
-  } catch (_) {}
-
-  // 5-second Agent Acknowledgement Timeout Guard
-  if (streamObj) {
-    streamObj.ackTimer = setTimeout(() => {
-      if (ws.readyState === WebSocket.OPEN && !streamObj.agentAcked) {
-        ws.send(JSON.stringify({
-          type: 'status',
-          status: 'agent_ack_timeout',
-          stream_id: streamId,
-          correlation_id: correlationId,
-          error: `Host machine '${machineId}' did not acknowledge remote desktop stream within 5 seconds. The agent might be unresponsive or stopping.`
-        }));
-      }
-    }, 5000);
-
-    // 12-second First Frame Timeout Guard
-    streamObj.firstFrameTimer = setTimeout(() => {
-      if (ws.readyState === WebSocket.OPEN && (!streamObj.frameCount || streamObj.frameCount === 0)) {
-        ws.send(JSON.stringify({
-          type: 'status',
-          status: 'first_frame_timeout',
-          stream_id: streamId,
-          correlation_id: correlationId,
-          error: `Timed out waiting for initial desktop frame from '${machineId}' (12s). Verify display server or virtual display is running.`
-        }));
-      }
-    }, 12000);
+  } else {
+    dispatchStreamStart();
   }
 
   ws.on('message', (data) => {
@@ -8414,6 +8479,7 @@ wssAppStream.on('connection', (ws, request) => {
   ws.on('close', () => {
     const stream = db.appStreams.get(streamId);
     if (stream) {
+      if (stream.gracePollTimer) clearInterval(stream.gracePollTimer);
       if (stream.ackTimer) clearTimeout(stream.ackTimer);
       if (stream.firstFrameTimer) clearTimeout(stream.firstFrameTimer);
     }
@@ -8927,11 +8993,12 @@ function handleAgentMessage(ws, msg) {
     const { stream_id } = payload;
     const stream = db.appStreams.get(stream_id);
     if (stream) {
+      stream.agentAcked = true;
       if (stream.ackTimer) {
         clearTimeout(stream.ackTimer);
         stream.ackTimer = null;
       }
-      if (stream.firstFrameTimer) {
+      if (stream.firstFrameTimer && (payload.status === 'session_0_isolated' || payload.status === 'no_display' || payload.status === 'error')) {
         clearTimeout(stream.firstFrameTimer);
         stream.firstFrameTimer = null;
       }
