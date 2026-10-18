@@ -42,9 +42,17 @@ LOG_DIR = os.path.join(ACTIVE_DIR, "logs")
 CONFIG_FILE = os.path.join(ACTIVE_DIR, "config.json")
 AGENT_PID_FILE = os.path.join(RUN_DIR, "agent.pid")
 AGENT_LOG_FILE = os.path.join(LOG_DIR, "agent.log")
+VAULT_DIR = os.path.join(ACTIVE_DIR, "vault")
+QUARANTINE_DIR = os.path.join(ACTIVE_DIR, "quarantine")
+SNAPSHOTS_DIR = os.path.join(VAULT_DIR, "snapshots")
+PILLAR_REGISTRY_FILE = os.path.join(VAULT_DIR, "pillar_registry.json")
+PILLAR_INCIDENTS_FILE = os.path.join(VAULT_DIR, "pillar_incidents.json")
 
 os.makedirs(RUN_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(VAULT_DIR, exist_ok=True)
+os.makedirs(QUARANTINE_DIR, exist_ok=True)
+os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
 
 
 def is_admin():
@@ -819,6 +827,468 @@ def cmd_replit(args):
         sys.exit(1)
 
 
+def compute_sha256(filepath):
+    if not filepath or not os.path.isfile(filepath):
+        return None
+    h = hashlib.sha256()
+    try:
+        with open(filepath, "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def lock_os_session():
+    locked = False
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            locked = bool(ctypes.windll.user32.LockWorkStation())
+        except Exception:
+            locked = False
+    else:
+        try:
+            p = subprocess.run(["loginctl", "lock-session"], capture_output=True, timeout=2)
+            locked = (p.returncode == 0)
+        except Exception:
+            pass
+        if not locked:
+            try:
+                p = subprocess.run(["xdg-screensaver", "lock"], capture_output=True, timeout=2)
+                locked = (p.returncode == 0)
+            except Exception:
+                pass
+    return locked
+
+
+def load_pillar_registry():
+    try:
+        if os.path.exists(PILLAR_REGISTRY_FILE):
+            with open(PILLAR_REGISTRY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def save_pillar_registry(reg):
+    try:
+        os.makedirs(VAULT_DIR, exist_ok=True)
+        tmp = PILLAR_REGISTRY_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(reg, f, indent=2)
+        os.replace(tmp, PILLAR_REGISTRY_FILE)
+    except Exception:
+        pass
+
+
+def load_pillar_incidents():
+    try:
+        if os.path.exists(PILLAR_INCIDENTS_FILE):
+            with open(PILLAR_INCIDENTS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+
+def record_pillar_incident(incident):
+    try:
+        os.makedirs(VAULT_DIR, exist_ok=True)
+        incidents = load_pillar_incidents()
+        incidents.insert(0, incident)
+        if len(incidents) > 100:
+            incidents = incidents[:100]
+        tmp = PILLAR_INCIDENTS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(incidents, f, indent=2)
+        os.replace(tmp, PILLAR_INCIDENTS_FILE)
+    except Exception:
+        pass
+
+
+def notify_server_security(endpoint, payload):
+    cfg = load_config()
+    server_url = cfg.get("server_url", "https://cybervps-space-station.up.railway.app").rstrip("/")
+    url = f"{server_url}{endpoint}"
+    token = cfg.get("token", "")
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "CyberVPS-Security-CLI/1.0"
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            res_body = resp.read().decode("utf-8")
+            return json.loads(res_body)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def cmd_security(args):
+    sub = args[0].lower() if args else "status"
+    sub_args = args[1:]
+    cfg = load_config()
+    machine_id = cfg.get("machine_id", f"cvps_{socket.gethostname()}")
+
+    if sub in ["blackout"]:
+        b_action = sub_args[0].lower() if sub_args else "status"
+        b_args = sub_args[1:]
+
+        if b_action == "activate":
+            assert_is_admin("security blackout activate")
+            reason = "Emergency containment activated by operator via CLI"
+            lock_session = True
+            for i, a in enumerate(b_args):
+                if a in ["--reason", "-r"] and i + 1 < len(b_args):
+                    reason = b_args[i + 1]
+                elif a == "--no-lock":
+                    lock_session = False
+
+            print("================================================================")
+            print("  🚨 CYBERVPS SPACE STATION — EMERGENCY BLACKOUT CONTAINMENT   ")
+            print("================================================================")
+            print(f"  Target Machine  : {machine_id}")
+            print(f"  Reason          : {reason}")
+            print(f"  Session Locking : {'ENABLED' if lock_session else 'DISABLED'}")
+            print("----------------------------------------------------------------")
+
+            # 1. Lock OS physical session if requested
+            session_locked = False
+            if lock_session:
+                print("  [*] Engaging physical workstation session lock...")
+                session_locked = lock_os_session()
+                print(f"  * Workstation Lock   : {'ENGAGED ✅' if session_locked else 'NOT SUPPORTED ON THIS HEADLESS NODE ⚠️'}")
+
+            # 2. Emergency quarantine backup of all protected files
+            reg = load_pillar_registry()
+            import shutil
+            quarantine_copies = 0
+            for path, meta in reg.items():
+                if os.path.isfile(path):
+                    safe_name = os.path.basename(path) + "_" + str(int(time.time())) + ".bak"
+                    q_dest = os.path.join(QUARANTINE_DIR, safe_name)
+                    try:
+                        shutil.copy2(path, q_dest)
+                        quarantine_copies += 1
+                    except Exception:
+                        pass
+            print(f"  * Protected Vault   : {quarantine_copies} files quarantined to {QUARANTINE_DIR}")
+
+            # 3. Log incident locally
+            import uuid
+            incident = {
+                "id": "inc_blackout_" + uuid.uuid4().hex[:8],
+                "machine_id": machine_id,
+                "state": "BLACKOUT_ACTIVE",
+                "reason": reason,
+                "operator": "CLI_Administrator",
+                "started_at": int(time.time()),
+                "session_locked": session_locked,
+                "quarantined_files": quarantine_copies
+            }
+            record_pillar_incident(incident)
+
+            # 4. Notify central control plane
+            print("  [*] Broadcasting emergency blackout state to control plane...")
+            res = notify_server_security("/api/v1/security/blackout/activate", {
+                "machine_id": machine_id,
+                "reason": reason,
+                "lock_session": lock_session,
+                "operator": "CLI_Administrator"
+            })
+            if res.get("success"):
+                print("  * Control Plane     : BLACKOUT REGISTERED ✅")
+            else:
+                print(f"  * Control Plane     : {res.get('error', 'Sync queued locally')} ℹ️")
+
+            print("================================================================")
+            print("  🚨 EMERGENCY CONTAINMENT ACTIVE — SYSTEM SECURED             ")
+            print("  Run 'cybervps security blackout release' to restore operations.")
+            print("================================================================")
+
+        elif b_action == "release":
+            assert_is_admin("security blackout release")
+            print("================================================================")
+            print("  🔓 RELEASING EMERGENCY BLACKOUT CONTAINMENT                  ")
+            print("================================================================")
+            import uuid
+            incident = {
+                "id": "inc_release_" + uuid.uuid4().hex[:8],
+                "machine_id": machine_id,
+                "state": "RELEASED",
+                "released_at": int(time.time()),
+                "operator": "CLI_Administrator"
+            }
+            record_pillar_incident(incident)
+
+            res = notify_server_security("/api/v1/security/blackout/release", {
+                "machine_id": machine_id,
+                "operator": "CLI_Administrator"
+            })
+            if res.get("success"):
+                print("  * Control Plane     : CONTAINMENT RELEASED ✅")
+            else:
+                print(f"  * Control Plane     : {res.get('error', 'Recorded locally')} ℹ️")
+
+            print("  [+] System returned to NORMAL operational status.")
+            print("================================================================")
+
+        elif b_action == "status":
+            incidents = load_pillar_incidents()
+            latest = incidents[0] if incidents else None
+            is_active = (latest and latest.get("state") == "BLACKOUT_ACTIVE")
+            print("================================================================")
+            print("  CYBERVPS SECURITY — BLACKOUT CONTAINMENT STATUS              ")
+            print("================================================================")
+            print(f"  Current State       : {'🚨 BLACKOUT ACTIVE' if is_active else '✅ NORMAL (UNLOCKED)'}")
+            if latest:
+                print(f"  Latest Incident ID  : {latest.get('id')}")
+                print(f"  Reason              : {latest.get('reason')}")
+                print(f"  Operator            : {latest.get('operator')}")
+                print(f"  Started At          : {time.ctime(latest.get('started_at', 0)) if latest.get('started_at') else '--'}")
+                if latest.get("released_at"):
+                    print(f"  Released At         : {time.ctime(latest.get('released_at'))}")
+            print("================================================================")
+
+        else:
+            print(f"Unknown blackout action: '{b_action}'. Use: activate, release, status")
+            sys.exit(1)
+
+    elif sub in ["protect"]:
+        assert_is_admin("security protect")
+        if not sub_args:
+            print("Error: specify path to protect. Example: cybervps security protect /path/to/file")
+            sys.exit(1)
+        file_path = os.path.abspath(sub_args[0])
+        policy = "immutable_snapshot"
+        if "--policy" in sub_args:
+            idx = sub_args.index("--policy")
+            if idx + 1 < len(sub_args):
+                policy = sub_args[idx + 1]
+
+        if not os.path.isfile(file_path):
+            print(f"[X] Error: File does not exist: {file_path}")
+            sys.exit(1)
+
+        import shutil
+        sha = compute_sha256(file_path)
+        size = os.path.getsize(file_path)
+        snap_id = hashlib.sha256(file_path.encode("utf-8")).hexdigest()[:16] + "_" + os.path.basename(file_path)
+        snap_path = os.path.join(SNAPSHOTS_DIR, snap_id)
+        shutil.copy2(file_path, snap_path)
+
+        reg = load_pillar_registry()
+        reg[file_path] = {
+            "path": file_path,
+            "sha256": sha,
+            "size": size,
+            "policy": policy,
+            "snapshot_path": snap_path,
+            "protected_at": int(time.time()),
+            "last_verified": int(time.time()),
+            "status": "VERIFIED"
+        }
+        save_pillar_registry(reg)
+
+        notify_server_security("/api/v1/security/pillar/protect", {
+            "machine_id": machine_id,
+            "path": file_path,
+            "policy": policy
+        })
+
+        print("================================================================")
+        print("  🛡️ OBSIDIAN PILLAR — FILE REGISTERED UNDER HARDCORE PROTECTION ")
+        print("================================================================")
+        print(f"  File Path      : {file_path}")
+        print(f"  SHA-256 Digest : {sha}")
+        print(f"  File Size      : {size} bytes")
+        print(f"  Vault Snapshot : {snap_path}")
+        print(f"  Status         : VERIFIED ✅")
+        print("================================================================")
+
+    elif sub in ["scan", "verify"]:
+        target = os.path.abspath(sub_args[0]) if sub_args else None
+        reg = load_pillar_registry()
+        if not reg:
+            print("[*] No files currently registered in Obsidian Pillar.")
+            print("    Use 'cybervps security protect <path>' to register critical files.")
+            return
+
+        to_check = [target] if (target and target in reg) else list(reg.keys())
+        tampered_count = 0
+        verified_count = 0
+
+        print("================================================================")
+        print("  🔍 OBSIDIAN PILLAR — CRYPTOGRAPHIC INTEGRITY AUDIT           ")
+        print("================================================================")
+        for p in to_check:
+            meta = reg[p]
+            expected_hash = meta.get("sha256")
+            if not os.path.exists(p):
+                meta["status"] = "MISSING"
+                meta["last_verified"] = int(time.time())
+                tampered_count += 1
+                status_str = "MISSING ❌"
+            else:
+                curr_hash = compute_sha256(p)
+                if curr_hash == expected_hash:
+                    meta["status"] = "VERIFIED"
+                    meta["last_verified"] = int(time.time())
+                    verified_count += 1
+                    status_str = "VERIFIED ✅"
+                else:
+                    meta["status"] = "TAMPER_DETECTED"
+                    meta["last_verified"] = int(time.time())
+                    tampered_count += 1
+                    status_str = f"TAMPERED 🚨 (Hash: {curr_hash[:12]}...)"
+
+            print(f"  * {p}")
+            print(f"    Expected: {expected_hash[:24]}... -> {status_str}")
+
+        save_pillar_registry(reg)
+
+        # Notify server
+        notify_server_security("/api/v1/security/pillar/verify", {
+            "machine_id": machine_id,
+            "path": target or ""
+        })
+
+        print("----------------------------------------------------------------")
+        print(f"  Total Audited: {len(to_check)} | Verified: {verified_count} | Tampered/Missing: {tampered_count}")
+
+        # Check multi-deletion / tamper threshold (>=3 files)
+        if tampered_count >= 3:
+            print("\n  🚨 [CRITICAL ALERT] 3 or more protected files tampered or deleted!")
+            print("  🚨 Autonomic containment triggering emergency blackout...")
+            cmd_security(["blackout", "activate", "--reason", f"Autonomic containment: {tampered_count} protected files tampered"])
+        print("================================================================")
+
+    elif sub in ["restore"]:
+        assert_is_admin("security restore")
+        if not sub_args:
+            print("Error: specify path to restore. Example: cybervps security restore /path/to/file")
+            sys.exit(1)
+        file_path = os.path.abspath(sub_args[0])
+        reg = load_pillar_registry()
+        record = reg.get(file_path)
+        if not record:
+            print(f"[X] Error: File '{file_path}' is not registered in Obsidian Pillar.")
+            sys.exit(1)
+
+        snap_path = record.get("snapshot_path")
+        if not snap_path or not os.path.isfile(snap_path):
+            print(f"[X] Error: Snapshot file missing at {snap_path}")
+            sys.exit(1)
+
+        expected_hash = record.get("sha256")
+        snap_hash = compute_sha256(snap_path)
+        if snap_hash != expected_hash:
+            print(f"[X] Error: Snapshot corruption detected! Hash mismatch: {snap_hash} != {expected_hash}")
+            sys.exit(1)
+
+        import shutil
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        tmp_restore = file_path + ".restore.tmp"
+        shutil.copy2(snap_path, tmp_restore)
+        os.replace(tmp_restore, file_path)
+
+        record["status"] = "VERIFIED"
+        record["last_verified"] = int(time.time())
+        save_pillar_registry(reg)
+
+        notify_server_security("/api/v1/security/pillar/restore", {
+            "machine_id": machine_id,
+            "path": file_path
+        })
+
+        print("================================================================")
+        print("  ✨ OBSIDIAN PILLAR — ATOMIC RESTORATION COMPLETE              ")
+        print("================================================================")
+        print(f"  Restored Path : {file_path}")
+        print(f"  Verified Hash : {expected_hash}")
+        print(f"  Integrity     : VERIFIED & RESTORED ✅")
+        print("================================================================")
+
+    elif sub in ["files", "list"]:
+        reg = load_pillar_registry()
+        print("================================================================")
+        print(f"  OBSIDIAN PILLAR — PROTECTED FILES REGISTRY ({len(reg)} files)")
+        print("================================================================")
+        if not reg:
+            print("  (No files registered. Use 'cybervps security protect <path>')")
+        else:
+            for p, meta in reg.items():
+                st = meta.get("status", "UNKNOWN")
+                st_icon = "✅" if st == "VERIFIED" else "🚨" if st == "TAMPER_DETECTED" else "⚠️"
+                print(f"  {st_icon} {p}")
+                print(f"     Hash   : {meta.get('sha256', '--')[:32]}...")
+                print(f"     Size   : {meta.get('size', 0)} bytes | Policy: {meta.get('policy', 'immutable_snapshot')}")
+                print(f"     Status : {st} (Audited: {time.ctime(meta.get('last_verified', 0))})")
+                print("")
+        print("================================================================")
+
+    elif sub in ["incidents", "logs"]:
+        incidents = load_pillar_incidents()
+        print("================================================================")
+        print(f"  OBSIDIAN SECURITY — INCIDENTS & AUDIT LOG ({len(incidents)} entries)")
+        print("================================================================")
+        if not incidents:
+            print("  (No security incidents recorded. System running normally.)")
+        else:
+            for inc in incidents[:15]:
+                print(f"  * [{inc.get('id', 'inc_')}] State: {inc.get('state')} | Operator: {inc.get('operator')}")
+                print(f"    Reason   : {inc.get('reason', '--')}")
+                print(f"    Timestamp: {time.ctime(inc.get('started_at') or inc.get('released_at') or 0)}")
+                if inc.get("session_locked") is not None:
+                    print(f"    Lock     : {'Session Locked' if inc.get('session_locked') else 'No Lock'}")
+                print("")
+        print("================================================================")
+
+    elif sub in ["status"]:
+        reg = load_pillar_registry()
+        incidents = load_pillar_incidents()
+        latest = incidents[0] if incidents else None
+        is_active = (latest and latest.get("state") == "BLACKOUT_ACTIVE")
+
+        verified_cnt = sum(1 for m in reg.values() if m.get("status") == "VERIFIED")
+        tampered_cnt = sum(1 for m in reg.values() if m.get("status") in ["TAMPER_DETECTED", "MISSING"])
+
+        print("================================================================")
+        print("   CYBERVPS SPACE STATION — OBSIDIAN SECURITY OVERVIEW          ")
+        print("================================================================")
+        print(f"  Containment Status   : {'🚨 BLACKOUT ACTIVE' if is_active else '✅ NORMAL (UNLOCKED)'}")
+        print(f"  Protected Files      : {len(reg)}")
+        print(f"  Verified Intact (SHA): {verified_cnt} ✅")
+        print(f"  Tampered / Missing   : {tampered_cnt} {'🚨' if tampered_cnt > 0 else '✅'}")
+        print(f"  Vault Storage        : {VAULT_DIR}")
+        print(f"  Quarantine Storage   : {QUARANTINE_DIR}")
+        print(f"  Snapshots Isolated   : {SNAPSHOTS_DIR}")
+        print(f"  Total Incidents Log  : {len(incidents)}")
+        print("----------------------------------------------------------------")
+        print("  Commands available:")
+        print("    cybervps security blackout <status|activate|release>")
+        print("    cybervps security protect <path> [--policy immutable_snapshot]")
+        print("    cybervps security scan / verify [path]")
+        print("    cybervps security restore <path>")
+        print("    cybervps security files")
+        print("    cybervps security incidents")
+        print("================================================================")
+
+    else:
+        print(f"Unknown security command: '{sub}'.")
+        print("Available: status, blackout, protect, scan, verify, restore, files, incidents")
+        sys.exit(1)
+
+
 def main():
     argv = sys.argv[1:]
     command = None
@@ -866,6 +1336,8 @@ def main():
         cmd_reboot()
     elif command in ["logs", "log"]:
         cmd_logs()
+    elif command in ["security", "blackout", "pillar"]:
+        cmd_security(cmd_args)
     elif command in ["version", "-v", "--version"]:
         print(f"CyberVPS Space Station v{VERSION} ({platform.system().lower()}-{platform.machine().lower()})")
     elif command in ["doctor", "check"]:
@@ -883,6 +1355,7 @@ Commands:
   start           Start CyberVPS Host Agent in background (24/7 connection)
   stop            Stop running background Host Agent (Admin Required)
   restart         Restart background Host Agent (Admin Required)
+  security <cmd>  Obsidian Pillar file protection & Emergency Blackout containment
   repair, heal    Autonomous self-healing and shadow copy repair (Admin Required)
   update, rebuild Pull latest agent updates and refresh daemon (Admin Required)
   uninstall       Cleanly uninstall host agent and remove autostart (Admin Required)

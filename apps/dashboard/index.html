@@ -915,6 +915,7 @@
       <li><a class="nav-item" onclick="navigate('replit')"><svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="8 10 12 14 8 18"/><line x1="14" x2="18" y1="18" y2="18"/></svg>Replit VPS Lab</a></li>
       <li><a class="nav-item" onclick="navigate('doctor')"><svg viewBox="0 0 24 24"><path d="m22 12-4-4v3H3v2h15v3l4-4z"/><circle cx="12" cy="12" r="10"/></svg>System Doctor</a></li>
       <li><a class="nav-item" onclick="navigate('logs')"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>Activity Logs</a></li>
+      <li><a class="nav-item" onclick="navigate('security')"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Obsidian Security & Blackout</a></li>
       <li><a class="nav-item" onclick="navigate('settings')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</a></li>
     </ul>
 
@@ -1850,6 +1851,150 @@
               <div id="desktop-env-warning-text" style="font-size:0.8rem;"></div>
             </div>
 
+            <!-- WORKSTATION: ZERO-INSTALL HIGH-PERFORMANCE WEB REMOTE DESKTOP -->
+            <div id="desktop-workstation-card" class="card" style="margin-bottom:1.5rem; border:1px solid rgba(6,182,212,0.3); background:var(--bg-surface); box-shadow:0 12px 36px rgba(0,0,0,0.4);">
+              <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; background:linear-gradient(135deg, rgba(6,182,212,0.06), rgba(139,92,246,0.06)); border-bottom:1px solid var(--border-subtle); padding:0.85rem 1.25rem;">
+                <div style="display:flex; align-items:center; gap:0.65rem;">
+                  <div style="width:10px; height:10px; border-radius:50%; background:var(--text-muted);" id="desktop-ws-status-indicator"></div>
+                  <div>
+                    <div style="font-weight:700; font-size:0.95rem; color:var(--text-primary); display:flex; align-items:center; gap:0.5rem;">
+                      <span>Web Remote Desktop Workstation</span>
+                      <span class="badge badge-cyan" style="font-size:0.68rem; padding:0.15rem 0.5rem;">LIVE HD ENGINE</span>
+                      <span id="desktop-ws-state-badge" class="badge badge-subtle" style="font-size:0.68rem; padding:0.15rem 0.5rem;">Standby</span>
+                    </div>
+                    <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">
+                      Zero-install hardware-accelerated Windows GDI+ capture & full mouse / physical keyboard control
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Workstation Control Toolbar -->
+                <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                  <!-- Mode switch -->
+                  <button id="btn-desktop-mode-toggle" class="btn btn-secondary" onclick="toggleDesktopInteractionMode()" title="Switch between Interactive Control and View-Only" style="font-size:0.76rem; padding:0.3rem 0.65rem;">
+                    🎮 Interactive: ON
+                  </button>
+
+                  <!-- FPS Presets -->
+                  <select id="desktop-fps-select" class="form-control" onchange="onDesktopFpsChange()" style="font-size:0.75rem; padding:0.3rem 0.55rem; height:auto; background:var(--bg-base); max-width:135px;">
+                    <option value="15">15 FPS (Eco)</option>
+                    <option value="30" selected>30 FPS (Fluid HD)</option>
+                    <option value="60">60 FPS (Ultra HD)</option>
+                  </select>
+
+                  <!-- Scaling Mode -->
+                  <button id="btn-desktop-scaling" class="btn btn-secondary" onclick="toggleDesktopScaling()" title="Toggle Fit to Screen / 1:1 Pixel Mapping" style="font-size:0.76rem; padding:0.3rem 0.65rem;">
+                    Fit Window
+                  </button>
+
+                  <!-- Fullscreen -->
+                  <button id="btn-desktop-fullscreen" class="btn btn-secondary" onclick="toggleDesktopFullscreen()" title="Fullscreen Workstation (Esc to exit)" style="font-size:0.76rem; padding:0.3rem 0.65rem;">
+                    ⛶ Fullscreen
+                  </button>
+
+                  <!-- Clipboard -->
+                  <button class="btn btn-secondary" onclick="openDesktopClipboardModal()" title="Sync Windows & Local Clipboard" style="font-size:0.76rem; padding:0.3rem 0.65rem;">
+                    📋 Clipboard
+                  </button>
+
+                  <!-- Primary Connect / Disconnect Action Button -->
+                  <button id="btn-desktop-web-connect" class="btn btn-primary" onclick="toggleWebRemoteDesktop()" style="font-size:0.8rem; padding:0.35rem 0.95rem; font-weight:600;">
+                    🚀 Connect Remote Desktop
+                  </button>
+                </div>
+              </div>
+
+              <!-- Quick Remote Key Combos Bar -->
+              <div id="desktop-quick-keys-bar" style="background:rgba(15,23,42,0.85); border-bottom:1px solid var(--border-subtle); padding:0.35rem 1.25rem; display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap; font-size:0.74rem;">
+                <span style="color:var(--text-muted); font-size:0.72rem; margin-right:0.35rem; font-weight:600;">Quick Keys:</span>
+                <button class="btn btn-secondary" onclick="sendDesktopSpecialKey('win')" style="font-size:0.72rem; padding:0.2rem 0.55rem;" title="Send Windows Key">⊞ Win</button>
+                <button class="btn btn-secondary" onclick="sendDesktopSpecialKey('alt_tab')" style="font-size:0.72rem; padding:0.2rem 0.55rem;" title="Switch Applications">⎇ Alt+Tab</button>
+                <button class="btn btn-secondary" onclick="sendDesktopSpecialKey('taskmgr')" style="font-size:0.72rem; padding:0.2rem 0.55rem;" title="Task Manager (Ctrl+Shift+Esc)">⚡ Taskmgr</button>
+                <button class="btn btn-secondary" onclick="sendDesktopSpecialKey('ctrl_alt_del')" style="font-size:0.72rem; padding:0.2rem 0.55rem;" title="Security Screen">Ctrl+Alt+End</button>
+                <button class="btn btn-secondary" onclick="sendDesktopSpecialKey('paste')" style="font-size:0.72rem; padding:0.2rem 0.55rem;" title="Send Ctrl+V Paste">📋 Ctrl+V</button>
+                <button class="btn btn-secondary" onclick="sendDesktopSpecialKey('lock')" style="font-size:0.72rem; padding:0.2rem 0.55rem;" title="Lock Screen (Win+L)">🔒 Lock</button>
+
+                <!-- Direct Text Injection Input -->
+                <div style="display:flex; align-items:center; gap:0.35rem; margin-left:auto; max-width:320px; flex:1;">
+                  <input type="text" id="desktop-quick-text-input" class="form-control" placeholder="Type text to send to remote PC..." style="font-size:0.74rem; padding:0.2rem 0.5rem; height:auto; background:var(--bg-base);" onkeydown="if(event.key==='Enter') sendQuickTextInput();">
+                  <button class="btn btn-secondary" onclick="sendQuickTextInput()" style="font-size:0.72rem; padding:0.2rem 0.55rem; white-space:nowrap;">Send</button>
+                </div>
+              </div>
+
+              <!-- Telemetry HUD Bar (Truthful Real-Time Metrics) -->
+              <div style="background:rgba(10,14,24,0.95); border-bottom:1px solid var(--border-subtle); padding:0.35rem 1.25rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; font-family:var(--font-mono); font-size:0.73rem;">
+                <div style="display:flex; align-items:center; gap:1.2rem; flex-wrap:wrap;">
+                  <div>
+                    <span style="color:var(--text-muted);">Resolution:</span>
+                    <span id="desktop-ws-res" style="color:var(--accent-cyan); font-weight:600; margin-left:0.25rem;">-- &times; --</span>
+                  </div>
+                  <div>
+                    <span style="color:var(--text-muted);">FPS:</span>
+                    <span id="desktop-ws-fps" style="color:#22c55e; font-weight:600; margin-left:0.25rem;">-- FPS</span>
+                  </div>
+                  <div>
+                    <span style="color:var(--text-muted);">Bitrate:</span>
+                    <span id="desktop-ws-bitrate" style="color:#38bdf8; font-weight:600; margin-left:0.25rem;">-- kbps</span>
+                  </div>
+                  <div>
+                    <span style="color:var(--text-muted);">Latency (Ping):</span>
+                    <span id="desktop-ws-ping" style="color:#a78bfa; font-weight:600; margin-left:0.25rem;">-- ms</span>
+                  </div>
+                </div>
+
+                <div style="display:flex; align-items:center; gap:0.75rem;">
+                  <span id="desktop-ws-input-badge" class="badge badge-success" style="font-size:0.65rem; padding:0.15rem 0.45rem;">INPUT: MOUSE + KEYBOARD</span>
+                  <span id="desktop-ws-engine-tag" class="badge badge-cyan" style="font-size:0.65rem; padding:0.15rem 0.45rem;">Windows Native GDI+</span>
+                </div>
+              </div>
+
+              <!-- Workstation Surface Viewport Container -->
+              <div id="desktop-ws-surface-container" style="min-height:480px; max-height:76vh; background:#05070c; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; outline:none;" tabindex="0">
+                
+                <!-- Standby / Disconnected State -->
+                <div id="desktop-ws-standby" style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:3.5rem 1.5rem; text-align:center; max-width:560px;">
+                  <div style="width:64px; height:64px; border-radius:var(--radius-md); background:linear-gradient(135deg, rgba(6,182,212,0.15), rgba(139,92,246,0.15)); border:1px solid rgba(6,182,212,0.3); display:flex; align-items:center; justify-content:center; margin-bottom:1.25rem;">
+                    <svg viewBox="0 0 24 24" style="width:32px; height:32px; stroke:var(--accent-cyan); fill:none; stroke-width:1.8;"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/><circle cx="12" cy="10" r="2"/></svg>
+                  </div>
+                  <h3 style="font-size:1.15rem; color:var(--text-primary); margin-bottom:0.4rem;" id="desktop-ws-standby-title">Interactive Remote Desktop Ready</h3>
+                  <p style="font-size:0.82rem; color:var(--text-secondary); line-height:1.6; margin-bottom:1.5rem;" id="desktop-ws-standby-desc">
+                    Connect directly to the physical Windows desktop session with zero client software needed. Enjoy full mouse control, physical keyboard forwarding, clipboard synchronization, and 60 FPS live video streaming.
+                  </p>
+                  <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; justify-content:center;">
+                    <button class="btn btn-primary" onclick="toggleWebRemoteDesktop()" style="padding:0.45rem 1.25rem; font-size:0.85rem; font-weight:600;">
+                      🚀 Connect to Remote Desktop
+                    </button>
+                    <button class="btn btn-secondary" onclick="provisionMeshCentralEngine(currentDesktopState.machineId)" style="padding:0.45rem 1rem; font-size:0.82rem;" title="Provision MeshCentral Open-Source Remote Desktop">
+                      🌐 Provision MeshCentral
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Loading State -->
+                <div id="desktop-ws-loading" style="display:none; flex-direction:column; align-items:center; justify-content:center; padding:3.5rem 1.5rem; gap:1rem; text-align:center;">
+                  <div class="spinner" style="width:40px; height:40px; border:3px solid rgba(6,182,212,0.2); border-top-color:var(--accent-cyan); border-radius:50%; animation:spin 1s linear infinite;"></div>
+                  <div>
+                    <strong style="color:var(--text-primary); font-size:1rem; display:block;" id="desktop-ws-loading-title">Authorizing Remote Desktop Session...</strong>
+                    <span style="color:var(--text-muted); font-size:0.8rem;" id="desktop-ws-loading-desc">Minting single-use ticket and establishing hardware capture pipeline</span>
+                  </div>
+                </div>
+
+                <!-- Error State -->
+                <div id="desktop-ws-error" style="display:none; text-align:center; padding:3rem 1.5rem; max-width:540px;">
+                  <div style="width:54px; height:54px; border-radius:50%; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 1rem; color:#ef4444; font-size:1.6rem;">
+                    ⚠️
+                  </div>
+                  <h3 id="desktop-ws-error-title" style="color:var(--text-primary); font-size:1.05rem; margin-bottom:0.4rem;">Session Initialization Failed</h3>
+                  <p id="desktop-ws-error-desc" style="color:var(--text-secondary); font-size:0.82rem; line-height:1.5; margin-bottom:1.25rem;"></p>
+                  <button class="btn btn-primary" onclick="toggleWebRemoteDesktop()">🔄 Retry Connection</button>
+                </div>
+
+                <!-- Canvas Surface -->
+                <canvas id="desktop-workstation-canvas" style="display:none; max-width:100%; max-height:100%; object-fit:contain; box-shadow:0 12px 40px rgba(0,0,0,0.8); cursor:default;"></canvas>
+
+              </div>
+            </div>
+
             <!-- Protocol Integrations Grid (RDP, VNC, RustDesk) -->
             <div class="protocol-grid">
               <!-- CARD 1: Windows RDP -->
@@ -1980,6 +2125,44 @@
                   <button id="btn-toggle-rustdesk-svc" class="btn btn-secondary" onclick="toggleRustDeskService()" style="font-size:0.75rem;">
                     Restart RustDesk Service
                   </button>
+                </div>
+              </div>
+
+              <!-- CARD 4: MeshCentral (Apache-2.0 Unattended Remote Desktop Fleet) -->
+              <div id="card-meshcentral" class="protocol-card">
+                <div>
+                  <div class="protocol-header">
+                    <div class="protocol-title">
+                      <svg viewBox="0 0 24 24" style="width:18px; height:18px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
+                      MeshCentral Fleet Engine
+                    </div>
+                    <span id="badge-mesh-status" class="badge badge-subtle">Checking...</span>
+                  </div>
+                  <div class="protocol-desc">
+                    Official Apache-2.0 open-source web-based remote desktop, file management, and unattended device management engine.
+                  </div>
+                  <div class="protocol-status-box" id="mesh-status-box">
+                    <div>Engine: <span style="color:var(--text-primary);">Apache-2.0 Open Source</span></div>
+                    <div>Agent Status: <span id="mesh-agent-label" style="color:var(--text-primary);">Ready to Provision</span></div>
+                    <div>Web Gateway: <span id="mesh-gateway-label" style="color:var(--text-primary);">Integrated</span></div>
+                    <div>Feature Set: <span style="color:var(--text-primary);">RDP / VNC / Terminal / Files</span></div>
+                  </div>
+                </div>
+
+                <div class="protocol-actions">
+                  <div style="display:flex; flex-direction:column; gap:0.45rem;">
+                    <a id="btn-mesh-console" class="btn btn-primary" href="https://meshcentral.com" target="_blank" style="font-size:0.78rem; text-align:center;">
+                      🚀 Open MeshCentral Web Console
+                    </a>
+                    <div style="display:flex; gap:0.35rem;">
+                      <button id="btn-mesh-provision" class="btn btn-secondary" onclick="provisionMeshCentralEngine(currentDesktopState.machineId)" style="flex:1; font-size:0.74rem;" title="1-Click Provision MeshCentral Agent">
+                        ⚡ 1-Click Provision
+                      </button>
+                      <button id="btn-mesh-copy-cmd" class="btn btn-secondary" onclick="copyMeshCentralInstallCommand()" style="flex:1; font-size:0.74rem;" title="Copy Agent Installation Command">
+                        📋 Copy Command
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2615,6 +2798,148 @@
         </div>
       </div>
 
+      <!-- VIEW: OBSIDIAN PILLAR HARDCORE FILE PROTECTION & EMERGENCY BLACKOUT -->
+      <div id="view-security" class="view-panel" style="display:none;">
+        <!-- Top Toolbar & Machine Selection -->
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div class="card-header" style="flex-wrap:wrap; gap:1rem;">
+            <div>
+              <div class="card-title" style="display:flex; align-items:center; gap:0.5rem;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Obsidian Pillar & Emergency Containment (Blackout Mode)
+              </div>
+              <div class="card-desc">Hardcore cryptographic file protection (SHA-256 snapshots in isolated vault), automatic tamper-triggered containment, and reversible OS workstation session lock.</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.65rem; flex-wrap:wrap;">
+              <select id="security-machine-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:220px;" onchange="loadSecurityView()">
+                <option value="">Select Target Machine...</option>
+              </select>
+              <button class="btn btn-secondary" onclick="loadSecurityView()" title="Refresh Security State">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>Refresh</span>
+              </button>
+              <button class="btn btn-secondary" onclick="runPillarVerifyAll()" title="Audit all SHA-256 hashes against disk">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span>Audit Hashes</span>
+              </button>
+              <button class="btn btn-primary" onclick="openProtectFileModal()">
+                🛡️ Protect File
+              </button>
+            </div>
+          </div>
+
+          <!-- Dynamic Blackout Containment Alert Banner -->
+          <div style="padding:1.25rem; border-top:1px solid var(--border-subtle);">
+            <!-- Active Blackout Alert (Shown when blackout is ACTIVE) -->
+            <div id="security-blackout-active-banner" style="display:none; background:rgba(239, 68, 68, 0.15); border:2px solid var(--status-danger); border-radius:var(--radius-sm); padding:1rem 1.25rem; margin-bottom:1rem; animation:pulse 2s infinite;">
+              <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
+                <div style="display:flex; align-items:center; gap:0.75rem;">
+                  <div style="font-size:1.75rem;">🚨</div>
+                  <div>
+                    <strong style="color:var(--status-danger); font-size:1rem; text-transform:uppercase; letter-spacing:0.04em;">EMERGENCY BLACKOUT CONTAINMENT ACTIVE</strong>
+                    <div id="sec-blackout-active-details" style="font-size:0.8rem; color:var(--text-secondary); margin-top:2px;">
+                      Normal remote control and operations suspended. Physical workstation locked.
+                    </div>
+                  </div>
+                </div>
+                <button class="btn btn-primary" onclick="confirmReleaseBlackout()" style="background:#22c55e; border-color:#22c55e; font-weight:700;">
+                  🔓 Release Containment & Resume
+                </button>
+              </div>
+            </div>
+
+            <!-- Normal Status Banner (Shown when blackout is NOT active) -->
+            <div id="security-blackout-normal-banner" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.85rem 1.25rem; margin-bottom:1rem;">
+              <div style="display:flex; align-items:center; gap:0.75rem;">
+                <span class="badge" style="background:rgba(34,197,94,0.15); color:var(--status-success); border:1px solid rgba(34,197,94,0.3); padding:0.25rem 0.6rem; border-radius:4px; font-weight:600;">SYSTEM NORMAL / UNLOCKED</span>
+                <div style="font-size:0.82rem; color:var(--text-muted);">
+                  Continuous autonomic integrity monitoring armed. (>3 file modifications trigger emergency containment).
+                </div>
+              </div>
+              <button class="btn btn-secondary" onclick="openBlackoutModal()" style="color:var(--status-danger); border-color:rgba(239,68,68,0.4); font-weight:600;">
+                🚨 Enter Emergency Blackout
+              </button>
+            </div>
+
+            <!-- Security KPI Cards -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:1rem;">
+              <div style="background:var(--bg-card); padding:1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Protected Files</div>
+                <div id="sec-stat-total-files" style="font-size:1.5rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;">0</div>
+              </div>
+              <div style="background:var(--bg-card); padding:1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Verified (SHA-256)</div>
+                <div id="sec-stat-verified" style="font-size:1.5rem; font-weight:700; color:var(--status-success); margin-top:0.25rem;">0</div>
+              </div>
+              <div style="background:var(--bg-card); padding:1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Tampered / Missing</div>
+                <div id="sec-stat-tampered" style="font-size:1.5rem; font-weight:700; color:var(--status-success); margin-top:0.25rem;">0</div>
+              </div>
+              <div style="background:var(--bg-card); padding:1rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:600;">Containment State</div>
+                <div id="sec-stat-state" style="font-size:1.5rem; font-weight:700; color:var(--accent-cyan); margin-top:0.25rem;">NORMAL</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Protected Files Registry Table -->
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Obsidian Pillar Protected Files Registry</div>
+              <div class="card-desc">Every file is backed by a verified isolated SHA-256 snapshot for instant atomic restoration upon unauthorized tampering or ransomware encryption.</div>
+            </div>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Protected File Path</th>
+                  <th>SHA-256 Checksum</th>
+                  <th>Size</th>
+                  <th>Protection Policy</th>
+                  <th>Integrity Status</th>
+                  <th>Last Verified</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="pillar-files-table-body">
+                <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2rem;">Select a machine to inspect protected files registry.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Security Incident Audit Log -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Security Incidents & Containment History</div>
+              <div class="card-desc">Audit trail of blackout triggers, physical screen locks, emergency quarantine snapshots, and restoration events.</div>
+            </div>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Incident ID</th>
+                  <th>Timestamp</th>
+                  <th>State / Action</th>
+                  <th>Reason</th>
+                  <th>Operator</th>
+                  <th>Session Lock</th>
+                  <th>Quarantine Copies</th>
+                </tr>
+              </thead>
+              <tbody id="pillar-incidents-table-body">
+                <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2rem;">No security incidents on record.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- VIEW: SETTINGS -->
       <div id="view-settings" class="view-panel" style="display:none;">
         <div class="card">
@@ -2717,6 +3042,67 @@
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- MODAL: OBSIDIAN PILLAR PROTECT FILE -->
+  <div id="modal-pillar-protect" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <strong style="color:var(--text-primary); font-size:1rem;">🛡️ Register File Under Obsidian Pillar</strong>
+        <button class="btn-icon" onclick="closeProtectFileModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Absolute File Path</label>
+          <input type="text" id="modal-pillar-path" class="form-control" placeholder="e.g. C:\CyberVPS\config.json or /etc/cybervps.conf">
+          <span style="font-size:0.75rem; color:var(--text-muted);">The agent will compute the initial SHA-256 hash and create an immutable isolated snapshot in the vault.</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Protection Policy</label>
+          <select id="modal-pillar-policy" class="form-control">
+            <option value="immutable_snapshot" selected>Immutable Snapshot (Automatic Atomic Restore)</option>
+            <option value="quarantine_on_tamper">Quarantine & Contain on Tamper</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeProtectFileModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitProtectFile()">Protect File</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: EMERGENCY BLACKOUT ACTIVATION -->
+  <div id="modal-blackout-activate" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header" style="border-bottom:1px solid rgba(239,68,68,0.3);">
+        <strong style="color:var(--status-danger); font-size:1rem; display:flex; align-items:center; gap:0.5rem;">
+          <span>🚨</span> Activate Emergency Blackout Mode
+        </strong>
+        <button class="btn-icon" onclick="closeBlackoutModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:var(--radius-sm); padding:0.75rem; margin-bottom:1rem; font-size:0.8rem; color:var(--text-secondary);">
+          <strong>Warning:</strong> Blackout mode immediately suspends non-administrative remote sessions, locks physical workstation screen input, and backs up all protected vault files to quarantine.
+        </div>
+        <div class="form-group">
+          <label class="form-label">Incident Reason / Threat Summary</label>
+          <input type="text" id="modal-blackout-reason" class="form-control" placeholder="e.g. Unauthorized local access attempt / ransomware alert">
+        </div>
+        <div class="form-group" style="display:flex; align-items:center; gap:0.5rem;">
+          <input type="checkbox" id="modal-blackout-lock" checked style="width:16px; height:16px;">
+          <label for="modal-blackout-lock" style="font-size:0.82rem; color:var(--text-primary); cursor:pointer;">
+            Lock active physical workstation desktop session (user32.LockWorkStation / loginctl lock-session)
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeBlackoutModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitActivateBlackout()" style="background:#ef4444; border-color:#ef4444;">
+          🚨 Confirm Emergency Blackout
+        </button>
+      </div>
     </div>
   </div>
 
@@ -3391,6 +3777,9 @@
           </div>
 
           <!-- Controls -->
+          <button class="btn btn-secondary" onclick="toggleAppStreamInteractive()" id="app-stream-btn-interactive" title="Toggle Interactive Mouse & Keyboard Control" style="padding:0.25rem 0.6rem; font-size:0.75rem;">
+            🎮 Control: OFF
+          </button>
           <button class="btn btn-secondary" onclick="toggleAppStreamFit()" id="app-stream-btn-fit" title="Toggle Fit / 1:1 Sharpness" style="padding:0.25rem 0.6rem; font-size:0.75rem;">
             Fit
           </button>
@@ -3492,6 +3881,40 @@
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- MODAL: REMOTE DESKTOP CLIPBOARD SYNCHRONIZATION -->
+  <div id="modal-desktop-clipboard" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeDesktopClipboardModal();">
+    <div class="modal" style="max-width:540px; background:var(--bg-surface); border:1px solid var(--border-subtle); box-shadow:0 24px 60px rgba(0,0,0,0.8);">
+      <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; padding:0.85rem 1.25rem; border-bottom:1px solid var(--border-subtle);">
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <svg viewBox="0 0 24 24" style="width:18px; height:18px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+          <strong style="color:var(--text-primary); font-size:0.95rem;">Bidirectional Clipboard Sync</strong>
+        </div>
+        <button class="btn-icon" onclick="closeDesktopClipboardModal()" style="font-size:1.1rem; line-height:1;">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:1.25rem;">
+        <p style="font-size:0.78rem; color:var(--text-secondary); margin-bottom:1rem;">
+          Exchange text between your local browser clipboard and the remote Windows desktop clipboard (Unicode UTF-16).
+        </p>
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label style="font-size:0.75rem; color:var(--text-muted); font-weight:600; display:block; margin-bottom:0.35rem;">Clipboard Text Buffer</label>
+          <textarea id="desktop-clipboard-text" class="form-control" rows="6" placeholder="Type or paste text here to synchronize..." style="font-family:var(--font-mono); font-size:0.82rem; width:100%; resize:vertical;"></textarea>
+        </div>
+        <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+          <button class="btn btn-secondary" onclick="fetchRemoteClipboard()" style="font-size:0.78rem;">
+            📥 Read Remote Clipboard
+          </button>
+          <button class="btn btn-primary" onclick="sendToRemoteClipboard()" style="font-size:0.78rem;">
+            📤 Send to Remote Clipboard
+          </button>
+          <button class="btn btn-secondary" onclick="copyBufferToLocalClipboard()" style="font-size:0.78rem; margin-left:auto;">
+            📋 Copy to Local
+          </button>
+        </div>
+        <div id="desktop-clipboard-status" style="display:none; margin-top:0.75rem; padding:0.4rem 0.65rem; border-radius:4px; font-size:0.74rem; font-family:var(--font-mono);"></div>
+      </div>
     </div>
   </div>
 
@@ -4531,6 +4954,7 @@
       const selectFm = document.getElementById('fm-machine-select');
       const selectSvc = document.getElementById('services-machine-select');
       const selectDesktop = document.getElementById('desktop-machine-select');
+      const selectSec = document.getElementById('security-machine-select');
 
       const modalOpts = appState.machines.map(m => `<option value="${m.id}">${escapeHtml(m.friendly_name || m.hostname || m.id)} (${m.os || 'Linux'})</option>`).join('');
       if (selectModal) {
@@ -4546,7 +4970,7 @@
         return `<option value="${m.id}">${icon} ${escapeHtml(m.friendly_name || m.hostname || m.id)} [${statusText} - ${m.os || 'Linux'}]</option>`;
       }).join('');
 
-      [selectTerm, selectDetails, selectFm, selectSvc, selectDesktop].forEach(sel => {
+      [selectTerm, selectDetails, selectFm, selectSvc, selectDesktop, selectSec].forEach(sel => {
         if (!sel) return;
         const cur = sel.value || appState.selectedMachineId;
         sel.innerHTML = '<option value="">Select Target Machine...</option>' + standardOpts;
@@ -6326,7 +6750,810 @@
       }
     }
 
-        // 9.5 REPLIT VPS LAB FUNCTIONS
+    // =========================================================================
+    // 9.35 HIGH-PERFORMANCE INTERACTIVE WEB REMOTE DESKTOP & MESHCENTRAL FLEET
+    // =========================================================================
+
+    const webDesktopState = {
+      ws: null,
+      sessionId: 0,
+      machineId: null,
+      streamId: null,
+      correlationId: null,
+      interactive: true,
+      fitScaling: true,
+      targetFps: 30,
+      targetQuality: 70,
+      firstFrameReceived: false,
+      fpsCounter: 0,
+      lastFpsCheck: 0,
+      byteCounter: 0,
+      lastByteCheck: 0,
+      lastPingSent: 0,
+      pingTimer: null,
+      lastMouseSent: 0,
+      activeKeys: new Set(),
+      remoteResolution: { width: 0, height: 0 }
+    };
+
+    function toggleWebRemoteDesktop() {
+      if (webDesktopState.ws && (webDesktopState.ws.readyState === WebSocket.OPEN || webDesktopState.ws.readyState === WebSocket.CONNECTING)) {
+        stopWebRemoteDesktop();
+      } else {
+        const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+        if (!machineId) {
+          showToast('Please select a target machine first', 'error');
+          return;
+        }
+        startWebRemoteDesktop(machineId);
+      }
+    }
+
+    async function startWebRemoteDesktop(machineId) {
+      stopWebRemoteDesktop(false);
+
+      webDesktopState.machineId = machineId;
+      webDesktopState.firstFrameReceived = false;
+      const currentSessionId = ++webDesktopState.sessionId;
+      const correlationId = 'corr_rdp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      webDesktopState.correlationId = correlationId;
+
+      // Update UI to Loading State
+      setWebDesktopUiState('loading');
+      updateWebDesktopConnectButton(true);
+
+      const standbyTitle = document.getElementById('desktop-ws-loading-title');
+      if (standbyTitle) standbyTitle.innerText = `Connecting to ${machineId}...`;
+
+      try {
+        const pairingKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || '';
+        const sessionToken = (typeof appConfig !== 'undefined' && appConfig.sessionToken) || localStorage.getItem('cvps_session_token') || '';
+
+        // Request single-use 60s stream token via POST /api/v1/remote-desktop/session
+        const tokenRes = await apiRequest('/api/v1/remote-desktop/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: machineId,
+            desktop_mode: true,
+            interactive: webDesktopState.interactive,
+            fps: webDesktopState.targetFps,
+            quality: webDesktopState.targetQuality,
+            correlation_id: correlationId,
+            pairing_key: pairingKey,
+            session_token: sessionToken
+          })
+        });
+
+        if (currentSessionId !== webDesktopState.sessionId) return;
+
+        const tokenPayload = (tokenRes && tokenRes.data) ? tokenRes.data : tokenRes;
+        if (!tokenRes || !tokenRes.ok || !tokenPayload || !tokenPayload.token) {
+          const errDetail = tokenPayload?.error || tokenRes?.error || 'Failed to authorize remote desktop session.';
+          showWebDesktopError(errDetail);
+          return;
+        }
+
+        const streamToken = tokenPayload.token;
+        const gatewayPath = tokenPayload.gateway_url || '/api/v1/remote-desktop/stream';
+
+        // Establish WebSocket connection
+        const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+        const wsUrl = new URL(base);
+        wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl.pathname = gatewayPath;
+        wsUrl.searchParams.set('machine_id', machineId);
+        wsUrl.searchParams.set('token', streamToken);
+        wsUrl.searchParams.set('correlation_id', correlationId);
+        wsUrl.searchParams.set('fps', String(webDesktopState.targetFps));
+        wsUrl.searchParams.set('quality', String(webDesktopState.targetQuality));
+        wsUrl.searchParams.set('desktop_mode', 'true');
+        if (!webDesktopState.interactive) {
+          wsUrl.searchParams.set('view_only', 'true');
+        }
+
+        const ws = new WebSocket(wsUrl.toString());
+        webDesktopState.ws = ws;
+
+        ws.onopen = () => {
+          if (currentSessionId !== webDesktopState.sessionId) return;
+          const badge = document.getElementById('desktop-ws-state-badge');
+          if (badge) {
+            badge.className = 'badge badge-cyan';
+            badge.innerText = 'Connected';
+          }
+          const dot = document.getElementById('desktop-ws-status-indicator');
+          if (dot) dot.style.background = 'var(--status-success)';
+
+          // Start RTT Ping
+          webDesktopState.lastPingSent = performance.now();
+          ws.send(JSON.stringify({ type: 'ping', client_time: Date.now() }));
+          webDesktopState.pingTimer = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              webDesktopState.lastPingSent = performance.now();
+              ws.send(JSON.stringify({ type: 'ping', client_time: Date.now() }));
+            }
+          }, 2000);
+        };
+
+        ws.onmessage = (event) => {
+          if (currentSessionId !== webDesktopState.sessionId) return;
+          try {
+            const msg = JSON.parse(event.data);
+            handleWebDesktopMessage(msg, currentSessionId);
+          } catch (e) {
+            console.warn('WebRemoteDesktop message parse error:', e);
+          }
+        };
+
+        ws.onerror = (e) => {
+          console.warn('WebRemoteDesktop WebSocket error:', e);
+        };
+
+        ws.onclose = (e) => {
+          if (currentSessionId !== webDesktopState.sessionId) return;
+          stopWebRemoteDesktop(false);
+          if (e.code === 4001) {
+            showWebDesktopError('Session unauthorized or token expired. Please retry.');
+          } else if (!webDesktopState.firstFrameReceived) {
+            showWebDesktopError('Connection closed before first video frame arrived.');
+          }
+        };
+
+      } catch (err) {
+        showWebDesktopError(err.message || 'Stream initialization error');
+      }
+    }
+
+    function handleWebDesktopMessage(msg, sessionId) {
+      if (sessionId && sessionId !== webDesktopState.sessionId) return;
+
+      if (msg.type === 'pong') {
+        const rtt = Math.max(1, Math.round(performance.now() - webDesktopState.lastPingSent));
+        const pingEl = document.getElementById('desktop-ws-ping');
+        if (pingEl) pingEl.innerText = `${rtt} ms`;
+        return;
+      }
+
+      if (msg.type === 'stage') {
+        if (msg.stage === 'ws_connected') {
+          webDesktopState.streamId = msg.stream_id;
+        }
+        return;
+      }
+
+      if (msg.type === 'status') {
+        if (msg.status === 'unauthorized') {
+          showWebDesktopError('Unauthorized: ' + (msg.error || 'Token expired'));
+        } else if (msg.status === 'error' || msg.status === 'disconnected') {
+          showWebDesktopError(msg.error || 'Host agent disconnected');
+        }
+        return;
+      }
+
+      if (msg.type === 'clipboard') {
+        const txtBox = document.getElementById('desktop-clipboard-text');
+        const stBox = document.getElementById('desktop-clipboard-status');
+        if (txtBox && typeof msg.text === 'string') {
+          txtBox.value = msg.text;
+        }
+        if (stBox) {
+          stBox.style.display = 'block';
+          stBox.style.background = 'rgba(34,197,94,0.15)';
+          stBox.style.color = '#22c55e';
+          stBox.innerText = `✅ Clipboard received from remote host (${(msg.text || '').length} chars)`;
+        }
+        return;
+      }
+
+      if (msg.type === 'frame') {
+        if (!msg.data || typeof msg.data !== 'string' || msg.data.length < 50) return;
+
+        const canvas = document.getElementById('desktop-workstation-canvas');
+        if (!canvas) return;
+
+        const img = new Image();
+        img.onload = () => {
+          if (sessionId && sessionId !== webDesktopState.sessionId) return;
+
+          webDesktopState.firstFrameReceived = true;
+          setWebDesktopUiState('streaming');
+
+          // Update real measured resolution
+          if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            webDesktopState.remoteResolution = { width: img.naturalWidth, height: img.naturalHeight };
+            const resEl = document.getElementById('desktop-ws-res');
+            if (resEl) resEl.innerText = `${img.naturalWidth} × ${img.naturalHeight}`;
+          }
+
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+
+          // Attach mouse & keyboard interaction listeners once
+          attachDesktopCanvasListeners(canvas);
+
+          // Calculate real measured FPS
+          webDesktopState.fpsCounter++;
+          const now = performance.now();
+          if (now - webDesktopState.lastFpsCheck >= 1000) {
+            const measuredFps = Math.round((webDesktopState.fpsCounter * 1000) / (now - webDesktopState.lastFpsCheck));
+            const fpsEl = document.getElementById('desktop-ws-fps');
+            if (fpsEl) fpsEl.innerText = `${measuredFps} FPS`;
+            webDesktopState.fpsCounter = 0;
+            webDesktopState.lastFpsCheck = now;
+          }
+
+          // Calculate real measured Bitrate
+          const byteLen = msg.data.length * 0.75;
+          webDesktopState.byteCounter += byteLen;
+          if (now - webDesktopState.lastByteCheck >= 1000) {
+            const kbps = Math.round((webDesktopState.byteCounter * 8) / (1024 * ((now - webDesktopState.lastByteCheck) / 1000)));
+            const brEl = document.getElementById('desktop-ws-bitrate');
+            if (brEl) brEl.innerText = `${kbps} kbps`;
+            webDesktopState.byteCounter = 0;
+            webDesktopState.lastByteCheck = now;
+          }
+        };
+
+        const mime = msg.format === 'bmp' ? 'image/bmp' : 'image/jpeg';
+        img.src = `data:${mime};base64,${msg.data}`;
+      }
+    }
+
+    function stopWebRemoteDesktop(resetState = true) {
+      if (webDesktopState.pingTimer) {
+        clearInterval(webDesktopState.pingTimer);
+        webDesktopState.pingTimer = null;
+      }
+      if (webDesktopState.ws) {
+        try {
+          if (webDesktopState.ws.readyState === WebSocket.OPEN) {
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'cleanup' }));
+            webDesktopState.ws.close(1000, 'User disconnected');
+          }
+        } catch (_) {}
+        webDesktopState.ws = null;
+      }
+      webDesktopState.firstFrameReceived = false;
+      webDesktopState.activeKeys.clear();
+
+      if (resetState) {
+        setWebDesktopUiState('standby');
+        updateWebDesktopConnectButton(false);
+        const resEl = document.getElementById('desktop-ws-res');
+        if (resEl) resEl.innerText = '-- × --';
+        const fpsEl = document.getElementById('desktop-ws-fps');
+        if (fpsEl) fpsEl.innerText = '-- FPS';
+        const brEl = document.getElementById('desktop-ws-bitrate');
+        if (brEl) brEl.innerText = '-- kbps';
+        const pingEl = document.getElementById('desktop-ws-ping');
+        if (pingEl) pingEl.innerText = '-- ms';
+      }
+    }
+
+    function setWebDesktopUiState(state) {
+      const standby = document.getElementById('desktop-ws-standby');
+      const loading = document.getElementById('desktop-ws-loading');
+      const error = document.getElementById('desktop-ws-error');
+      const canvas = document.getElementById('desktop-workstation-canvas');
+      const badge = document.getElementById('desktop-ws-state-badge');
+      const dot = document.getElementById('desktop-ws-status-indicator');
+
+      if (standby) standby.style.display = state === 'standby' ? 'flex' : 'none';
+      if (loading) loading.style.display = state === 'loading' ? 'flex' : 'none';
+      if (error) error.style.display = state === 'error' ? 'block' : 'none';
+      if (canvas) canvas.style.display = state === 'streaming' ? 'block' : 'none';
+
+      if (badge) {
+        if (state === 'streaming') {
+          badge.className = 'badge badge-success';
+          badge.innerText = 'Live 60FPS';
+        } else if (state === 'loading') {
+          badge.className = 'badge badge-cyan';
+          badge.innerText = 'Connecting...';
+        } else if (state === 'error') {
+          badge.className = 'badge badge-danger';
+          badge.innerText = 'Error';
+        } else {
+          badge.className = 'badge badge-subtle';
+          badge.innerText = 'Standby';
+        }
+      }
+
+      if (dot) {
+        dot.style.background = state === 'streaming' ? 'var(--status-success)' : (state === 'loading' ? 'var(--accent-cyan)' : 'var(--text-muted)');
+      }
+    }
+
+    function updateWebDesktopConnectButton(isConnected) {
+      const btn = document.getElementById('btn-desktop-web-connect');
+      if (!btn) return;
+      if (isConnected) {
+        btn.className = 'btn btn-danger';
+        btn.innerText = '⏹ Disconnect Desktop';
+      } else {
+        btn.className = 'btn btn-primary';
+        btn.innerText = '🚀 Connect Remote Desktop';
+      }
+    }
+
+    function showWebDesktopError(message) {
+      setWebDesktopUiState('error');
+      updateWebDesktopConnectButton(false);
+      const desc = document.getElementById('desktop-ws-error-desc');
+      if (desc) desc.innerText = message;
+      showToast(message, 'error');
+    }
+
+    function getCanvasCoordinates(canvas, event) {
+      if (!canvas || !canvas.width || !canvas.height) return null;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const rawX = Math.round((event.clientX - rect.left) * scaleX);
+      const rawY = Math.round((event.clientY - rect.top) * scaleY);
+      const x = Math.max(0, Math.min(canvas.width - 1, rawX));
+      const y = Math.max(0, Math.min(canvas.height - 1, rawY));
+      return { x, y };
+    }
+
+    function getActiveModifiers(e) {
+      const mods = [];
+      if (e.ctrlKey) mods.push('ctrl');
+      if (e.shiftKey) mods.push('shift');
+      if (e.altKey) mods.push('alt');
+      if (e.metaKey) mods.push('win');
+      return mods;
+    }
+
+    function attachDesktopCanvasListeners(canvas) {
+      if (canvas._listenersAttached) return;
+      canvas._listenersAttached = true;
+
+      // Prevent native context menu so right clicks are captured
+      canvas.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (!webDesktopState.interactive) return;
+        const coords = getCanvasCoordinates(canvas, e);
+        if (!coords) return;
+        sendDesktopMouseEvent('contextmenu', { ...coords, button: 'right' });
+      });
+
+      canvas.addEventListener('mousedown', (e) => {
+        if (!webDesktopState.interactive) return;
+        const coords = getCanvasCoordinates(canvas, e);
+        if (!coords) return;
+        const btnMap = { 0: 'left', 1: 'middle', 2: 'right' };
+        sendDesktopMouseEvent('down', { ...coords, button: btnMap[e.button] || 'left' });
+      });
+
+      canvas.addEventListener('mouseup', (e) => {
+        if (!webDesktopState.interactive) return;
+        const coords = getCanvasCoordinates(canvas, e);
+        if (!coords) return;
+        const btnMap = { 0: 'left', 1: 'middle', 2: 'right' };
+        sendDesktopMouseEvent('up', { ...coords, button: btnMap[e.button] || 'left' });
+      });
+
+      canvas.addEventListener('dblclick', (e) => {
+        if (!webDesktopState.interactive) return;
+        const coords = getCanvasCoordinates(canvas, e);
+        if (!coords) return;
+        sendDesktopMouseEvent('dblclick', { ...coords, button: 'left' });
+      });
+
+      canvas.addEventListener('mousemove', (e) => {
+        if (!webDesktopState.interactive) return;
+        const coords = getCanvasCoordinates(canvas, e);
+        if (!coords) return;
+        const now = performance.now();
+        const throttleMs = e.buttons > 0 ? 20 : 40;
+        if (now - webDesktopState.lastMouseSent >= throttleMs) {
+          webDesktopState.lastMouseSent = now;
+          sendDesktopMouseEvent('move', coords);
+        }
+      });
+
+      canvas.addEventListener('wheel', (e) => {
+        if (!webDesktopState.interactive) return;
+        e.preventDefault();
+        const coords = getCanvasCoordinates(canvas, e);
+        if (!coords) return;
+        sendDesktopMouseEvent('wheel', {
+          ...coords,
+          delta_x: Math.round(e.deltaX),
+          delta_y: Math.round(e.deltaY)
+        });
+      }, { passive: false });
+
+      // Keyboard events on focused container
+      const container = document.getElementById('desktop-ws-surface-container');
+      const targetElement = container || canvas;
+
+      targetElement.addEventListener('keydown', (e) => {
+        if (!webDesktopState.interactive) return;
+        const preventKeys = [
+          'Tab', 'Backspace', 'Enter', 'Escape', 'Space',
+          'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+          'Home', 'End', 'PageUp', 'PageDown', 'Delete', 'Insert',
+          'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'
+        ];
+        if (preventKeys.includes(e.key) || e.ctrlKey || e.altKey || e.metaKey) {
+          e.preventDefault();
+        }
+
+        webDesktopState.activeKeys.add(e.code || e.key);
+        sendDesktopKeyboardEvent('down', {
+          key: e.key,
+          code: e.code,
+          modifiers: getActiveModifiers(e)
+        });
+      });
+
+      targetElement.addEventListener('keyup', (e) => {
+        if (!webDesktopState.interactive) return;
+        webDesktopState.activeKeys.delete(e.code || e.key);
+        sendDesktopKeyboardEvent('up', {
+          key: e.key,
+          code: e.code,
+          modifiers: getActiveModifiers(e)
+        });
+      });
+
+      targetElement.addEventListener('blur', () => {
+        if (webDesktopState.ws && webDesktopState.ws.readyState === WebSocket.OPEN) {
+          webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'cleanup' }));
+          webDesktopState.activeKeys.clear();
+        }
+      });
+    }
+
+    function sendDesktopMouseEvent(action, payload) {
+      if (!webDesktopState.ws || webDesktopState.ws.readyState !== WebSocket.OPEN) return;
+      webDesktopState.ws.send(JSON.stringify({
+        type: 'mouse',
+        action,
+        x: payload.x,
+        y: payload.y,
+        button: payload.button || 'left',
+        delta_x: payload.delta_x || 0,
+        delta_y: payload.delta_y || 0
+      }));
+    }
+
+    function sendDesktopKeyboardEvent(action, payload) {
+      if (!webDesktopState.ws || webDesktopState.ws.readyState !== WebSocket.OPEN) return;
+      webDesktopState.ws.send(JSON.stringify({
+        type: 'keyboard',
+        action,
+        key: payload.key,
+        code: payload.code,
+        modifiers: payload.modifiers || []
+      }));
+    }
+
+    function sendDesktopSpecialKey(combo) {
+      if (!webDesktopState.ws || webDesktopState.ws.readyState !== WebSocket.OPEN) {
+        showToast('Please connect to Remote Desktop first', 'info');
+        return;
+      }
+
+      if (combo === 'win') {
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Meta', code: 'OSLeft' }));
+        setTimeout(() => {
+          if (webDesktopState.ws?.readyState === WebSocket.OPEN) {
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Meta', code: 'OSLeft' }));
+          }
+        }, 80);
+      } else if (combo === 'alt_tab') {
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Alt', code: 'AltLeft' }));
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Tab', code: 'Tab' }));
+        setTimeout(() => {
+          if (webDesktopState.ws?.readyState === WebSocket.OPEN) {
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Tab', code: 'Tab' }));
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Alt', code: 'AltLeft' }));
+          }
+        }, 120);
+      } else if (combo === 'taskmgr') {
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Control', code: 'ControlLeft' }));
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Shift', code: 'ShiftLeft' }));
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Escape', code: 'Escape' }));
+        setTimeout(() => {
+          if (webDesktopState.ws?.readyState === WebSocket.OPEN) {
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Escape', code: 'Escape' }));
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Shift', code: 'ShiftLeft' }));
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Control', code: 'ControlLeft' }));
+          }
+        }, 120);
+      } else if (combo === 'ctrl_alt_del') {
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Control', code: 'ControlLeft' }));
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Alt', code: 'AltLeft' }));
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'End', code: 'End' }));
+        setTimeout(() => {
+          if (webDesktopState.ws?.readyState === WebSocket.OPEN) {
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'End', code: 'End' }));
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Alt', code: 'AltLeft' }));
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Control', code: 'ControlLeft' }));
+          }
+        }, 120);
+      } else if (combo === 'paste') {
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Control', code: 'ControlLeft' }));
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'v', code: 'KeyV' }));
+        setTimeout(() => {
+          if (webDesktopState.ws?.readyState === WebSocket.OPEN) {
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'v', code: 'KeyV' }));
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Control', code: 'ControlLeft' }));
+          }
+        }, 100);
+      } else if (combo === 'lock') {
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'Meta', code: 'OSLeft' }));
+        webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'down', key: 'l', code: 'KeyL' }));
+        setTimeout(() => {
+          if (webDesktopState.ws?.readyState === WebSocket.OPEN) {
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'l', code: 'KeyL' }));
+            webDesktopState.ws.send(JSON.stringify({ type: 'keyboard', action: 'up', key: 'Meta', code: 'OSLeft' }));
+          }
+        }, 100);
+      }
+    }
+
+    function sendQuickTextInput() {
+      const input = document.getElementById('desktop-quick-text-input');
+      if (!input || !input.value) return;
+      const text = input.value;
+      if (!webDesktopState.ws || webDesktopState.ws.readyState !== WebSocket.OPEN) {
+        showToast('Please connect to Remote Desktop first', 'info');
+        return;
+      }
+      webDesktopState.ws.send(JSON.stringify({
+        type: 'keyboard',
+        action: 'text',
+        text
+      }));
+      input.value = '';
+      showToast(`Sent "${text}" to remote desktop`, 'success');
+    }
+
+    function toggleDesktopScaling() {
+      webDesktopState.fitScaling = !webDesktopState.fitScaling;
+      const canvas = document.getElementById('desktop-workstation-canvas');
+      const btn = document.getElementById('btn-desktop-scaling');
+      if (canvas) {
+        if (webDesktopState.fitScaling) {
+          canvas.style.maxWidth = '100%';
+          canvas.style.maxHeight = '100%';
+          canvas.style.objectFit = 'contain';
+          if (btn) btn.innerText = 'Fit Window';
+        } else {
+          canvas.style.maxWidth = 'none';
+          canvas.style.maxHeight = 'none';
+          canvas.style.objectFit = 'none';
+          if (btn) btn.innerText = '1:1 Native';
+        }
+      }
+    }
+
+    function toggleDesktopFullscreen() {
+      const container = document.getElementById('desktop-ws-surface-container');
+      if (!container) return;
+      if (!document.fullscreenElement) {
+        container.requestFullscreen?.().catch(e => {
+          showToast('Fullscreen unavailable: ' + e.message, 'warning');
+        });
+      } else {
+        document.exitFullscreen?.();
+      }
+    }
+
+    function toggleDesktopInteractionMode() {
+      webDesktopState.interactive = !webDesktopState.interactive;
+      const btn = document.getElementById('btn-desktop-mode-toggle');
+      const badge = document.getElementById('desktop-ws-input-badge');
+      if (btn) {
+        btn.innerText = webDesktopState.interactive ? '🎮 Interactive: ON' : '👁️ View-Only: ON';
+      }
+      if (badge) {
+        badge.className = webDesktopState.interactive ? 'badge badge-success' : 'badge badge-subtle';
+        badge.innerText = webDesktopState.interactive ? 'INPUT: MOUSE + KEYBOARD' : 'INPUT: VIEW ONLY';
+      }
+      showToast(`Remote Desktop mode: ${webDesktopState.interactive ? 'Interactive Control' : 'View-Only'}`, 'info');
+    }
+
+    function onDesktopFpsChange() {
+      const select = document.getElementById('desktop-fps-select');
+      if (!select) return;
+      webDesktopState.targetFps = parseInt(select.value, 10) || 30;
+      if (webDesktopState.ws && webDesktopState.ws.readyState === WebSocket.OPEN) {
+        webDesktopState.ws.send(JSON.stringify({
+          type: 'quality',
+          fps: webDesktopState.targetFps,
+          quality: webDesktopState.targetQuality
+        }));
+      }
+    }
+
+    function openDesktopClipboardModal() {
+      const modal = document.getElementById('modal-desktop-clipboard');
+      if (modal) modal.style.display = 'flex';
+      const status = document.getElementById('desktop-clipboard-status');
+      if (status) status.style.display = 'none';
+      if (webDesktopState.ws && webDesktopState.ws.readyState === WebSocket.OPEN) {
+        fetchRemoteClipboard();
+      }
+    }
+
+    function closeDesktopClipboardModal() {
+      const modal = document.getElementById('modal-desktop-clipboard');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function fetchRemoteClipboard() {
+      if (!webDesktopState.ws || webDesktopState.ws.readyState !== WebSocket.OPEN) {
+        showToast('Please connect to Remote Desktop first', 'info');
+        return;
+      }
+      webDesktopState.ws.send(JSON.stringify({
+        type: 'clipboard',
+        action: 'get'
+      }));
+      const status = document.getElementById('desktop-clipboard-status');
+      if (status) {
+        status.style.display = 'block';
+        status.style.background = 'rgba(6,182,212,0.15)';
+        status.style.color = 'var(--accent-cyan)';
+        status.innerText = 'Requesting remote Windows clipboard...';
+      }
+    }
+
+    function sendToRemoteClipboard() {
+      const txtBox = document.getElementById('desktop-clipboard-text');
+      const text = txtBox ? txtBox.value : '';
+      if (!webDesktopState.ws || webDesktopState.ws.readyState !== WebSocket.OPEN) {
+        showToast('Please connect to Remote Desktop first', 'info');
+        return;
+      }
+      webDesktopState.ws.send(JSON.stringify({
+        type: 'clipboard',
+        action: 'set',
+        text
+      }));
+      const status = document.getElementById('desktop-clipboard-status');
+      if (status) {
+        status.style.display = 'block';
+        status.style.background = 'rgba(34,197,94,0.15)';
+        status.style.color = '#22c55e';
+        status.innerText = `✅ Dispatched ${text.length} chars to remote Windows clipboard!`;
+      }
+      showToast('Dispatched to remote Windows clipboard', 'success');
+    }
+
+    function copyBufferToLocalClipboard() {
+      const txtBox = document.getElementById('desktop-clipboard-text');
+      const text = txtBox ? txtBox.value : '';
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied to local clipboard!', 'success');
+      }).catch(() => {
+        showToast('Local clipboard copy unavailable', 'warning');
+      });
+    }
+
+    // MeshCentral fleet engine helpers
+    async function provisionMeshCentralEngine(machineId) {
+      if (!machineId) {
+        machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      }
+      if (!machineId) return showToast('Please select a target machine first', 'error');
+
+      showToast(`Provisioning MeshCentral open-source engine for ${machineId}...`, 'info');
+      try {
+        const res = await apiRequest('/api/v1/remote-desktop/provision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ machine_id: machineId, engine: 'meshcentral' })
+        });
+        if (res && res.ok) {
+          showToast(`MeshCentral engine configured for ${machineId}!`, 'success');
+          await syncRemoteDesktopFleetStatus(machineId);
+        } else {
+          showToast(res?.error || 'Provisioning request completed', 'info');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function copyMeshCentralInstallCommand() {
+      const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
+      const cmd = `curl -fsSL https://cybervps-space-station.up.railway.app/install.sh | bash -s -- --enable-meshcentral`;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast(`Copied MeshCentral command: ${cmd}`, 'success');
+      }).catch(() => {
+        showToast(`MeshCentral setup command: ${cmd}`, 'info');
+      });
+    }
+
+    async function syncRemoteDesktopFleetStatus(machineId) {
+      if (!machineId) return;
+      try {
+        const res = await apiRequest(`/api/v1/remote-desktop/status?machine_id=${encodeURIComponent(machineId)}`);
+        if (res && res.ok && res.data) {
+          const d = res.data;
+          const meshBadge = document.getElementById('badge-mesh-status');
+          const meshAgent = document.getElementById('mesh-agent-label');
+          const meshGateway = document.getElementById('mesh-gateway-label');
+          if (meshBadge) {
+            meshBadge.className = d.meshcentral?.installed ? 'badge badge-success' : 'badge badge-cyan';
+            meshBadge.innerText = d.meshcentral?.installed ? 'Active' : 'Ready';
+          }
+          if (meshAgent && d.meshcentral) {
+            meshAgent.innerText = d.meshcentral.installed ? 'Installed (Service 24/7)' : 'Ready to Provision';
+          }
+          if (meshGateway && d.meshcentral) {
+            meshGateway.innerText = d.meshcentral.server_url || 'Integrated Gateway';
+          }
+        }
+      } catch (_) {}
+    }
+
+    // App Live Viewer Interactive Mode Toggle
+    let appStreamInteractive = false;
+    function toggleAppStreamInteractive() {
+      appStreamInteractive = !appStreamInteractive;
+      const btn = document.getElementById('app-stream-btn-interactive');
+      if (btn) {
+        btn.innerText = appStreamInteractive ? '🎮 Control: ON' : '🎮 Control: OFF';
+        btn.className = appStreamInteractive ? 'btn btn-primary' : 'btn btn-secondary';
+      }
+      const canvas = document.getElementById('app-stream-canvas');
+      if (canvas && !canvas._interactiveAttached) {
+        canvas._interactiveAttached = true;
+        canvas.addEventListener('mousedown', (e) => {
+          if (!appStreamInteractive || !appStreamState.ws || appStreamState.ws.readyState !== WebSocket.OPEN) return;
+          const coords = getCanvasCoordinates(canvas, e);
+          if (!coords) return;
+          const btnMap = { 0: 'left', 1: 'middle', 2: 'right' };
+          appStreamState.ws.send(JSON.stringify({
+            type: 'mouse',
+            action: 'down',
+            ...coords,
+            button: btnMap[e.button] || 'left'
+          }));
+        });
+        canvas.addEventListener('mouseup', (e) => {
+          if (!appStreamInteractive || !appStreamState.ws || appStreamState.ws.readyState !== WebSocket.OPEN) return;
+          const coords = getCanvasCoordinates(canvas, e);
+          if (!coords) return;
+          const btnMap = { 0: 'left', 1: 'middle', 2: 'right' };
+          appStreamState.ws.send(JSON.stringify({
+            type: 'mouse',
+            action: 'up',
+            ...coords,
+            button: btnMap[e.button] || 'left'
+          }));
+        });
+        canvas.addEventListener('mousemove', (e) => {
+          if (!appStreamInteractive || !appStreamState.ws || appStreamState.ws.readyState !== WebSocket.OPEN) return;
+          const coords = getCanvasCoordinates(canvas, e);
+          if (!coords) return;
+          const now = performance.now();
+          if (now - (canvas._lastMouse || 0) >= 40) {
+            canvas._lastMouse = now;
+            appStreamState.ws.send(JSON.stringify({
+              type: 'mouse',
+              action: 'move',
+              ...coords
+            }));
+          }
+        });
+      }
+      showToast(`App Live Stream interaction: ${appStreamInteractive ? 'ENABLED' : 'DISABLED'}`, 'info');
+    }
+
+    // 9.5 REPLIT VPS LAB FUNCTIONS
     let replitLabState = {
       machineId: null,
       data: null
@@ -6560,6 +7787,7 @@
         'doctor': 'System Doctor & Diagnostics',
         'replit': 'Replit VPS Lab & Container Virtualization',
         'logs': 'Security & Audit Activity Logs',
+        'security': 'Obsidian Security & Emergency Blackout Containment',
         'settings': 'Settings & Backend Configuration',
         'recovery': 'Durable Disaster Recovery & Auto-Enrollment'
       };
@@ -6637,6 +7865,366 @@
         initSettingsView();
       } else if (viewName === 'recovery') {
         loadRecoveryDevices();
+      } else if (viewName === 'security') {
+        initSecurityView();
+      }
+    }
+
+    // =========================================================================
+    // OBSIDIAN PILLAR & EMERGENCY BLACKOUT CONTROLLER
+    // =========================================================================
+    function initSecurityView() {
+      const select = document.getElementById('security-machine-select');
+      if (select) {
+        updateSecurityMachineSelector();
+        if (!select.value && appState.machines && appState.machines.length > 0) {
+          const firstOnline = appState.machines.find(m => m.status === 'online') || appState.machines[0];
+          select.value = firstOnline.id;
+        }
+        loadSecurityView();
+      }
+    }
+
+    function updateSecurityMachineSelector() {
+      const select = document.getElementById('security-machine-select');
+      if (!select) return;
+      const current = select.value;
+      const standardOpts = appState.machines.map(m => {
+        const isOnline = m.status === 'online';
+        const icon = isOnline ? '🟢' : '⚪';
+        const statusText = isOnline ? 'ONLINE' : 'OFFLINE';
+        return `<option value="${m.id}">${icon} ${escapeHtml(m.friendly_name || m.hostname || m.id)} [${statusText} - ${m.os || 'Linux'}]</option>`;
+      }).join('');
+      select.innerHTML = '<option value="">Select Target Machine...</option>' + standardOpts;
+      if (current && appState.machines.some(m => m.id === current)) {
+        select.value = current;
+      }
+    }
+
+    async function loadSecurityView() {
+      const select = document.getElementById('security-machine-select');
+      const machineId = select ? select.value : '';
+      if (!machineId) {
+        const tbody = document.getElementById('pillar-files-table-body');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2rem;">Select a machine to inspect protected files.</td></tr>';
+        const incTbody = document.getElementById('pillar-incidents-table-body');
+        if (incTbody) incTbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2rem;">Select a machine to view security incidents.</td></tr>';
+        return;
+      }
+
+      try {
+        const [statRes, filesRes, incRes] = await Promise.all([
+          apiRequest(`/api/v1/security/pillar/status?machine_id=${encodeURIComponent(machineId)}`),
+          apiRequest(`/api/v1/security/pillar/files?machine_id=${encodeURIComponent(machineId)}`),
+          apiRequest(`/api/v1/security/pillar/incidents?machine_id=${encodeURIComponent(machineId)}`)
+        ]);
+
+        const statusData = statRes.ok ? statRes.data : {};
+        const blackout = statusData.blackout || {};
+        const isBlackout = blackout.active === true;
+
+        // Render Blackout Banners
+        const activeBanner = document.getElementById('security-blackout-active-banner');
+        const normalBanner = document.getElementById('security-blackout-normal-banner');
+        const stateKpi = document.getElementById('sec-stat-state');
+
+        if (isBlackout) {
+          if (activeBanner) activeBanner.style.display = 'block';
+          if (normalBanner) normalBanner.style.display = 'none';
+          if (stateKpi) {
+            stateKpi.innerText = '🚨 BLACKOUT';
+            stateKpi.style.color = 'var(--status-danger)';
+          }
+          const detailsEl = document.getElementById('sec-blackout-active-details');
+          if (detailsEl) {
+            const inc = blackout.incident || {};
+            detailsEl.innerText = `Reason: ${inc.reason || 'Containment active'} | Operator: ${inc.operator || 'Admin'} | Started: ${inc.started_at ? new Date(inc.started_at * 1000).toLocaleTimeString() : '--'}`;
+          }
+        } else {
+          if (activeBanner) activeBanner.style.display = 'none';
+          if (normalBanner) normalBanner.style.display = 'flex';
+          if (stateKpi) {
+            stateKpi.innerText = 'NORMAL';
+            stateKpi.style.color = 'var(--status-success)';
+          }
+        }
+
+        // Render KPI Counts
+        const files = (filesRes.ok && filesRes.data && filesRes.data.files) || [];
+        const verifiedCount = files.filter(f => f.status === 'VERIFIED').length;
+        const tamperedCount = files.filter(f => f.status === 'TAMPER_DETECTED' || f.status === 'MISSING').length;
+
+        const totalEl = document.getElementById('sec-stat-total-files');
+        if (totalEl) totalEl.innerText = files.length;
+        const verEl = document.getElementById('sec-stat-verified');
+        if (verEl) verEl.innerText = verifiedCount;
+        const tamperedEl = document.getElementById('sec-stat-tampered');
+        if (tamperedEl) {
+          tamperedEl.innerText = tamperedCount;
+          tamperedEl.style.color = tamperedCount > 0 ? 'var(--status-danger)' : 'var(--status-success)';
+        }
+
+        // Render Files Table
+        const tbody = document.getElementById('pillar-files-table-body');
+        if (tbody) {
+          if (files.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2rem;">No files currently registered under Obsidian Pillar. Click <strong>🛡️ Protect File</strong> to add.</td></tr>';
+          } else {
+            tbody.innerHTML = files.map(f => {
+              const st = f.status || 'UNKNOWN';
+              let badge = `<span class="badge" style="background:rgba(34,197,94,0.15); color:var(--status-success); border:1px solid rgba(34,197,94,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem;">VERIFIED</span>`;
+              if (st === 'TAMPER_DETECTED') {
+                badge = `<span class="badge" style="background:rgba(239,68,68,0.15); color:var(--status-danger); border:1px solid rgba(239,68,68,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem; font-weight:700;">🚨 TAMPER DETECTED</span>`;
+              } else if (st === 'MISSING') {
+                badge = `<span class="badge" style="background:rgba(234,179,8,0.15); color:var(--status-warning); border:1px solid rgba(234,179,8,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem;">MISSING</span>`;
+              }
+
+              const truncatedHash = (f.sha256 || '').substring(0, 16) + '...';
+              const sizeStr = f.size ? formatBytes(f.size) : '--';
+              const verifiedTime = f.last_verified ? new Date(f.last_verified * 1000).toLocaleString() : '--';
+
+              return `
+                <tr>
+                  <td><strong style="color:var(--text-primary); font-family:var(--font-mono); font-size:0.8rem;">${escapeHtml(f.path)}</strong></td>
+                  <td><span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--accent-cyan);">${escapeHtml(truncatedHash)}</span></td>
+                  <td><span style="font-size:0.8rem; color:var(--text-muted);">${escapeHtml(sizeStr)}</span></td>
+                  <td><span class="badge badge-subtle" style="font-size:0.72rem;">${escapeHtml(f.policy || 'immutable_snapshot')}</span></td>
+                  <td>${badge}</td>
+                  <td><span style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(verifiedTime)}</span></td>
+                  <td>
+                    <div style="display:flex; gap:0.4rem;">
+                      <button class="btn btn-secondary" style="font-size:0.72rem; padding:0.2rem 0.5rem;" onclick="runPillarVerifySingle('${escapeHtml(f.path)}')">Verify</button>
+                      <button class="btn btn-primary" style="font-size:0.72rem; padding:0.2rem 0.5rem; background:var(--accent-cyan); border-color:var(--accent-cyan);" onclick="restorePillarFile('${escapeHtml(f.path)}')">Restore</button>
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('');
+          }
+        }
+
+        // Render Incidents Table
+        const incidents = (incRes.ok && incRes.data && incRes.data.incidents) || [];
+        const incTbody = document.getElementById('pillar-incidents-table-body');
+        if (incTbody) {
+          if (incidents.length === 0) {
+            incTbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:2rem;">No security incidents or containment actions recorded.</td></tr>';
+          } else {
+            incTbody.innerHTML = incidents.map(inc => {
+              const timeStr = inc.started_at ? new Date(inc.started_at * 1000).toLocaleString() : (inc.released_at ? new Date(inc.released_at * 1000).toLocaleString() : '--');
+              const stateBadge = inc.state === 'BLACKOUT_ACTIVE' ?
+                `<span class="badge" style="background:rgba(239,68,68,0.15); color:var(--status-danger); border:1px solid rgba(239,68,68,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.72rem;">BLACKOUT</span>` :
+                `<span class="badge" style="background:rgba(34,197,94,0.15); color:var(--status-success); border:1px solid rgba(34,197,94,0.3); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.72rem;">RELEASED</span>`;
+
+              return `
+                <tr>
+                  <td><span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-muted);">${escapeHtml(inc.id || '--')}</span></td>
+                  <td><span style="font-size:0.75rem; color:var(--text-secondary);">${escapeHtml(timeStr)}</span></td>
+                  <td>${stateBadge}</td>
+                  <td><span style="font-size:0.8rem; color:var(--text-primary);">${escapeHtml(inc.reason || '--')}</span></td>
+                  <td><span style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(inc.operator || 'Admin')}</span></td>
+                  <td><span style="font-size:0.75rem; color:${inc.session_locked ? 'var(--status-success)' : 'var(--text-muted)'};">${inc.session_locked ? 'Locked ✅' : 'Unlocked'}</span></td>
+                  <td><span style="font-size:0.75rem; color:var(--text-muted);">${inc.quarantined_files || 0}</span></td>
+                </tr>
+              `;
+            }).join('');
+          }
+        }
+
+      } catch (err) {
+        console.error('Failed to load security view:', err);
+      }
+    }
+
+    function openProtectFileModal() {
+      const p = document.getElementById('modal-pillar-path');
+      if (p) p.value = '';
+      const m = document.getElementById('modal-pillar-protect');
+      if (m) m.style.display = 'flex';
+      if (p) p.focus();
+    }
+
+    function closeProtectFileModal() {
+      const m = document.getElementById('modal-pillar-protect');
+      if (m) m.style.display = 'none';
+    }
+
+    async function submitProtectFile() {
+      const select = document.getElementById('security-machine-select');
+      const machineId = select ? select.value : '';
+      const pathEl = document.getElementById('modal-pillar-path');
+      const path = pathEl ? pathEl.value.trim() : '';
+      const policyEl = document.getElementById('modal-pillar-policy');
+      const policy = policyEl ? policyEl.value : 'immutable_snapshot';
+
+      if (!machineId) {
+        alert('Please select a target machine first.');
+        return;
+      }
+      if (!path) {
+        alert('Please specify an absolute file path.');
+        return;
+      }
+
+      closeProtectFileModal();
+      showToast('Registering file under Obsidian Pillar...', 'info');
+
+      try {
+        const res = await apiRequest('/api/v1/security/pillar/protect', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId, path, policy })
+        });
+        if (res.ok && res.data && res.data.success) {
+          showToast(`File registered: ${path}`, 'success');
+          loadSecurityView();
+        } else {
+          showToast(`Protection failed: ${(res.data && res.data.error) || 'Unknown error'}`, 'error');
+        }
+      } catch (e) {
+        showToast(`Request error: ${e.message}`, 'error');
+      }
+    }
+
+    async function runPillarVerifyAll() {
+      const select = document.getElementById('security-machine-select');
+      const machineId = select ? select.value : '';
+      if (!machineId) {
+        alert('Please select a target machine first.');
+        return;
+      }
+
+      showToast('Running cryptographic SHA-256 audit on all protected files...', 'info');
+      try {
+        const res = await apiRequest('/api/v1/security/pillar/verify', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId })
+        });
+        if (res.ok && res.data && res.data.success) {
+          showToast(`Audit complete: ${res.data.verified_count || 0} verified, ${res.data.tampered_count || 0} tampered`, 'success');
+          loadSecurityView();
+        } else {
+          showToast(`Audit failed: ${(res.data && res.data.error) || 'Unknown error'}`, 'error');
+        }
+      } catch (e) {
+        showToast(`Audit error: ${e.message}`, 'error');
+      }
+    }
+
+    async function runPillarVerifySingle(path) {
+      const select = document.getElementById('security-machine-select');
+      const machineId = select ? select.value : '';
+      if (!machineId) return;
+
+      try {
+        const res = await apiRequest('/api/v1/security/pillar/verify', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId, path })
+        });
+        if (res.ok) {
+          showToast(`Audited ${path}`, 'info');
+          loadSecurityView();
+        }
+      } catch (e) {
+        showToast(`Verification error: ${e.message}`, 'error');
+      }
+    }
+
+    async function restorePillarFile(path) {
+      const select = document.getElementById('security-machine-select');
+      const machineId = select ? select.value : '';
+      if (!machineId) return;
+
+      if (!confirm(`Restore '${path}' from verified immutable snapshot in vault? Any tampered changes will be overwritten.`)) {
+        return;
+      }
+
+      showToast(`Restoring ${path} from snapshot...`, 'info');
+      try {
+        const res = await apiRequest('/api/v1/security/pillar/restore', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId, path })
+        });
+        if (res.ok && res.data && res.data.success) {
+          showToast(`Successfully restored: ${path}`, 'success');
+          loadSecurityView();
+        } else {
+          showToast(`Restore failed: ${(res.data && res.data.error) || 'Unknown error'}`, 'error');
+        }
+      } catch (e) {
+        showToast(`Restore error: ${e.message}`, 'error');
+      }
+    }
+
+    function openBlackoutModal() {
+      const r = document.getElementById('modal-blackout-reason');
+      if (r) r.value = '';
+      const l = document.getElementById('modal-blackout-lock');
+      if (l) l.checked = true;
+      const m = document.getElementById('modal-blackout-activate');
+      if (m) m.style.display = 'flex';
+      if (r) r.focus();
+    }
+
+    function closeBlackoutModal() {
+      const m = document.getElementById('modal-blackout-activate');
+      if (m) m.style.display = 'none';
+    }
+
+    async function submitActivateBlackout() {
+      const select = document.getElementById('security-machine-select');
+      const machineId = select ? select.value : '';
+      const rEl = document.getElementById('modal-blackout-reason');
+      const reason = (rEl && rEl.value.trim()) || 'Manual emergency containment triggered by operator';
+      const lEl = document.getElementById('modal-blackout-lock');
+      const lockSession = lEl ? lEl.checked : true;
+
+      if (!machineId) {
+        alert('Please select a target machine first.');
+        return;
+      }
+
+      closeBlackoutModal();
+      showToast('Engaging Emergency Blackout Containment...', 'warning');
+
+      try {
+        const res = await apiRequest('/api/v1/security/blackout/activate', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId, reason, lock_session: lockSession, operator: 'DashboardAdmin' })
+        });
+        if (res.ok && res.data && res.data.success) {
+          showToast('🚨 Blackout containment engaged!', 'error');
+          loadSecurityView();
+        } else {
+          showToast(`Activation failed: ${(res.data && res.data.error) || 'Unknown error'}`, 'error');
+        }
+      } catch (e) {
+        showToast(`Request error: ${e.message}`, 'error');
+      }
+    }
+
+    async function confirmReleaseBlackout() {
+      const select = document.getElementById('security-machine-select');
+      const machineId = select ? select.value : '';
+      if (!machineId) return;
+
+      if (!confirm('Release emergency blackout containment? This will restore normal interactive operations on the target node.')) {
+        return;
+      }
+
+      showToast('Releasing blackout containment...', 'info');
+      try {
+        const res = await apiRequest('/api/v1/security/blackout/release', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId, operator: 'DashboardAdmin' })
+        });
+        if (res.ok && res.data && res.data.success) {
+          showToast('Containment released. System returned to NORMAL.', 'success');
+          loadSecurityView();
+        } else {
+          showToast(`Release failed: ${(res.data && res.data.error) || 'Unknown error'}`, 'error');
+        }
+      } catch (e) {
+        showToast(`Request error: ${e.message}`, 'error');
       }
     }
 
@@ -11808,6 +13396,71 @@ class StationApiClient {
   async getAuditLogs(filters = {}) {
     const params = new URLSearchParams(filters);
     return this.request(`/api/v1/audit/logs?${params.toString()}`);
+  }
+  async mintRemoteDesktopSession(machineId, options = {}) {
+    return this.request('/api/v1/remote-desktop/session', {
+      method: 'POST',
+      body: JSON.stringify({
+        machine_id: machineId,
+        desktop_mode: options.desktop_mode !== false,
+        interactive: options.interactive !== false,
+        fps: options.fps || 30,
+        quality: options.quality || 70,
+        pairing_key: this.store.get('pairingKey') || ''
+      })
+    });
+  }
+  async getRemoteDesktopStatus(machineId = '') {
+    const q = machineId ? `?machine_id=${encodeURIComponent(machineId)}` : '';
+    return this.request(`/api/v1/remote-desktop/status${q}`);
+  }
+  async provisionRemoteDesktopEngine(machineId, engine = 'meshcentral') {
+    return this.request('/api/v1/remote-desktop/provision', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, engine })
+    });
+  }
+  async getBlackoutStatus(machineId) {
+    return this.request(`/api/v1/security/blackout/status?machine_id=${encodeURIComponent(machineId)}`);
+  }
+  async activateBlackout(machineId, reason = '', lockSession = true) {
+    return this.request('/api/v1/security/blackout/activate', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, reason, lock_session: lockSession })
+    });
+  }
+  async releaseBlackout(machineId) {
+    return this.request('/api/v1/security/blackout/release', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId })
+    });
+  }
+  async getObsidianPillarStatus(machineId) {
+    return this.request(`/api/v1/security/pillar/status?machine_id=${encodeURIComponent(machineId)}`);
+  }
+  async getProtectedFiles(machineId) {
+    return this.request(`/api/v1/security/pillar/files?machine_id=${encodeURIComponent(machineId)}`);
+  }
+  async protectFile(machineId, path, policy = 'immutable_snapshot') {
+    return this.request('/api/v1/security/pillar/protect', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, path, policy })
+    });
+  }
+  async verifyProtectedFiles(machineId, path = '') {
+    return this.request('/api/v1/security/pillar/verify', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, path })
+    });
+  }
+  async restoreProtectedFile(machineId, path) {
+    return this.request('/api/v1/security/pillar/restore', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, path })
+    });
+  }
+  async getPillarIncidents(machineId) {
+    return this.request(`/api/v1/security/pillar/incidents?machine_id=${encodeURIComponent(machineId)}`);
   }
   async getSettings() { return this.request('/api/v1/settings'); }
   async saveSettings(settings) {

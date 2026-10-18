@@ -2025,6 +2025,14 @@ async function runTests() {
   assert(crashTest.includes('ALL AGENT CRASH & CLI REPAIR TESTS PASSED'), 'Agent crash and CLI repair tests must pass');
   console.log('  ✅ Agent Crash Prevention, Token Self-Healing & CLI Subcommands verified.');
 
+  // [TEST 48] Testing Windows UAC Fallback, Emergency Blackout Mode & Obsidian Pillar Protection...
+  console.log('\n[TEST 48] Testing Windows UAC Fallback, Emergency Blackout Mode & Obsidian Pillar Protection...');
+  const securityTest = execSync(`node "${require('path').join(__dirname, 'test-uac-fallback-and-blackout-security.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(securityTest.includes('ALL WINDOWS UAC FALLBACK & OBSIDIAN SECURITY TESTS PASSED'), 'UAC fallback and Obsidian security tests must pass');
+  console.log('  ✅ Windows UAC Fallback, Emergency Blackout Mode & Obsidian Pillar Hardcore File Protection verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2032,7 +2040,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 47 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA, PATH OWNERSHIP, LIFECYCLE & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 48 ADVANCED SECURITY, DISASTER RECOVERY, CONTROL PLANE, HA, PATH OWNERSHIP, LIFECYCLE & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

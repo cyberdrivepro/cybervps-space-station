@@ -37,28 +37,60 @@ namespace CyberVPS.Installer
 
             if (forceAdmin && !isAdmin)
             {
-                return ElevateAndRerun(args);
+                try
+                {
+                    return ElevateAndRerun(args);
+                }
+                catch (Win32Exception ex)
+                {
+                    Console.Error.WriteLine(string.Format("[!] Administrator elevation was declined or cancelled (Win32 Error: {0}).", ex.NativeErrorCode));
+                    Console.Error.WriteLine("[!] Because --admin was explicitly requested, setup cannot proceed in user mode.");
+                    return ex.NativeErrorCode != 0 ? ex.NativeErrorCode : 1223;
+                }
             }
 
             if (!forceUser && !isAdmin)
             {
-                // Interactive / Default: Try elevating first for 24/7 Service.
-                // If user declines UAC, gracefully fallback to User mode.
+                // Interactive / Default: Request Administrator privilege for machine-wide 24/7 service registration.
+                // If user declines/cancels UAC, do NOT crash: cleanly fall back to Per-User Mode (%LOCALAPPDATA%).
                 try
                 {
                     if (!silentMode)
                     {
-                        Console.WriteLine("[*] Requesting Administrator privilege for 24/7 background service registration...");
+                        Console.WriteLine("[*] Checking Windows privilege scope...");
+                        Console.WriteLine("[*] Requesting Administrator privilege for machine-wide 24/7 service registration...");
                     }
                     int elevateResult = ElevateAndRerun(args);
                     if (elevateResult == 0) return 0;
+                    if (elevateResult == 1223)
+                    {
+                        if (!silentMode)
+                        {
+                            Console.WriteLine("[*] Windows UAC prompt was declined (1223: ERROR_CANCELLED).");
+                            Console.WriteLine("[*] Gracefully falling back to Standard Per-User Mode (%LOCALAPPDATA%)...");
+                        }
+                    }
+                    else
+                    {
+                        return elevateResult;
+                    }
                 }
-                catch (Win32Exception)
+                catch (Win32Exception ex)
                 {
-                    // User clicked "No" on UAC prompt - gracefully fallback to non-elevated user mode
+                    // User clicked "No" on UAC prompt - ERROR_CANCELLED (1223)
                     if (!silentMode)
                     {
-                        Console.WriteLine("[*] UAC elevation was declined. Automatically falling back to User-Level Mode (%LOCALAPPDATA%)...");
+                        Console.WriteLine(string.Format("[*] Windows UAC prompt was declined or cancelled (Win32 Error: {0}).", ex.NativeErrorCode));
+                        Console.WriteLine("[*] Gracefully falling back to Standard Per-User Installation Mode...");
+                        Console.WriteLine("[*] Scope: Current User (%LOCALAPPDATA%\\CyberVPS)");
+                        Console.WriteLine("[*] No administrative privileges required. Background service substituted with User Autostart.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!silentMode)
+                    {
+                        Console.WriteLine(string.Format("[*] Elevation unavailable ({0}). Continuing in Per-User Mode...", ex.Message));
                     }
                 }
             }
@@ -158,6 +190,10 @@ namespace CyberVPS.Installer
             psi.Arguments = string.Join(" ", cleanArgs.ToArray());
 
             Process p = Process.Start(psi);
+            if (p == null)
+            {
+                throw new Win32Exception(1223, "UAC prompt was cancelled or elevation could not be initiated.");
+            }
             p.WaitForExit();
             return p.ExitCode;
         }

@@ -150,7 +150,64 @@ class StationApiClient {
       body: JSON.stringify({ action, params })
     });
   }
+  async mintRemoteDesktopSession(machineId, options = {}) {
+    return this.request('/api/v1/remote-desktop/session', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, ...options })
+    });
+  }
+  async getRemoteDesktopStatus(machineId) {
+    return this.request(`/api/v1/remote-desktop/status?machine_id=${encodeURIComponent(machineId)}`);
+  }
+  async provisionRemoteDesktopEngine(machineId, engine = 'native_hd') {
+    return this.request('/api/v1/remote-desktop/provision', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, engine })
+    });
+  }
   async getSettings() { return this.request('/api/v1/settings'); }
+  async getBlackoutStatus(machineId) {
+    return this.request(`/api/v1/security/blackout/status?machine_id=${encodeURIComponent(machineId)}`);
+  }
+  async activateBlackout(machineId, reason = '', lockSession = true) {
+    return this.request('/api/v1/security/blackout/activate', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, reason, lock_session: lockSession })
+    });
+  }
+  async releaseBlackout(machineId) {
+    return this.request('/api/v1/security/blackout/release', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId })
+    });
+  }
+  async getObsidianPillarStatus(machineId) {
+    return this.request(`/api/v1/security/pillar/status?machine_id=${encodeURIComponent(machineId)}`);
+  }
+  async getProtectedFiles(machineId) {
+    return this.request(`/api/v1/security/pillar/files?machine_id=${encodeURIComponent(machineId)}`);
+  }
+  async protectFile(machineId, path, policy = 'immutable_snapshot') {
+    return this.request('/api/v1/security/pillar/protect', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, path, policy })
+    });
+  }
+  async verifyProtectedFiles(machineId, path = '') {
+    return this.request('/api/v1/security/pillar/verify', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, path })
+    });
+  }
+  async restoreProtectedFile(machineId, path) {
+    return this.request('/api/v1/security/pillar/restore', {
+      method: 'POST',
+      body: JSON.stringify({ machine_id: machineId, path })
+    });
+  }
+  async getPillarIncidents(machineId) {
+    return this.request(`/api/v1/security/pillar/incidents?machine_id=${encodeURIComponent(machineId)}`);
+  }
   async saveSettings(settings) {
     return this.request('/api/v1/settings', {
       method: 'POST',

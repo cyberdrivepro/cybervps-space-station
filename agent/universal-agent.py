@@ -694,6 +694,8 @@ class CyberVPSAgent:
         self.active_terminals = {}
         self.active_tunnel_streams = {}
         self.active_app_streams = {}
+        self.pressed_keys = set()
+        self._gdiplus_token = None
         self.lock = threading.Lock()
         self.uptime_start = time.time()
         self._prev_win_times = None
@@ -713,6 +715,18 @@ class CyberVPSAgent:
                 self.backend_pool.append(def_b)
         self.backend_index = 0
         self._load_backends_from_disk()
+
+        # Obsidian Pillar Hardcore File Protection & Emergency Blackout Containment
+        self.blackout_active = False
+        self.blackout_incident = None
+        self.base_dir = os.environ.get("CYBERVPS_HOME") or os.path.dirname(os.path.dirname(os.path.abspath(self.pid_file)))
+        self.protected_vault_dir = os.path.join(self.base_dir, "vault")
+        self.quarantine_dir = os.path.join(self.base_dir, "quarantine")
+        self.snapshots_dir = os.path.join(self.protected_vault_dir, "snapshots")
+        self.pillar_registry_file = os.path.join(self.protected_vault_dir, "pillar_registry.json")
+        self.pillar_incidents_file = os.path.join(self.protected_vault_dir, "pillar_incidents.json")
+        self._init_pillar_storage()
+
         try:
             threading.Thread(target=self._prewarm_apps_inventory, daemon=True).start()
             threading.Thread(target=self._periodic_ota_check_loop, daemon=True).start()
@@ -5070,10 +5084,228 @@ class CyberVPSAgent:
 
         return windows
 
-    def _capture_window_image(self, hwnd=None, pid=None, quality=80, max_w=1920, max_h=1080, app_id=None, app_name=None):
+    def _ensure_gdiplus(self):
+        if platform.system() != "Windows":
+            return False
+        if getattr(self, "_gdiplus_token", None) is not None:
+            return True
+        try:
+            import ctypes
+            gdiplus = ctypes.windll.gdiplus
+            class GdiplusStartupInput(ctypes.Structure):
+                _fields_ = [('GdiplusVersion', ctypes.c_uint32),
+                            ('DebugEventCallback', ctypes.c_void_p),
+                            ('SuppressBackgroundThread', ctypes.c_int),
+                            ('SuppressExternalCodecs', ctypes.c_int)]
+            token = ctypes.c_ulong()
+            si = GdiplusStartupInput(1, None, 0, 0)
+            status = gdiplus.GdiplusStartup(ctypes.byref(token), ctypes.byref(si), None)
+            if status == 0:
+                self._gdiplus_token = token
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _encode_hbitmap_to_jpeg(self, hBmp, quality=80):
+        """Hardware-accelerated native Windows GDI+ JPEG encoder. Zero external pip dependencies."""
+        if not self._ensure_gdiplus():
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+            gdiplus = ctypes.windll.gdiplus
+            ole32 = ctypes.windll.ole32
+            kernel32 = ctypes.windll.kernel32
+
+            kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalUnlock.restype = wintypes.BOOL
+            kernel32.GlobalSize.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalSize.restype = ctypes.c_size_t
+
+            ole32.CreateStreamOnHGlobal.argtypes = [ctypes.c_void_p, wintypes.BOOL, ctypes.POINTER(ctypes.c_void_p)]
+            ole32.CreateStreamOnHGlobal.restype = wintypes.HRESULT
+            ole32.GetHGlobalFromStream.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+            ole32.GetHGlobalFromStream.restype = wintypes.HRESULT
+
+            gdiplus.GdipCreateBitmapFromHBITMAP.argtypes = [wintypes.HBITMAP, wintypes.HPALETTE, ctypes.POINTER(ctypes.c_void_p)]
+            gdiplus.GdipCreateBitmapFromHBITMAP.restype = ctypes.c_int
+            gdiplus.GdipSaveImageToStream.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+            gdiplus.GdipSaveImageToStream.restype = ctypes.c_int
+            gdiplus.GdipDisposeImage.argtypes = [ctypes.c_void_p]
+            gdiplus.GdipDisposeImage.restype = ctypes.c_int
+
+            bmp_p = ctypes.c_void_p()
+            st = gdiplus.GdipCreateBitmapFromHBITMAP(hBmp, 0, ctypes.byref(bmp_p))
+            if st != 0 or not bmp_p:
+                return None
+
+            class GUID(ctypes.Structure):
+                _fields_ = [('Data1', ctypes.c_ulong), ('Data2', ctypes.c_ushort), ('Data3', ctypes.c_ushort), ('Data4', ctypes.c_ubyte * 8)]
+            class EncoderParameter(ctypes.Structure):
+                _fields_ = [('Guid', GUID), ('NumberOfValues', ctypes.c_ulong), ('Type', ctypes.c_ulong), ('Value', ctypes.c_void_p)]
+            class EncoderParameters(ctypes.Structure):
+                _fields_ = [('Count', ctypes.c_uint), ('Parameter', EncoderParameter * 1)]
+
+            jpeg_clsid = GUID(0x557CF401, 0x1A04, 0x11D3, (ctypes.c_ubyte * 8)(0x9A, 0x73, 0x00, 0x00, 0xF8, 0x1E, 0xF3, 0x2E))
+            quality_guid = GUID(0x1D5BE4B5, 0xFA4A, 0x452D, (ctypes.c_ubyte * 8)(0x9C, 0xDD, 0x5D, 0xB3, 0x51, 0x05, 0xE7, 0xEB))
+
+            pStream = ctypes.c_void_p()
+            ole32.CreateStreamOnHGlobal(None, True, ctypes.byref(pStream))
+
+            q_val = ctypes.c_ulong(min(max(int(quality), 20), 95))
+            ep = EncoderParameters()
+            ep.Count = 1
+            ep.Parameter[0].Guid = quality_guid
+            ep.Parameter[0].NumberOfValues = 1
+            ep.Parameter[0].Type = 4 # EncoderParameterValueTypeLong
+            ep.Parameter[0].Value = ctypes.cast(ctypes.byref(q_val), ctypes.c_void_p)
+
+            res = gdiplus.GdipSaveImageToStream(bmp_p, pStream, ctypes.byref(jpeg_clsid), ctypes.byref(ep))
+            gdiplus.GdipDisposeImage(bmp_p)
+
+            if res != 0:
+                return None
+
+            hGlobal = ctypes.c_void_p()
+            ole32.GetHGlobalFromStream(pStream, ctypes.byref(hGlobal))
+            size = kernel32.GlobalSize(hGlobal)
+            if size <= 0:
+                return None
+            ptr = kernel32.GlobalLock(hGlobal)
+            if not ptr:
+                return None
+            raw_bytes = ctypes.string_at(ptr, size)
+            kernel32.GlobalUnlock(hGlobal)
+
+            return base64.b64encode(raw_bytes).decode('ascii')
+        except Exception:
+            return None
+
+    def _capture_desktop_image(self, quality=80, monitor_idx=0):
+        """Captures full Windows/Linux desktop with real hardware mouse cursor overlay."""
+        sys_os = platform.system()
+        now_ms = int(time.time() * 1000)
+        quality = min(max(int(quality or 80), 20), 95)
+        if sys_os == "Windows":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                user32 = ctypes.windll.user32
+                gdi32 = ctypes.windll.gdi32
+
+                w = user32.GetSystemMetrics(0) # SM_CXSCREEN
+                h = user32.GetSystemMetrics(1) # SM_CYSCREEN
+                if w <= 0 or h <= 0:
+                    w, h = 1920, 1080
+
+                hScreenDC = user32.GetDC(None)
+                if not hScreenDC:
+                    return {"success": False, "status": "permission_denied", "error": "Unable to acquire desktop DC handle."}
+
+                memDC = gdi32.CreateCompatibleDC(hScreenDC)
+                hBmp = gdi32.CreateCompatibleBitmap(hScreenDC, w, h)
+                oldBmp = gdi32.SelectObject(memDC, hBmp)
+
+                # Capture full desktop (SRCCOPY = 0x00CC0020)
+                gdi32.BitBlt(memDC, 0, 0, w, h, hScreenDC, 0, 0, 0x00CC0020)
+
+                # Draw real-time hardware cursor
+                try:
+                    class CURSORINFO(ctypes.Structure):
+                        _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD), ("hCursor", wintypes.HBITMAP), ("ptScreenPos", wintypes.POINT)]
+                    ci = CURSORINFO()
+                    ci.cbSize = ctypes.sizeof(CURSORINFO)
+                    if user32.GetCursorInfo(ctypes.byref(ci)):
+                        if ci.flags == 1 and ci.hCursor:
+                            user32.DrawIcon(memDC, ci.ptScreenPos.x, ci.ptScreenPos.y, ci.hCursor)
+                except Exception:
+                    pass
+
+                # Encode to JPEG via GDI+
+                b64_data = self._encode_hbitmap_to_jpeg(hBmp, quality=quality)
+                fmt = "jpeg"
+
+                # Fallback to PIL if GDI+ was not available
+                if not b64_data:
+                    try:
+                        from PIL import Image
+                        import io
+                        class BITMAPINFOHEADER(ctypes.Structure):
+                            _fields_ = [('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
+                                        ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
+                                        ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
+                                        ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)]
+                        bmi = BITMAPINFOHEADER()
+                        bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                        bmi.biWidth = w
+                        bmi.biHeight = -h
+                        bmi.biPlanes = 1
+                        bmi.biBitCount = 32
+                        buf = ctypes.create_string_buffer(w * h * 4)
+                        gdi32.GetDIBits(memDC, hBmp, 0, h, buf, ctypes.byref(bmi), 0)
+                        img = Image.frombuffer('RGBA', (w, h), buf.raw, 'raw', 'BGRA', 0, 1)
+                        out_io = io.BytesIO()
+                        img.convert('RGB').save(out_io, format='JPEG', quality=quality)
+                        b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
+                    except Exception:
+                        pass
+
+                gdi32.SelectObject(memDC, oldBmp)
+                gdi32.DeleteObject(hBmp)
+                gdi32.DeleteDC(memDC)
+                user32.ReleaseDC(None, hScreenDC)
+
+                if not b64_data:
+                    return {"success": False, "status": "capture_encode_failed", "error": "Failed to encode desktop frame buffer."}
+
+                return {
+                    "success": True,
+                    "has_gui": True,
+                    "desktop_mode": True,
+                    "title": "Windows Desktop (Full Screen)",
+                    "width": w,
+                    "height": h,
+                    "is_minimized": False,
+                    "format": fmt,
+                    "data": b64_data,
+                    "timestamp": now_ms
+                }
+            except Exception as e:
+                return {"success": False, "status": "capture_error", "error": f"Exception capturing full desktop: {e}"}
+        else:
+            # Linux desktop capture
+            try:
+                cmd = ["import", "-window", "root", "jpg:-"]
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, _ = p.communicate(timeout=3)
+                if p.returncode == 0 and len(stdout) > 500:
+                    return {
+                        "success": True,
+                        "has_gui": True,
+                        "desktop_mode": True,
+                        "title": "Linux Desktop (Full Screen)",
+                        "width": 1920,
+                        "height": 1080,
+                        "is_minimized": False,
+                        "format": "jpeg",
+                        "data": base64.b64encode(stdout).decode('ascii'),
+                        "timestamp": now_ms
+                    }
+            except Exception:
+                pass
+            return {"success": False, "status": "no_display", "error": "Full desktop capture requires active X11 or Wayland screencopy session."}
+
+    def _capture_window_image(self, hwnd=None, pid=None, quality=80, max_w=1920, max_h=1080, app_id=None, app_name=None, desktop_mode=False):
         sys_os = platform.system()
         quality = min(max(int(quality or 80), 30), 95)
         window_title = ""
+
+        # Delegate to full desktop capture if requested or no specific window/pid target
+        if desktop_mode or (not hwnd and not pid):
+            return self._capture_desktop_image(quality=quality)
 
         # Resolve target window if hwnd not given or invalid
         if not hwnd or int(hwnd) <= 0:
@@ -5204,66 +5436,58 @@ class CyberVPSAgent:
                         gdi32.BitBlt(memDC, 0, 0, w, h, screenDC, r.left, r.top, 0x00CC0020)
                         user32.ReleaseDC(None, screenDC)
 
-                class BITMAPINFOHEADER(ctypes.Structure):
-                    _fields_ = [
-                        ('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
-                        ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
-                        ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
-                        ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)
-                    ]
-                bmi = BITMAPINFOHEADER()
-                bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-                bmi.biWidth = w
-                bmi.biHeight = -h
-                bmi.biPlanes = 1
-                bmi.biBitCount = 32
-                bmi.biCompression = 0
+                # Hardware-accelerated GDI+ JPEG encoding first
+                b64_data = self._encode_hbitmap_to_jpeg(hBmp, quality=quality)
+                fmt = "jpeg"
 
-                buf_size = w * h * 4
-                buf = ctypes.create_string_buffer(buf_size)
-                gdi32.GetDIBits(memDC, hBmp, 0, h, buf, ctypes.byref(bmi), 0)
+                if not b64_data:
+                    # Fallback to DIBits / PIL / raw bmp if GDI+ not initialized
+                    class BITMAPINFOHEADER(ctypes.Structure):
+                        _fields_ = [
+                            ('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
+                            ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
+                            ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
+                            ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)
+                        ]
+                    bmi = BITMAPINFOHEADER()
+                    bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                    bmi.biWidth = w
+                    bmi.biHeight = -h
+                    bmi.biPlanes = 1
+                    bmi.biBitCount = 32
+                    bmi.biCompression = 0
+
+                    buf_size = w * h * 4
+                    buf = ctypes.create_string_buffer(buf_size)
+                    gdi32.GetDIBits(memDC, hBmp, 0, h, buf, ctypes.byref(bmi), 0)
+                    raw_bytes = buf.raw
+
+                    try:
+                        from PIL import Image
+                        import io
+                        img = Image.frombuffer('RGBA', (w, h), raw_bytes, 'raw', 'BGRA', 0, 1)
+                        if w > max_w or h > max_h:
+                            img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.ANTIALIAS)
+                            w, h = img.size
+                        out_io = io.BytesIO()
+                        img.convert('RGB').save(out_io, format='JPEG', quality=quality)
+                        b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
+                        fmt = "jpeg"
+                    except Exception:
+                        import struct
+                        file_size = 54 + (w * h * 3)
+                        bmp_hdr = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
+                        dib_hdr = struct.pack('<IIIHHIIIIII', 40, w, h, 1, 24, 0, w * h * 3, 2835, 2835, 0, 0)
+                        rgb_bytes = bytearray(w * h * 3)
+                        for i in range(w * h):
+                            rgb_bytes[i*3 : i*3+3] = raw_bytes[i*4 : i*4+3]
+                        b64_data = base64.b64encode(bmp_hdr + dib_hdr + rgb_bytes).decode('ascii')
+                        fmt = "bmp"
 
                 gdi32.SelectObject(memDC, oldBmp)
                 gdi32.DeleteObject(hBmp)
                 gdi32.DeleteDC(memDC)
                 user32.ReleaseDC(h_wnd, hwndDC)
-
-                # Verify pixel buffer is not all zeros
-                raw_bytes = buf.raw
-                has_pixels = any(b != 0 for b in raw_bytes[:min(len(raw_bytes), 4096)])
-                if not has_pixels and not any(b != 0 for b in raw_bytes[-4096:]):
-                    return {
-                        "success": False,
-                        "has_gui": True,
-                        "pid": pid,
-                        "hwnd": hwnd,
-                        "title": window_title,
-                        "error": "Window frame buffer is completely blank or hardware composited offscreen.",
-                        "status": "capture_frame_empty"
-                    }
-
-                try:
-                    from PIL import Image
-                    import io
-                    img = Image.frombuffer('RGBA', (w, h), raw_bytes, 'raw', 'BGRA', 0, 1)
-                    if w > max_w or h > max_h:
-                        img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.ANTIALIAS)
-                        w, h = img.size
-
-                    out_io = io.BytesIO()
-                    img.convert('RGB').save(out_io, format='JPEG', quality=quality)
-                    b64_data = base64.b64encode(out_io.getvalue()).decode('ascii')
-                    fmt = "jpeg"
-                except Exception:
-                    import struct
-                    file_size = 54 + (w * h * 3)
-                    bmp_hdr = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
-                    dib_hdr = struct.pack('<IIIHHIIIIII', 40, w, h, 1, 24, 0, w * h * 3, 2835, 2835, 0, 0)
-                    rgb_bytes = bytearray(w * h * 3)
-                    for i in range(w * h):
-                        rgb_bytes[i*3 : i*3+3] = raw_bytes[i*4 : i*4+3]
-                    b64_data = base64.b64encode(bmp_hdr + dib_hdr + rgb_bytes).decode('ascii')
-                    fmt = "bmp"
 
                 return {
                     "success": True,
@@ -5374,10 +5598,18 @@ class CyberVPSAgent:
             curr_hwnd = stream_cfg.get("hwnd")
             curr_fps = stream_cfg.get("fps", target_fps)
             curr_qual = stream_cfg.get("quality", quality)
+            desktop_mode = stream_cfg.get("desktop_mode", False)
 
             t0 = time.time()
             try:
-                res = self._capture_window_image(hwnd=curr_hwnd, pid=pid, quality=curr_qual, app_id=app_id, app_name=app_name)
+                res = self._capture_window_image(
+                    hwnd=curr_hwnd,
+                    pid=pid,
+                    quality=curr_qual,
+                    app_id=app_id,
+                    app_name=app_name,
+                    desktop_mode=desktop_mode
+                )
             except Exception as e:
                 res = {"success": False, "status": "capture_error", "error": f"Unexpected capture worker exception: {e}"}
 
@@ -5389,7 +5621,6 @@ class CyberVPSAgent:
                 last_fps_calc = now
 
             if res.get("success"):
-                # Dynamically update resolved HWND
                 if res.get("hwnd") and not curr_hwnd:
                     stream_cfg["hwnd"] = res.get("hwnd")
 
@@ -5405,6 +5636,7 @@ class CyberVPSAgent:
                         "height": res.get("height"),
                         "is_minimized": res.get("is_minimized", False),
                         "has_gui": True,
+                        "desktop_mode": desktop_mode,
                         "format": res.get("format", "jpeg"),
                         "data": res.get("data"),
                         "fps": measured_fps,
@@ -5436,7 +5668,7 @@ class CyberVPSAgent:
             if sleep_needed > 0.002:
                 time.sleep(sleep_needed)
 
-        print(f"[*] Live app stream {stream_id} stopped cleanly. Released all capture resources.")
+        print(f"[*] Live stream {stream_id} stopped cleanly. Released all capture resources.")
         with self.lock:
             self.active_app_streams.pop(stream_id, None)
 
@@ -5499,6 +5731,7 @@ class CyberVPSAgent:
         app_name = payload.get("app_name") or payload.get("name")
         fps = min(max(int(payload.get("fps", 25)), 1), 60)
         quality = min(max(int(payload.get("quality", 80)), 30), 95)
+        desktop_mode = bool(payload.get("desktop_mode", False) or (not hwnd and not pid))
 
         if not stream_id:
             return
@@ -5510,6 +5743,8 @@ class CyberVPSAgent:
                 "hwnd": hwnd,
                 "fps": fps,
                 "quality": quality,
+                "desktop_mode": desktop_mode,
+                "interactive": bool(payload.get("interactive", True)),
                 "correlation_id": correlation_id,
                 "app_id": app_id,
                 "app_name": app_name,
@@ -5518,10 +5753,9 @@ class CyberVPSAgent:
 
         threading.Thread(target=self._app_stream_worker_loop, args=(stream_id,), daemon=True).start()
 
-        threading.Thread(target=self._app_stream_worker_loop, args=(stream_id,), daemon=True).start()
-
     def handle_app_stream_stop(self, payload):
         stream_id = payload.get("stream_id")
+        self.cleanup_desktop_keys()
         if stream_id and stream_id in self.active_app_streams:
             with self.lock:
                 self.active_app_streams[stream_id]["running"] = False
@@ -5533,6 +5767,170 @@ class CyberVPSAgent:
         if stream_id and stream_id in self.active_app_streams:
             with self.lock:
                 self.active_app_streams[stream_id]["hwnd"] = hwnd
+                self.active_app_streams[stream_id]["desktop_mode"] = False if hwnd else True
+
+    def handle_desktop_input_mouse(self, payload):
+        """Processes remote mouse events with pixel-perfect screen coordinate mapping."""
+        if platform.system() != "Windows":
+            return
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            action = payload.get("type", "move")
+            norm_x = float(payload.get("x", 0))
+            norm_y = float(payload.get("y", 0))
+            button = int(payload.get("button", 0))
+            delta_y = int(payload.get("delta_y", 0))
+
+            w = user32.GetSystemMetrics(0)
+            h = user32.GetSystemMetrics(1)
+            px_x = max(0, min(w - 1, int(norm_x * w)))
+            px_y = max(0, min(h - 1, int(norm_y * h)))
+
+            user32.SetCursorPos(px_x, px_y)
+
+            # MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004
+            # MOUSEEVENTF_RIGHTDOWN = 0x0008, MOUSEEVENTF_RIGHTUP = 0x0010
+            # MOUSEEVENTF_MIDDLEDOWN = 0x0020, MOUSEEVENTF_MIDDLEUP = 0x0040
+            # MOUSEEVENTF_WHEEL = 0x0800
+            if action == "down":
+                if button == 0:
+                    user32.mouse_event(0x0002, 0, 0, 0, 0)
+                elif button == 2:
+                    user32.mouse_event(0x0008, 0, 0, 0, 0)
+                elif button == 1:
+                    user32.mouse_event(0x0020, 0, 0, 0, 0)
+            elif action == "up":
+                if button == 0:
+                    user32.mouse_event(0x0004, 0, 0, 0, 0)
+                elif button == 2:
+                    user32.mouse_event(0x0010, 0, 0, 0, 0)
+                elif button == 1:
+                    user32.mouse_event(0x0040, 0, 0, 0, 0)
+            elif action == "click":
+                if button == 0:
+                    user32.mouse_event(0x0002, 0, 0, 0, 0)
+                    user32.mouse_event(0x0004, 0, 0, 0, 0)
+                elif button == 2:
+                    user32.mouse_event(0x0008, 0, 0, 0, 0)
+                    user32.mouse_event(0x0010, 0, 0, 0, 0)
+                elif button == 1:
+                    user32.mouse_event(0x0020, 0, 0, 0, 0)
+                    user32.mouse_event(0x0040, 0, 0, 0, 0)
+            elif action == "dblclick":
+                user32.mouse_event(0x0002, 0, 0, 0, 0)
+                user32.mouse_event(0x0004, 0, 0, 0, 0)
+                time.sleep(0.04)
+                user32.mouse_event(0x0002, 0, 0, 0, 0)
+                user32.mouse_event(0x0004, 0, 0, 0, 0)
+            elif action == "contextmenu":
+                user32.mouse_event(0x0008, 0, 0, 0, 0)
+                user32.mouse_event(0x0010, 0, 0, 0, 0)
+            elif action == "wheel":
+                amount = int(delta_y)
+                if abs(amount) < 10:
+                    amount *= 120
+                user32.mouse_event(0x0800, 0, 0, amount, 0)
+        except Exception:
+            pass
+
+    def handle_desktop_input_keyboard(self, payload):
+        """Processes remote keyboard events, physical key-down/up, modifier tracking."""
+        if platform.system() != "Windows":
+            return
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            k_type = payload.get("type", "keydown")
+            key = payload.get("key", "")
+            code = payload.get("code", "")
+            vk = int(payload.get("vk", 0))
+
+            VK_MAP = {
+                "Enter": 0x0D, "Backspace": 0x08, "Tab": 0x09, "Escape": 0x1B,
+                "Space": 0x20, " ": 0x20, "PageUp": 0x21, "PageDown": 0x22, "End": 0x23, "Home": 0x24,
+                "ArrowLeft": 0x25, "ArrowUp": 0x26, "ArrowRight": 0x27, "ArrowDown": 0x28,
+                "Delete": 0x2E, "Control": 0x11, "Shift": 0x10, "Alt": 0x12,
+                "Meta": 0x5B, "Windows": 0x5B,
+                "F1": 0x70, "F2": 0x71, "F3": 0x72, "F4": 0x73, "F5": 0x74, "F6": 0x75,
+                "F7": 0x76, "F8": 0x77, "F9": 0x78, "F10": 0x79, "F11": 0x7A, "F12": 0x7B
+            }
+
+            resolved_vk = vk or VK_MAP.get(key)
+            if not resolved_vk and len(key) == 1:
+                resolved_vk = user32.VkKeyScanW(ord(key)) & 0xFF
+
+            if not resolved_vk:
+                return
+
+            if k_type == "keydown":
+                user32.keybd_event(resolved_vk, 0, 0, 0)
+                self.pressed_keys.add(resolved_vk)
+            elif k_type == "keyup":
+                user32.keybd_event(resolved_vk, 0, 0x0002, 0)
+                self.pressed_keys.discard(resolved_vk)
+            elif k_type == "text" and key:
+                for ch in key:
+                    user32.keybd_event(0, ord(ch), 0x0004, 0)
+                    user32.keybd_event(0, ord(ch), 0x0004 | 0x0002, 0)
+        except Exception:
+            pass
+
+    def cleanup_desktop_keys(self):
+        """Releases all tracked keys to prevent modifier keys from remaining pressed."""
+        if platform.system() != "Windows":
+            return
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            for vk in list(self.pressed_keys):
+                user32.keybd_event(vk, 0, 0x0002, 0)
+            self.pressed_keys.clear()
+        except Exception:
+            pass
+
+    def handle_desktop_clipboard(self, payload):
+        """Processes remote clipboard read/write requests."""
+        action = payload.get("action", "get")
+        stream_id = payload.get("stream_id")
+        if platform.system() != "Windows":
+            return
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            if action == "get":
+                text = ""
+                if user32.OpenClipboard(None):
+                    hData = user32.GetClipboardData(13) # CF_UNICODETEXT = 13
+                    if hData:
+                        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+                        kernel32.GlobalLock.restype = ctypes.c_void_p
+                        ptr = kernel32.GlobalLock(hData)
+                        if ptr:
+                            text = ctypes.wstring_at(ptr)
+                            kernel32.GlobalUnlock(hData)
+                    user32.CloseClipboard()
+                self.send_agent_event({
+                    "type": "RemoteDesktopClipboard",
+                    "payload": {
+                        "stream_id": stream_id,
+                        "text": text
+                    }
+                })
+            elif action == "set":
+                new_text = payload.get("text", "")
+                if new_text and user32.OpenClipboard(None):
+                    user32.EmptyClipboard()
+                    raw = (new_text + "\0").encode("utf-16le")
+                    hGlobal = kernel32.GlobalAlloc(0x0042, len(raw)) # GHND
+                    ptr = kernel32.GlobalLock(hGlobal)
+                    ctypes.memmove(ptr, raw, len(raw))
+                    kernel32.GlobalUnlock(hGlobal)
+                    user32.SetClipboardData(13, hGlobal)
+                    user32.CloseClipboard()
+        except Exception:
+            pass
 
     # =========================================================================
     def _start_windows_terminal_proc(self, shell_cmd_list, want_standard_token, is_elevated):
@@ -6460,12 +6858,18 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_app_window_list, args=(payload,), daemon=True).start()
         elif c_type == "AppWindowFrame":
             threading.Thread(target=self.handle_app_window_frame, args=(payload,), daemon=True).start()
-        elif c_type == "AppStreamStart":
+        elif c_type in ["AppStreamStart", "RemoteDesktopStart"]:
             self.handle_app_stream_start(payload)
-        elif c_type == "AppStreamStop":
+        elif c_type in ["AppStreamStop", "RemoteDesktopStop"]:
             self.handle_app_stream_stop(payload)
-        elif c_type == "AppStreamSelectWindow":
+        elif c_type in ["AppStreamSelectWindow", "RemoteDesktopSelectWindow"]:
             self.handle_app_stream_select_window(payload)
+        elif c_type in ["AppStreamInputMouse", "RemoteDesktopInputMouse"]:
+            self.handle_desktop_input_mouse(payload)
+        elif c_type in ["AppStreamInputKeyboard", "RemoteDesktopInputKeyboard"]:
+            self.handle_desktop_input_keyboard(payload)
+        elif c_type in ["AppStreamClipboard", "RemoteDesktopClipboard"]:
+            self.handle_desktop_clipboard(payload)
         elif c_type in ["OtaUpdate", "OtaCheck", "FleetUpdate", "UpdateAgent"]:
             threading.Thread(target=self.handle_ota_update if c_type == "OtaCheck" else self.handle_rebuild_agent, args=(payload,), daemon=True).start()
         elif c_type == "RebootHost":
@@ -6498,6 +6902,369 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_backend_management_rpc, args=(c_type, payload), daemon=True).start()
         elif c_type in ["ReplitDoctor", "ReplitStatus", "ReplitDesktop", "ReplitSshx"]:
             threading.Thread(target=self.handle_replit_rpc, args=(c_type, payload), daemon=True).start()
+        elif c_type in ["BlackoutActivate", "BlackoutRelease", "BlackoutStatus"]:
+            threading.Thread(target=self.handle_blackout_command, args=(c_type, payload), daemon=True).start()
+        elif c_type in ["ObsidianPillarProtect", "ObsidianPillarVerify", "ObsidianPillarRestore", "ObsidianPillarListFiles", "ObsidianPillarStatus"]:
+            threading.Thread(target=self.handle_obsidian_pillar_command, args=(c_type, payload), daemon=True).start()
+
+    def _init_pillar_storage(self):
+        try:
+            for d in [self.protected_vault_dir, self.quarantine_dir, self.snapshots_dir]:
+                if not os.path.exists(d):
+                    os.makedirs(d, exist_ok=True)
+                    if hasattr(os, "chmod") and sys.platform != "win32":
+                        try:
+                            os.chmod(d, 0o700)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    def _load_pillar_registry(self):
+        try:
+            if os.path.exists(self.pillar_registry_file):
+                with open(self.pillar_registry_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    def _save_pillar_registry(self, reg):
+        try:
+            tmp = self.pillar_registry_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(reg, f, indent=2)
+            os.replace(tmp, self.pillar_registry_file)
+        except Exception:
+            pass
+
+    def _load_pillar_incidents(self):
+        try:
+            if os.path.exists(self.pillar_incidents_file):
+                with open(self.pillar_incidents_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return []
+
+    def _record_pillar_incident(self, incident):
+        try:
+            incidents = self._load_pillar_incidents()
+            incidents.insert(0, incident)
+            if len(incidents) > 100:
+                incidents = incidents[:100]
+            tmp = self.pillar_incidents_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(incidents, f, indent=2)
+            os.replace(tmp, self.pillar_incidents_file)
+        except Exception:
+            pass
+
+    def _compute_sha256(self, filepath):
+        if not filepath or not os.path.isfile(filepath):
+            return None
+        h = hashlib.sha256()
+        try:
+            with open(filepath, "rb") as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+            return h.hexdigest()
+        except Exception:
+            return None
+
+    def _lock_os_session(self):
+        """Locks the active physical/desktop session to freeze tampering."""
+        locked = False
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                locked = bool(ctypes.windll.user32.LockWorkStation())
+            except Exception:
+                locked = False
+        else:
+            try:
+                p = subprocess.run(["loginctl", "lock-session"], capture_output=True, timeout=2)
+                locked = (p.returncode == 0)
+            except Exception:
+                pass
+            if not locked:
+                try:
+                    p = subprocess.run(["xdg-screensaver", "lock"], capture_output=True, timeout=2)
+                    locked = (p.returncode == 0)
+                except Exception:
+                    pass
+        return locked
+
+    def _get_pillar_protected_count(self):
+        reg = self._load_pillar_registry()
+        return len(reg)
+
+    def _get_pillar_tamper_count(self):
+        reg = self._load_pillar_registry()
+        return sum(1 for x in reg.values() if x.get("status") in ["TAMPER_DETECTED", "MISSING"])
+
+    def handle_blackout_command(self, c_type, payload):
+        req_id = payload.get("request_id") or ("req_" + uuid.uuid4().hex[:8])
+        operator = payload.get("operator", "admin")
+
+        if c_type == "BlackoutActivate":
+            reason = payload.get("reason", "Emergency containment activated by administrator")
+            lock_session = payload.get("lock_session", True)
+            session_locked = False
+            if lock_session:
+                session_locked = self._lock_os_session()
+
+            # Emergency quarantine backup of all protected files
+            reg = self._load_pillar_registry()
+            quarantine_copies = 0
+            for path, meta in reg.items():
+                if os.path.isfile(path):
+                    safe_name = os.path.basename(path) + "_" + str(int(time.time())) + ".bak"
+                    q_dest = os.path.join(self.quarantine_dir, safe_name)
+                    try:
+                        shutil.copy2(path, q_dest)
+                        quarantine_copies += 1
+                    except Exception:
+                        pass
+
+            self.blackout_active = True
+            incident = {
+                "id": "inc_blackout_" + uuid.uuid4().hex[:8],
+                "machine_id": self.machine_id,
+                "state": "BLACKOUT_ACTIVE",
+                "reason": reason,
+                "operator": operator,
+                "started_at": int(time.time()),
+                "session_locked": session_locked,
+                "quarantined_files": quarantine_copies
+            }
+            self.blackout_incident = incident
+            self._record_pillar_incident(incident)
+
+            self.send_agent_event({
+                "type": "BlackoutStatusReport",
+                "payload": {
+                    "request_id": req_id,
+                    "machine_id": self.machine_id,
+                    "active": True,
+                    "incident": incident
+                }
+            })
+
+        elif c_type == "BlackoutRelease":
+            self.blackout_active = False
+            if self.blackout_incident:
+                self.blackout_incident["state"] = "RELEASED"
+                self.blackout_incident["released_at"] = int(time.time())
+                self.blackout_incident["released_by"] = operator
+
+            rel_incident = {
+                "id": "inc_release_" + uuid.uuid4().hex[:8],
+                "machine_id": self.machine_id,
+                "state": "RELEASED",
+                "released_at": int(time.time()),
+                "operator": operator
+            }
+            self._record_pillar_incident(rel_incident)
+
+            self.send_agent_event({
+                "type": "BlackoutStatusReport",
+                "payload": {
+                    "request_id": req_id,
+                    "machine_id": self.machine_id,
+                    "active": False,
+                    "incident": self.blackout_incident
+                }
+            })
+
+        elif c_type == "BlackoutStatus":
+            self.send_agent_event({
+                "type": "BlackoutStatusReport",
+                "payload": {
+                    "request_id": req_id,
+                    "machine_id": self.machine_id,
+                    "active": self.blackout_active,
+                    "incident": self.blackout_incident
+                }
+            })
+
+    def handle_obsidian_pillar_command(self, c_type, payload):
+        req_id = payload.get("request_id") or ("req_" + uuid.uuid4().hex[:8])
+
+        if c_type == "ObsidianPillarProtect":
+            file_path = payload.get("path")
+            policy = payload.get("policy", "immutable_snapshot")
+            if not file_path:
+                self.send_agent_event({"type": "ObsidianPillarProtectResult", "payload": {"request_id": req_id, "success": False, "error": "Missing path"}})
+                return
+
+            canon_path = os.path.abspath(file_path)
+            if not os.path.isfile(canon_path):
+                self.send_agent_event({"type": "ObsidianPillarProtectResult", "payload": {"request_id": req_id, "success": False, "error": "File does not exist"}})
+                return
+
+            sha256 = self._compute_sha256(canon_path)
+            size = os.path.getsize(canon_path)
+
+            # Store snapshot
+            snap_id = hashlib.sha256(canon_path.encode("utf-8")).hexdigest()[:16] + "_" + os.path.basename(canon_path)
+            snap_path = os.path.join(self.snapshots_dir, snap_id)
+            try:
+                shutil.copy2(canon_path, snap_path)
+            except Exception as e:
+                self.send_agent_event({"type": "ObsidianPillarProtectResult", "payload": {"request_id": req_id, "success": False, "error": str(e)}})
+                return
+
+            reg = self._load_pillar_registry()
+            record = {
+                "path": canon_path,
+                "sha256": sha256,
+                "size": size,
+                "policy": policy,
+                "snapshot_path": snap_path,
+                "protected_at": int(time.time()),
+                "last_verified": int(time.time()),
+                "status": "VERIFIED"
+            }
+            reg[canon_path] = record
+            self._save_pillar_registry(reg)
+
+            self.send_agent_event({
+                "type": "ObsidianPillarProtectResult",
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "record": record
+                }
+            })
+
+        elif c_type == "ObsidianPillarVerify":
+            target_path = payload.get("path")
+            reg = self._load_pillar_registry()
+            results = []
+            tampered_count = 0
+
+            to_check = [target_path] if (target_path and target_path in reg) else list(reg.keys())
+
+            for p in to_check:
+                item = reg.get(p)
+                if not item:
+                    continue
+                expected_hash = item.get("sha256")
+                if not os.path.exists(p):
+                    item["status"] = "MISSING"
+                    item["last_verified"] = int(time.time())
+                    tampered_count += 1
+                else:
+                    curr_hash = self._compute_sha256(p)
+                    if curr_hash == expected_hash:
+                        item["status"] = "VERIFIED"
+                        item["last_verified"] = int(time.time())
+                    else:
+                        item["status"] = "TAMPER_DETECTED"
+                        item["last_verified"] = int(time.time())
+                        tampered_count += 1
+                results.append(item)
+
+            self._save_pillar_registry(reg)
+
+            # If tampering detected and auto_blackout policy enabled
+            if tampered_count >= 3 and not self.blackout_active:
+                self.handle_blackout_command("BlackoutActivate", {
+                    "reason": f"Automatic containment: {tampered_count} protected files tampered or deleted",
+                    "operator": "ObsidianPillarAutonomicEngine"
+                })
+
+            self.send_agent_event({
+                "type": "ObsidianPillarVerifyResult",
+                "payload": {
+                    "request_id": req_id,
+                    "success": True,
+                    "verified_count": len(results) - tampered_count,
+                    "tampered_count": tampered_count,
+                    "results": results
+                }
+            })
+
+        elif c_type == "ObsidianPillarRestore":
+            file_path = payload.get("path")
+            if not file_path:
+                self.send_agent_event({"type": "ObsidianPillarRestoreResult", "payload": {"request_id": req_id, "success": False, "error": "Missing path"}})
+                return
+
+            canon_path = os.path.abspath(file_path)
+            reg = self._load_pillar_registry()
+            record = reg.get(canon_path)
+            if not record:
+                self.send_agent_event({"type": "ObsidianPillarRestoreResult", "payload": {"request_id": req_id, "success": False, "error": "File not in protected registry"}})
+                return
+
+            snap_path = record.get("snapshot_path")
+            if not snap_path or not os.path.isfile(snap_path):
+                self.send_agent_event({"type": "ObsidianPillarRestoreResult", "payload": {"request_id": req_id, "success": False, "error": "Snapshot missing"}})
+                return
+
+            # Verify snapshot integrity before restoring
+            snap_hash = self._compute_sha256(snap_path)
+            if snap_hash != record.get("sha256"):
+                self.send_agent_event({"type": "ObsidianPillarRestoreResult", "payload": {"request_id": req_id, "success": False, "error": "Snapshot corrupted / hash mismatch"}})
+                return
+
+            # Atomic restore via temp file
+            try:
+                parent = os.path.dirname(canon_path)
+                os.makedirs(parent, exist_ok=True)
+                tmp_restore = canon_path + ".restore.tmp"
+                shutil.copy2(snap_path, tmp_restore)
+                os.replace(tmp_restore, canon_path)
+                record["status"] = "RECOVERED"
+                record["last_verified"] = int(time.time())
+                self._save_pillar_registry(reg)
+
+                self.send_agent_event({
+                    "type": "ObsidianPillarRestoreResult",
+                    "payload": {
+                        "request_id": req_id,
+                        "success": True,
+                        "path": canon_path,
+                        "sha256": record.get("sha256")
+                    }
+                })
+            except Exception as e:
+                self.send_agent_event({"type": "ObsidianPillarRestoreResult", "payload": {"request_id": req_id, "success": False, "error": str(e)}})
+
+        elif c_type == "ObsidianPillarListFiles":
+            reg = self._load_pillar_registry()
+            self.send_agent_event({
+                "type": "ObsidianPillarFileListResult",
+                "payload": {
+                    "request_id": req_id,
+                    "files": list(reg.values())
+                }
+            })
+
+        elif c_type == "ObsidianPillarStatus":
+            reg = self._load_pillar_registry()
+            incidents = self._load_pillar_incidents()
+            total = len(reg)
+            verified = sum(1 for x in reg.values() if x.get("status") in ["VERIFIED", "RECOVERED"])
+            tampered = sum(1 for x in reg.values() if x.get("status") in ["TAMPER_DETECTED", "MISSING"])
+            self.send_agent_event({
+                "type": "ObsidianPillarStatusResult",
+                "payload": {
+                    "request_id": req_id,
+                    "machine_id": self.machine_id,
+                    "pillar_id": f"Pillar #{abs(hash(self.machine_id)) % 8 + 1}",
+                    "total_protected": total,
+                    "verified_count": verified,
+                    "tamper_count": tampered,
+                    "incidents_count": len(incidents),
+                    "blackout_active": self.blackout_active
+                }
+            })
 
     def handle_replit_rpc(self, c_type, payload):
         req_id = payload.get("request_id")

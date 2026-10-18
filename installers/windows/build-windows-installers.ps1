@@ -60,10 +60,10 @@ if (-not (Test-Path $setupSource)) {
     exit 1
 }
 
-# 3. Compile CyberVPS-Setup-x64.exe (Universal Dual-Mode)
+# 3. Compile CyberVPS-Setup-x64.exe (Universal Dual-Mode with asInvoker Manifest)
 $universalExe = Join-Path $OutputDir "CyberVPS-Setup-x64.exe"
-Write-Host "`n[*] Compiling CyberVPS-Setup-x64.exe (Universal Dual-Mode)..."
-& $cscPath /nologo /optimize+ /target:exe /platform:x64 "/out:$universalExe" $setupSource
+Write-Host "`n[*] Compiling CyberVPS-Setup-x64.exe (Universal Dual-Mode asInvoker)..."
+& $cscPath /nologo /optimize+ /target:exe /platform:x64 "/win32manifest:$userManifest" "/out:$universalExe" $setupSource
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to compile CyberVPS-Setup-x64.exe"
     exit 1
