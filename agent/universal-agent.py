@@ -7620,47 +7620,167 @@ class CyberVPSAgent:
             pass
 
     def handle_desktop_clipboard(self, payload):
-        """Processes remote clipboard read/write requests."""
+        """Processes remote clipboard read/write requests with 64-bit ctypes and multi-session fallbacks."""
         action = payload.get("action", "get")
         stream_id = payload.get("stream_id")
-        if platform.system() != "Windows":
-            return
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            if action == "get":
-                text = ""
-                if user32.OpenClipboard(None):
-                    hData = user32.GetClipboardData(13) # CF_UNICODETEXT = 13
-                    if hData:
-                        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-                        kernel32.GlobalLock.restype = ctypes.c_void_p
-                        ptr = kernel32.GlobalLock(hData)
+        correlation_id = payload.get("correlation_id")
+        sys_os = platform.system()
+
+        text = ""
+        success = False
+
+        if sys_os == "Windows":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                user32 = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+
+                user32.OpenClipboard.argtypes = [wintypes.HWND]
+                user32.OpenClipboard.restype = wintypes.BOOL
+                user32.CloseClipboard.argtypes = []
+                user32.CloseClipboard.restype = wintypes.BOOL
+                user32.EmptyClipboard.argtypes = []
+                user32.EmptyClipboard.restype = wintypes.BOOL
+                user32.GetClipboardData.argtypes = [wintypes.UINT]
+                user32.GetClipboardData.restype = ctypes.c_void_p
+                user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+                user32.SetClipboardData.restype = ctypes.c_void_p
+                user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+                user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+
+                kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+                kernel32.GlobalAlloc.restype = ctypes.c_void_p
+                kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+                kernel32.GlobalLock.restype = ctypes.c_void_p
+                kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+                kernel32.GlobalUnlock.restype = wintypes.BOOL
+                kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+                kernel32.GlobalFree.restype = ctypes.c_void_p
+
+                CF_UNICODETEXT = 13
+
+                if action == "get":
+                    # Try opening clipboard with retries in case another process is holding it
+                    for _ in range(5):
+                        if user32.OpenClipboard(None):
+                            try:
+                                if user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+                                    hData = user32.GetClipboardData(CF_UNICODETEXT)
+                                    if hData:
+                                        ptr = kernel32.GlobalLock(hData)
+                                        if ptr:
+                                            text = ctypes.wstring_at(ptr)
+                                            kernel32.GlobalUnlock(hData)
+                                            success = True
+                            finally:
+                                user32.CloseClipboard()
+                            break
+                        time.sleep(0.04)
+
+                    # Fallback to PowerShell Get-Clipboard if ctypes returned empty or failed
+                    if not success or not text:
+                        try:
+                            res = subprocess.run(
+                                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard -Raw"],
+                                capture_output=True,
+                                text=True,
+                                timeout=3,
+                                creationflags=0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+                            )
+                            if res.returncode == 0 and res.stdout:
+                                text = res.stdout.rstrip("\r\n")
+                                success = True
+                        except Exception:
+                            pass
+
+                elif action == "set":
+                    new_text = payload.get("text", "")
+                    raw = (new_text + "\0").encode("utf-16le")
+                    hGlobal = kernel32.GlobalAlloc(0x0042, len(raw)) # GHND = 0x0042
+                    if hGlobal:
+                        ptr = kernel32.GlobalLock(hGlobal)
                         if ptr:
-                            text = ctypes.wstring_at(ptr)
-                            kernel32.GlobalUnlock(hData)
-                    user32.CloseClipboard()
-                self.send_agent_event({
-                    "type": "RemoteDesktopClipboard",
-                    "payload": {
-                        "stream_id": stream_id,
-                        "text": text
-                    }
-                })
+                            ctypes.memmove(ptr, raw, len(raw))
+                            kernel32.GlobalUnlock(hGlobal)
+                            for _ in range(5):
+                                if user32.OpenClipboard(None):
+                                    try:
+                                        user32.EmptyClipboard()
+                                        if user32.SetClipboardData(CF_UNICODETEXT, hGlobal):
+                                            success = True
+                                            hGlobal = None # System owns memory now
+                                    finally:
+                                        user32.CloseClipboard()
+                                    break
+                                time.sleep(0.04)
+                        if hGlobal:
+                            kernel32.GlobalFree(hGlobal)
+
+                    # Fallback to PowerShell Set-Clipboard if ctypes failed
+                    if not success:
+                        try:
+                            proc = subprocess.Popen(
+                                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "$input | Set-Clipboard"],
+                                stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                text=True,
+                                creationflags=0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+                            )
+                            proc.communicate(input=new_text, timeout=3)
+                            success = (proc.returncode == 0)
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[!] Clipboard error: {e}")
+        else:
+            # Linux clipboard via xclip / xsel / wl-paste
+            if action == "get":
+                for cmd in [["xclip", "-o", "-selection", "clipboard"], ["xsel", "-b", "-o"], ["wl-paste"]]:
+                    try:
+                        res = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+                        if res.returncode == 0:
+                            text = res.stdout
+                            success = True
+                            break
+                    except Exception:
+                        pass
             elif action == "set":
                 new_text = payload.get("text", "")
-                if new_text and user32.OpenClipboard(None):
-                    user32.EmptyClipboard()
-                    raw = (new_text + "\0").encode("utf-16le")
-                    hGlobal = kernel32.GlobalAlloc(0x0042, len(raw)) # GHND
-                    ptr = kernel32.GlobalLock(hGlobal)
-                    ctypes.memmove(ptr, raw, len(raw))
-                    kernel32.GlobalUnlock(hGlobal)
-                    user32.SetClipboardData(13, hGlobal)
-                    user32.CloseClipboard()
-        except Exception:
-            pass
+                for cmd in [["xclip", "-selection", "clipboard"], ["xsel", "-b", "-i"], ["wl-copy"]]:
+                    try:
+                        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+                        proc.communicate(input=new_text, timeout=2)
+                        if proc.returncode == 0:
+                            success = True
+                            break
+                    except Exception:
+                        pass
+
+        # Send event back to control plane / browser
+        resp_payload = {
+            "stream_id": stream_id,
+            "correlation_id": correlation_id,
+            "request_id": payload.get("request_id") or correlation_id,
+            "action": action,
+            "text": text if action == "get" else payload.get("text", ""),
+            "success": success,
+            "timestamp": int(time.time() * 1000)
+        }
+        self.send_agent_event({
+            "type": "RemoteDesktopClipboard",
+            "payload": resp_payload
+        })
+        if payload.get("request_id"):
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": payload.get("request_id"),
+                    "success": success,
+                    "result": resp_payload
+                }
+            })
 
     # =========================================================================
     def _start_windows_terminal_proc(self, shell_cmd_list, want_standard_token, is_elevated):

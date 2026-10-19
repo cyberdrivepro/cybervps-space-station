@@ -99,6 +99,7 @@ const db = {
   remoteDesktopTokens: new Map(), // token -> { machine_id, desktop_mode, interactive, user, expires_at }
   appStreams: new Map(), // stream_id -> { machine_id, pid, hwnd, wsBrowser, startTime, frameCount, byteCount }
   pendingRequests: new Map(), // request_id -> { resolve, reject, timer }
+  pendingClipboardRequests: new Map(), // correlation_id -> { resolve, reject, timer, machineId, createdAt }
   telemetrySubscribers: new Set(), // active SSE client responses for 2-second real-time fan-out
   backends: new Map(), // backend_id -> { id, url, name, role, state, latency_ms, last_check, failures_count }
   sessions: new Map(), // session_token -> { username, role, created_at, expires_at }
@@ -1360,6 +1361,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/terminal/token' || pathname === '/api/v1/terminal/session') return true;
   if (pathname === '/api/v1/apps/stream/token') return true;
   if (pathname.startsWith('/api/v1/remote-desktop/') || pathname === '/api/v1/desktop/session') return true;
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/clipboard')) return true;
   if (pathname === '/api/v1/auth/login') return true;
   if (pathname === '/api/v1/auth/logout') return true;
   if (pathname === '/api/v1/auth/status') return true;
@@ -2803,6 +2805,108 @@ const server = http.createServer(async (req, res) => {
       }
     });
     return;
+  }
+
+  // 2A-2C. REMOTE DESKTOP BIDIRECTIONAL CLIPBOARD API
+  if (
+    (pathname === '/api/v1/remote-desktop/clipboard' && (method === 'GET' || method === 'POST')) ||
+    (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/clipboard') && (method === 'GET' || method === 'POST'))
+  ) {
+    let rawMachineId = '';
+    if (pathname.startsWith('/api/v1/machines/')) {
+      const parts = pathname.split('/');
+      rawMachineId = parts[4];
+    } else {
+      rawMachineId = parsedUrl.searchParams.get('machine_id');
+    }
+
+    const executeClipboardExchange = async (machineId, action, text) => {
+      const targetM = findMachine(machineId);
+      if (!targetM) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: `Machine '${machineId}' not found in fleet` }));
+        return;
+      }
+      const resolvedId = targetM.id;
+      const status = getMachineStatus(targetM);
+      if (status === 'offline') {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: `Host machine '${targetM.friendly_name || resolvedId}' is offline` }));
+        return;
+      }
+
+      const correlationId = 'clip_' + crypto.randomUUID().slice(0, 10);
+      const timeoutMs = 8000;
+
+      try {
+        const result = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            db.pendingClipboardRequests.delete(correlationId);
+            reject(new Error(`Host '${resolvedId}' clipboard request timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+
+          db.pendingClipboardRequests.set(correlationId, {
+            resolve,
+            reject,
+            timer,
+            machineId: resolvedId,
+            createdAt: Date.now()
+          });
+
+          sendServerCommand(resolvedId, {
+            type: 'RemoteDesktopClipboard',
+            payload: {
+              action: action === 'set' ? 'set' : 'get',
+              text: text || '',
+              correlation_id: correlationId,
+              request_id: correlationId
+            }
+          });
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: result.success !== false,
+          text: result.text || '',
+          action: result.action || action,
+          machine_id: resolvedId
+        }));
+      } catch (err) {
+        res.writeHead(504, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    };
+
+    if (method === 'GET') {
+      if (!rawMachineId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'machine_id parameter is required' }));
+        return;
+      }
+      executeClipboardExchange(rawMachineId, 'get', '');
+      return;
+    } else if (method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const mId = rawMachineId || payload.machine_id;
+          if (!mId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'machine_id is required' }));
+            return;
+          }
+          const action = (payload.action === 'get' || payload.action === 'read') ? 'get' : 'set';
+          const text = payload.text !== undefined ? String(payload.text) : '';
+          executeClipboardExchange(mId, action, text);
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid JSON payload: ' + e.message }));
+        }
+      });
+      return;
+    }
   }
 
   // 2A-2C. REMOTE DESKTOP CAPABILITY & ENGINE STATUS
@@ -8001,6 +8105,13 @@ wssRelay.on('connection', (ws, request) => {
           pending.reject(new Error(`Host '${machineId}' disconnected during operation`));
         }
       }
+      for (const [reqId, pending] of db.pendingClipboardRequests.entries()) {
+        if (pending.machineId === machineId) {
+          clearTimeout(pending.timer);
+          db.pendingClipboardRequests.delete(reqId);
+          pending.reject(new Error(`Host '${machineId}' disconnected during clipboard operation`));
+        }
+      }
       for (const [sId, aStream] of db.appStreams.entries()) {
         if (aStream.machineId === machineId) {
           if (aStream.wsBrowser && aStream.wsBrowser.readyState === WebSocket.OPEN) {
@@ -8437,36 +8548,36 @@ wssAppStream.on('connection', (ws, request) => {
         if (stream) {
           stream.hwnd = selectedHwnd;
         }
-        sendServerCommand(machineId, {
+        sendServerCommand(resolvedMachineId, {
           type: 'AppStreamSelectWindow',
           payload: { stream_id: streamId, hwnd: selectedHwnd }
         });
       } else if (msg.type === 'mouse' || msg.type === 'input_mouse') {
         if (isInteractive) {
-          sendServerCommand(machineId, {
+          sendServerCommand(resolvedMachineId, {
             type: 'RemoteDesktopInputMouse',
             payload: { stream_id: streamId, ...msg }
           });
         }
       } else if (msg.type === 'keyboard' || msg.type === 'input_keyboard') {
         if (isInteractive) {
-          sendServerCommand(machineId, {
+          sendServerCommand(resolvedMachineId, {
             type: 'RemoteDesktopInputKeyboard',
             payload: { stream_id: streamId, ...msg }
           });
         }
       } else if (msg.type === 'clipboard') {
-        sendServerCommand(machineId, {
+        sendServerCommand(resolvedMachineId, {
           type: 'RemoteDesktopClipboard',
           payload: { stream_id: streamId, ...msg }
         });
       } else if (msg.type === 'quality') {
-        sendServerCommand(machineId, {
+        sendServerCommand(resolvedMachineId, {
           type: 'RemoteDesktopSetQuality',
           payload: { stream_id: streamId, ...msg }
         });
       } else if (msg.type === 'stop') {
-        sendServerCommand(machineId, {
+        sendServerCommand(resolvedMachineId, {
           type: isDesktopMode ? 'RemoteDesktopStop' : 'AppStreamStop',
           payload: { stream_id: streamId }
         });
@@ -9015,14 +9126,33 @@ function handleAgentMessage(ws, msg) {
   }
 
   else if (type === 'RemoteDesktopClipboard') {
-    const { stream_id } = payload;
-    const stream = db.appStreams.get(stream_id);
-    if (stream && stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
-      stream.wsBrowser.send(JSON.stringify({
-        type: 'clipboard',
-        ...payload,
-        server_relay_timestamp: Date.now()
-      }));
+    const { stream_id, correlation_id, request_id, text, action, success } = payload;
+    if (stream_id) {
+      const stream = db.appStreams.get(stream_id);
+      if (stream && stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
+        stream.wsBrowser.send(JSON.stringify({
+          type: 'clipboard',
+          ...payload,
+          server_relay_timestamp: Date.now()
+        }));
+      }
+    }
+    const corrId = correlation_id || request_id;
+    if (corrId && db.pendingClipboardRequests && db.pendingClipboardRequests.has(corrId)) {
+      const pending = db.pendingClipboardRequests.get(corrId);
+      clearTimeout(pending.timer);
+      db.pendingClipboardRequests.delete(corrId);
+      pending.resolve({ success: success !== false, text: text || '', action: action || 'read' });
+    }
+    if (corrId && db.pendingRequests && db.pendingRequests.has(corrId)) {
+      const pending = db.pendingRequests.get(corrId);
+      clearTimeout(pending.timer);
+      db.pendingRequests.delete(corrId);
+      if (success !== false) {
+        pending.resolve({ success: true, text: text || '', action: action || 'read' });
+      } else {
+        pending.reject(new Error(payload.error || 'Clipboard operation failed'));
+      }
     }
     return { success: true };
   }
