@@ -497,7 +497,18 @@
       position: relative;
     }
     .terminal-container.expanded {
-      height: 82vh;
+      position: fixed !important;
+      inset: 0 !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      z-index: 99999 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      max-height: 100vh !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
     }
     .terminal-header {
       background: #070c16;
@@ -1910,10 +1921,10 @@
                 <svg viewBox="0 0 24 24" style="width:1.25rem; height:1.25rem; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
                 <div class="card-title" style="margin:0;">Browser Web Terminal</div>
               </div>
-              <select id="terminal-machine-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:200px;" onchange="initTerminalSession(true)">
+              <select id="terminal-machine-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:200px;" onchange="reconnectTerminalSession()">
                 <option value="">Select Target Machine...</option>
               </select>
-              <select id="terminal-profile-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:145px; background:rgba(0,240,255,0.06); border-color:rgba(0,240,255,0.3); color:var(--accent-cyan); font-weight:600;" onchange="initTerminalSession(false)" title="Terminal Execution Profile">
+              <select id="terminal-profile-select" class="form-control" style="font-size:0.82rem; padding:0.4rem 0.75rem; min-width:145px; background:rgba(0,240,255,0.06); border-color:rgba(0,240,255,0.3); color:var(--accent-cyan); font-weight:600;" onchange="reconnectTerminalSession()" title="Terminal Execution Profile">
                 <option value="auto" selected>⚡ Auto (Detect & Select)</option>
                 <option value="standard">👤 Standard User</option>
                 <option value="privileged">🔒 Administrator / Root</option>
@@ -1926,7 +1937,7 @@
               <button class="btn btn-secondary" onclick="clearTerminalScreen()" title="Clear terminal screen (Ctrl+L)" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
                 <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Clear
               </button>
-              <button class="btn btn-secondary" onclick="initTerminalSession(false)" title="Reconnect terminal WebSocket" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
+              <button class="btn btn-secondary" onclick="reconnectTerminalSession()" title="Reconnect terminal WebSocket" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
                 <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Reconnect
               </button>
               <button id="btn-terminal-fullscreen" class="btn btn-secondary" onclick="toggleTerminalFullscreen()" title="Toggle full height terminal" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
@@ -6800,13 +6811,37 @@
       }
     }
 
+    function reconnectTerminalSession() {
+      appState.isTerminalConnecting = false;
+      if (appState.activeTerminalWs) {
+        try {
+          appState.activeTerminalWs.onclose = null;
+          appState.activeTerminalWs.onerror = null;
+          appState.activeTerminalWs.close();
+        } catch (_) {}
+        appState.activeTerminalWs = null;
+      }
+      initTerminalSession(true);
+      showToast('Reconnecting terminal session...', 'info');
+    }
+
     function clearTerminalScreen() {
       if (appState.termInstance) {
         appState.termInstance.clear();
+        appState.termInstance.write('\x1b[2J\x1b[3J\x1b[H');
         appState.termInstance.scrollToBottom();
       }
       const output = document.getElementById('terminal-output');
       if (output) output.innerHTML = '';
+      if (appState.activeTerminalWs && appState.activeTerminalWs.readyState === WebSocket.OPEN) {
+        const select = document.getElementById('terminal-machine-select');
+        const machineObj = appState.machines.find(m => m.id === (select?.value || appState.currentTerminalMachineId));
+        const isWin = isWindowsTarget(machineObj);
+        const clearCmd = isWin ? 'cls\r' : 'clear\r';
+        try {
+          appState.activeTerminalWs.send(JSON.stringify({ type: 'input', data: clearCmd }));
+        } catch (_) {}
+      }
       fitTerminalSafely();
       showToast('Terminal screen cleared', 'info');
     }
@@ -6826,7 +6861,8 @@
             text = lines.join('\n').trim();
           } catch (_) {}
         }
-      } else {
+      }
+      if (!text) {
         const output = document.getElementById('terminal-output');
         text = output ? (output.innerText || output.textContent || '') : '';
       }
@@ -6834,23 +6870,69 @@
         showToast('Terminal buffer is empty', 'warning');
         return;
       }
-      navigator.clipboard.writeText(text).then(() => {
-        showToast('Terminal output copied to clipboard', 'success');
-      }).catch(() => {
-        showToast('Failed to copy to clipboard', 'error');
-      });
+
+      function execCommandCopy(str) {
+        const ta = document.createElement('textarea');
+        ta.value = str;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        ta.style.left = '-9999px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        let success = false;
+        try {
+          success = document.execCommand('copy');
+        } catch (_) {}
+        document.body.removeChild(ta);
+        return success;
+      }
+
+      if (navigator.clipboard && window.isSecureContext && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast('Terminal output copied to clipboard', 'success');
+        }).catch(() => {
+          if (execCommandCopy(text)) {
+            showToast('Terminal output copied to clipboard', 'success');
+          } else {
+            showToast('Failed to copy to clipboard', 'error');
+          }
+        });
+      } else {
+        if (execCommandCopy(text)) {
+          showToast('Terminal output copied to clipboard', 'success');
+        } else {
+          showToast('Failed to copy to clipboard', 'error');
+        }
+      }
     }
 
     function toggleTerminalFullscreen() {
-      const container = document.querySelector('.terminal-container');
+      const container = document.querySelector('#view-terminal .terminal-container') || document.querySelector('.terminal-container');
       const btn = document.getElementById('btn-terminal-fullscreen');
       if (!container) return;
       const isExpanded = container.classList.toggle('expanded');
-      if (btn) btn.innerHTML = isExpanded ? '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M4 14h6v6m10-10h-6V4m0 6 7-7M3 21l7-7"/></svg>Collapse' : '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>Maximize';
-      setTimeout(fitTerminalSafely, 120);
+      if (btn) {
+        btn.innerHTML = isExpanded 
+          ? '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M4 14h6v6m10-10h-6V4m0 6 7-7M3 21l7-7"/></svg>Collapse' 
+          : '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>Maximize';
+      }
+      setTimeout(fitTerminalSafely, 80);
+      setTimeout(fitTerminalSafely, 200);
       const output = document.getElementById('terminal-output');
       if (output) output.scrollTop = output.scrollHeight;
     }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const container = document.querySelector('#view-terminal .terminal-container');
+        if (container && container.classList.contains('expanded')) {
+          toggleTerminalFullscreen();
+        }
+      }
+    });
 
     function focusTerminalInput() {
       if (window.getSelection().toString()) return;
@@ -8259,11 +8341,20 @@
           <div style="margin-top:1.25rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
             <button class="btn btn-primary" style="font-size:0.78rem;" onclick="toggleWebRemoteDesktop()">🔄 Retry Connection</button>
             <button class="btn btn-secondary" style="font-size:0.78rem; color:var(--accent-cyan); border-color:var(--accent-cyan); font-weight:600;" onclick="diagnoseAndRecoverDesktop()">⚡ Diagnose & Auto-Recover</button>
+            <button class="btn btn-secondary" style="font-size:0.78rem; color:#38bdf8; border-color:rgba(56,189,248,0.4);" onclick="switchToFullDesktopStream()">🖥️ Stream Full Desktop</button>
           </div>
         `;
         desc.innerHTML = `<div style="line-height:1.6; margin-bottom:0.75rem;">${escapeHtml(message)}</div>${actionButtons}`;
       }
       showToast(message, 'error');
+    }
+
+    function switchToFullDesktopStream() {
+      webDesktopState.appId = null;
+      webDesktopState.appName = null;
+      webDesktopState.pid = null;
+      webDesktopState.hwnd = null;
+      toggleWebRemoteDesktop();
     }
 
     function getCanvasCoordinates(canvas, event) {
@@ -17928,15 +18019,50 @@ class TerminalView {
   }
 
   copyBuffer() {
-    if (this.term && typeof this.term.selectAll === 'function') {
-      const selection = this.term.getSelection();
-      const textToCopy = selection || this.logBuffer.join('');
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(textToCopy).then(() => {
-          alert('Terminal output copied to clipboard!');
-        }).catch(() => {
+    let textToCopy = '';
+    if (this.term) {
+      textToCopy = this.term.getSelection() || '';
+    }
+    if (!textToCopy) {
+      textToCopy = this.logBuffer.join('');
+    }
+    if (!textToCopy.trim()) return;
+
+    function execCommandCopy(str) {
+      const ta = document.createElement('textarea');
+      ta.value = str;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      ta.style.left = '-9999px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    if (navigator.clipboard && window.isSecureContext && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        if (typeof showToast === 'function') showToast('Terminal output copied to clipboard', 'success');
+        else alert('Terminal output copied to clipboard!');
+      }).catch(() => {
+        if (execCommandCopy(textToCopy)) {
+          if (typeof showToast === 'function') showToast('Terminal output copied to clipboard', 'success');
+          else alert('Terminal output copied to clipboard!');
+        } else {
           alert('Could not write to clipboard.');
-        });
+        }
+      });
+    } else {
+      if (execCommandCopy(textToCopy)) {
+        if (typeof showToast === 'function') showToast('Terminal output copied to clipboard', 'success');
+        else alert('Terminal output copied to clipboard!');
+      } else {
+        alert('Could not write to clipboard.');
       }
     }
   }

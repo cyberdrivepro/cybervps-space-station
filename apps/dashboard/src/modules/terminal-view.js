@@ -532,15 +532,50 @@ class TerminalView {
   }
 
   copyBuffer() {
-    if (this.term && typeof this.term.selectAll === 'function') {
-      const selection = this.term.getSelection();
-      const textToCopy = selection || this.logBuffer.join('');
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(textToCopy).then(() => {
-          alert('Terminal output copied to clipboard!');
-        }).catch(() => {
+    let textToCopy = '';
+    if (this.term) {
+      textToCopy = this.term.getSelection() || '';
+    }
+    if (!textToCopy) {
+      textToCopy = this.logBuffer.join('');
+    }
+    if (!textToCopy.trim()) return;
+
+    function execCommandCopy(str) {
+      const ta = document.createElement('textarea');
+      ta.value = str;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      ta.style.left = '-9999px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    if (navigator.clipboard && window.isSecureContext && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        if (typeof showToast === 'function') showToast('Terminal output copied to clipboard', 'success');
+        else alert('Terminal output copied to clipboard!');
+      }).catch(() => {
+        if (execCommandCopy(textToCopy)) {
+          if (typeof showToast === 'function') showToast('Terminal output copied to clipboard', 'success');
+          else alert('Terminal output copied to clipboard!');
+        } else {
           alert('Could not write to clipboard.');
-        });
+        }
+      });
+    } else {
+      if (execCommandCopy(textToCopy)) {
+        if (typeof showToast === 'function') showToast('Terminal output copied to clipboard', 'success');
+        else alert('Terminal output copied to clipboard!');
+      } else {
+        alert('Could not write to clipboard.');
       }
     }
   }

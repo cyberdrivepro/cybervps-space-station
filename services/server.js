@@ -8998,7 +8998,7 @@ function handleAgentMessage(ws, msg) {
         clearTimeout(stream.ackTimer);
         stream.ackTimer = null;
       }
-      if (stream.firstFrameTimer && (payload.status === 'session_0_isolated' || payload.status === 'no_display' || payload.status === 'error')) {
+      if (stream.firstFrameTimer && payload.status && payload.status !== 'worker_started') {
         clearTimeout(stream.firstFrameTimer);
         stream.firstFrameTimer = null;
       }

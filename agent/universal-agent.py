@@ -6083,12 +6083,34 @@ class CyberVPSAgent:
 
         expanded_pids = set(target_pids)
         target_proc_names = set()
-        if app_id:
-            target_proc_names.add(str(app_id).lower())
-            target_proc_names.add(str(app_id).lower() + ".exe")
-        if app_name:
-            target_proc_names.add(str(app_name).lower())
-            target_proc_names.add(str(app_name).lower() + ".exe")
+
+        # Comprehensive app name and executable aliases map
+        app_aliases = {
+            "microsoft edge": ["msedge.exe", "msedge"],
+            "edge": ["msedge.exe", "msedge"],
+            "google chrome": ["chrome.exe", "chrome"],
+            "chrome": ["chrome.exe", "chrome"],
+            "brave": ["brave.exe", "brave"],
+            "brave browser": ["brave.exe", "brave"],
+            "mozilla firefox": ["firefox.exe", "firefox"],
+            "firefox": ["firefox.exe", "firefox"],
+            "visual studio code": ["code.exe", "code"],
+            "vs code": ["code.exe", "code"],
+            "file explorer": ["explorer.exe", "explorer"],
+            "windows explorer": ["explorer.exe", "explorer"],
+            "notepad": ["notepad.exe", "notepad"],
+            "calculator": ["calc.exe", "calculatorapp.exe", "calc"],
+            "task manager": ["taskmgr.exe", "taskmgr"]
+        }
+
+        for ident in [app_id, app_name]:
+            if ident:
+                id_str = str(ident).lower().strip()
+                target_proc_names.add(id_str)
+                target_proc_names.add(id_str + ".exe")
+                for k, v in app_aliases.items():
+                    if k in id_str or id_str in k:
+                        target_proc_names.update(v)
 
         if psutil:
             # 1. Expand PID hierarchy: find root ancestors, siblings, and children
@@ -6131,6 +6153,47 @@ class CyberVPSAgent:
                                 expanded_pids.add(pr.info['pid'])
                     except Exception:
                         pass
+        elif platform.system() == "Windows":
+            # Native Toolhelp32 process snapshot expansion (zero external pip dependencies)
+            try:
+                import ctypes
+                from ctypes import wintypes
+                class PROCESSENTRY32(ctypes.Structure):
+                    _fields_ = [
+                        ('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD), ('th32ProcessID', wintypes.DWORD),
+                        ('th32DefaultHeapID', ctypes.c_void_p), ('th32ModuleID', wintypes.DWORD), ('cntThreads', wintypes.DWORD),
+                        ('th32ParentProcessID', wintypes.DWORD), ('pcPriClassBase', wintypes.LONG), ('dwFlags', wintypes.DWORD),
+                        ('szExeFile', ctypes.c_char * 260)
+                    ]
+                hSnap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+                if hSnap and hSnap != -1:
+                    pe = PROCESSENTRY32()
+                    pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
+                    all_procs = []
+                    if ctypes.windll.kernel32.Process32First(hSnap, ctypes.byref(pe)):
+                        while True:
+                            exe = pe.szExeFile.decode('latin1', 'ignore').lower()
+                            all_procs.append((pe.th32ProcessID, pe.th32ParentProcessID, exe))
+                            if not ctypes.windll.kernel32.Process32Next(hSnap, ctypes.byref(pe)):
+                                break
+                    ctypes.windll.kernel32.CloseHandle(hSnap)
+
+                    # Learn exe names for target_pids
+                    for pid_val, ppid, exe in all_procs:
+                        if pid_val in target_pids:
+                            target_proc_names.add(exe)
+                            target_proc_names.add(exe[:-4] if exe.endswith(".exe") else exe)
+                            expanded_pids.add(ppid)
+
+                    # Expand all matching procs
+                    if target_proc_names:
+                        for pid_val, ppid, exe in all_procs:
+                            stem = exe[:-4] if exe.endswith(".exe") else exe
+                            if exe in target_proc_names or stem in target_proc_names:
+                                expanded_pids.add(pid_val)
+                                expanded_pids.add(ppid)
+            except Exception:
+                pass
 
         sys_os = platform.system()
         if sys_os == "Windows":
@@ -6921,6 +6984,16 @@ class CyberVPSAgent:
                 h = max(1, r.bottom - r.top)
 
                 is_min = bool(user32.IsIconic(h_wnd)) or (w == 160 and h == 28)
+                if is_min:
+                    try:
+                        user32.ShowWindow(h_wnd, 9) # SW_RESTORE
+                        time.sleep(0.06)
+                        user32.GetWindowRect(h_wnd, ctypes.byref(r))
+                        w = max(1, r.right - r.left)
+                        h = max(1, r.bottom - r.top)
+                        is_min = bool(user32.IsIconic(h_wnd)) or (w == 160 and h == 28)
+                    except Exception:
+                        pass
                 if is_min:
                     return {
                         "success": False,
