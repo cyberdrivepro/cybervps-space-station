@@ -7348,6 +7348,14 @@ class CyberVPSAgent:
             if not stream_id:
                 return
 
+            with self.lock:
+                for old_sid in list(self.active_app_streams.keys()):
+                    try:
+                        self.active_app_streams[old_sid]["running"] = False
+                    except Exception:
+                        pass
+                self.active_app_streams.clear()
+
             # Milestone: Send immediate authenticated agent delivery acknowledgement
             self.send_agent_event({
                 "type": "RemoteDesktopStarted",
@@ -7359,7 +7367,7 @@ class CyberVPSAgent:
                     "desktop_mode": desktop_mode,
                     "timestamp": int(time.time() * 1000)
                 }
-            })
+            }, skip_if_busy=False)
 
             # Preflight Display Checks
             sys_os = platform.system()

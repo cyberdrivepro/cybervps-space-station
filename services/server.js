@@ -1104,6 +1104,24 @@ function getAgentSocket(machineId) {
   return null;
 }
 
+function findAppStream(streamId, correlationId, machineId) {
+  if (streamId && db.appStreams.has(streamId)) {
+    return db.appStreams.get(streamId);
+  }
+  if (correlationId) {
+    for (const s of db.appStreams.values()) {
+      if (s.correlationId === correlationId) return s;
+    }
+  }
+  if (machineId) {
+    const targetLower = String(machineId).toLowerCase().trim();
+    for (const s of db.appStreams.values()) {
+      if (s.machineId && String(s.machineId).toLowerCase().trim() === targetLower) return s;
+    }
+  }
+  return null;
+}
+
 function getMachineStatus(m) {
   if (!m) return 'offline';
   const ws = getAgentSocket(m.id);
@@ -8424,6 +8442,7 @@ wssAppStream.on('connection', (ws, request) => {
       payload: {
         stream_id: streamId,
         correlation_id: correlationId,
+        machine_id: resolvedMachineId,
         desktop_mode: isDesktopMode,
         interactive: isInteractive,
         pid: pid || null,
@@ -8451,7 +8470,7 @@ wssAppStream.on('connection', (ws, request) => {
       }
     } catch (_) {}
 
-    // 12-second Agent Acknowledgement Timeout Guard (tolerant of WAN latency)
+    // 18-second Agent Acknowledgement Timeout Guard (tolerant of WAN latency)
     if (streamObj) {
       streamObj.ackTimer = setTimeout(() => {
         if (ws.readyState === WebSocket.OPEN && !streamObj.agentAcked) {
@@ -8460,10 +8479,10 @@ wssAppStream.on('connection', (ws, request) => {
             status: 'agent_ack_timeout',
             stream_id: streamId,
             correlation_id: correlationId,
-            error: `Host machine '${resolvedMachineId}' did not acknowledge remote desktop stream within 12 seconds. The agent might be unresponsive or stopping.`
+            error: `Host machine '${resolvedMachineId}' did not acknowledge remote desktop stream within 18 seconds. The agent might be unresponsive or stopping.`
           }));
         }
-      }, 12000);
+      }, 18000);
 
       // 25-second First Frame Timeout Guard
       streamObj.firstFrameTimer = setTimeout(() => {
@@ -8797,6 +8816,17 @@ function handleAgentMessage(ws, msg) {
           backends: Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }))
         }
       }));
+
+      // Proactively flush any queued server commands for this node over the authenticated WebSocket
+      const pendingCmds = db.pendingCommands.get(machine_id) || [];
+      if (pendingCmds.length > 0) {
+        db.pendingCommands.delete(machine_id);
+        for (const cmd of pendingCmds) {
+          try {
+            ws.send(JSON.stringify(cmd));
+          } catch (_) {}
+        }
+      }
     }
     return { success: true, result: { machine_id, virtual_ip: virtualIp, node_token: nodeToken || token, revocation_code: machineInfo.revocation_code, status: 'online' } };
   }
@@ -9036,8 +9066,8 @@ function handleAgentMessage(ws, msg) {
   }
 
   else if (type === 'RemoteDesktopStarted') {
-    const { stream_id } = payload;
-    const stream = db.appStreams.get(stream_id);
+    const { stream_id, correlation_id, machine_id } = payload;
+    const stream = findAppStream(stream_id, correlation_id, machine_id);
     if (stream) {
       stream.agentAcked = true;
       if (stream.ackTimer) {
@@ -9048,8 +9078,8 @@ function handleAgentMessage(ws, msg) {
         stream.wsBrowser.send(JSON.stringify({
           type: 'stage',
           stage: 'agent_acknowledged',
-          stream_id,
-          correlation_id: stream.correlationId || payload.correlation_id,
+          stream_id: stream.streamId || stream_id,
+          correlation_id: stream.correlationId || correlation_id,
           status: payload.status || 'agent_acknowledged',
           desktop_mode: payload.desktop_mode,
           timestamp: Date.now()
@@ -9060,8 +9090,8 @@ function handleAgentMessage(ws, msg) {
   }
 
   else if (type === 'AppStreamFrame' || type === 'RemoteDesktopFrame') {
-    const { stream_id } = payload;
-    const stream = db.appStreams.get(stream_id);
+    const { stream_id, correlation_id, machine_id } = payload;
+    const stream = findAppStream(stream_id, correlation_id, machine_id);
     if (stream) {
       if (stream.ackTimer) {
         clearTimeout(stream.ackTimer);
@@ -9085,24 +9115,24 @@ function handleAgentMessage(ws, msg) {
         stream.wsBrowser.send(JSON.stringify({
           type: 'frame',
           ...payload,
-          correlation_id: stream.correlationId || payload.correlation_id,
+          correlation_id: stream.correlationId || correlation_id,
           server_relay_timestamp: Date.now()
         }));
       } else {
         // Browser closed: send stop command to agent to stop wasteful capture loop
         sendServerCommand(stream.machineId, {
           type: stream.desktopMode ? 'RemoteDesktopStop' : 'AppStreamStop',
-          payload: { stream_id: stream_id }
+          payload: { stream_id: stream.streamId || stream_id }
         });
-        db.appStreams.delete(stream_id);
+        db.appStreams.delete(stream.streamId || stream_id);
       }
     }
     return { success: true };
   }
 
   else if (type === 'AppStreamStatus' || type === 'RemoteDesktopStatus') {
-    const { stream_id } = payload;
-    const stream = db.appStreams.get(stream_id);
+    const { stream_id, correlation_id, machine_id } = payload;
+    const stream = findAppStream(stream_id, correlation_id, machine_id);
     if (stream) {
       stream.agentAcked = true;
       if (stream.ackTimer) {
@@ -9117,7 +9147,7 @@ function handleAgentMessage(ws, msg) {
         stream.wsBrowser.send(JSON.stringify({
           type: 'status',
           ...payload,
-          correlation_id: stream.correlationId || payload.correlation_id,
+          correlation_id: stream.correlationId || correlation_id,
           server_relay_timestamp: Date.now()
         }));
       }
@@ -9295,11 +9325,16 @@ function handleAgentMessage(ws, msg) {
 function sendServerCommand(machineId, cmd) {
   const agentWs = getAgentSocket(machineId);
   if (agentWs && agentWs.readyState === WebSocket.OPEN) {
-    agentWs.send(JSON.stringify(cmd));
-  } else {
-    if (!db.pendingCommands.has(machineId)) db.pendingCommands.set(machineId, []);
-    db.pendingCommands.get(machineId).push(cmd);
+    try {
+      agentWs.send(JSON.stringify(cmd));
+      return true;
+    } catch (err) {
+      logAudit('send_command_error', 'server', machineId, `Failed to send command over active WebSocket: ${err.message}`, 'warning');
+    }
   }
+  if (!db.pendingCommands.has(machineId)) db.pendingCommands.set(machineId, []);
+  db.pendingCommands.get(machineId).push(cmd);
+  return false;
 }
 
 function handleTunnelProxyRequest(req, res, pathname, parsedUrl) {

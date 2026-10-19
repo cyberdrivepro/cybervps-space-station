@@ -8329,6 +8329,31 @@
       }
     }
 
+    async function retryWebRemoteDesktop() {
+      const select = document.getElementById('desktop-machine-select');
+      const machineId = currentDesktopState.machineId || (select && select.value) || webDesktopState.machineId;
+      if (!machineId) {
+        showToast('Please select a target machine first', 'error');
+        return;
+      }
+      showToast(`Flushing stale sessions & connecting to ${machineId}...`, 'info');
+
+      // 1. Force close any lingering browser socket immediately
+      stopWebRemoteDesktop(false);
+      webDesktopState.hadDiagnosticError = false;
+
+      // 2. Proactively auto-recover on control plane to purge hung streams/workers
+      try {
+        await apiRequest('/api/v1/remote-desktop/recover', {
+          method: 'POST',
+          body: JSON.stringify({ machine_id: machineId })
+        });
+      } catch (_) {}
+
+      // 3. Start fresh connection
+      startWebRemoteDesktop(machineId);
+    }
+
     function showWebDesktopError(message, title = 'Session Initialization Failed') {
       setWebDesktopUiState('error');
       updateWebDesktopConnectButton(false);
@@ -8339,7 +8364,7 @@
       if (desc) {
         let actionButtons = `
           <div style="margin-top:1.25rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
-            <button class="btn btn-primary" style="font-size:0.78rem;" onclick="toggleWebRemoteDesktop()">🔄 Retry Connection</button>
+            <button class="btn btn-primary" style="font-size:0.78rem;" onclick="retryWebRemoteDesktop()">🔄 Retry Connection</button>
             <button class="btn btn-secondary" style="font-size:0.78rem; color:var(--accent-cyan); border-color:var(--accent-cyan); font-weight:600;" onclick="diagnoseAndRecoverDesktop()">⚡ Diagnose & Auto-Recover</button>
             <button class="btn btn-secondary" style="font-size:0.78rem; color:#38bdf8; border-color:rgba(56,189,248,0.4);" onclick="switchToFullDesktopStream()">🖥️ Stream Full Desktop</button>
           </div>
@@ -10414,28 +10439,71 @@
 
     async function diagnoseAndRecoverDesktop() {
       const select = document.getElementById('desktop-machine-select');
-      const machineId = (select && select.value) || currentDesktopState.machineId || 'local-node';
+      const machineId = currentDesktopState.machineId || (select && select.value) || webDesktopState.machineId || 'local-node';
 
       showToast(`Running 360° diagnostics for ${machineId}...`, 'info');
+      const desc = document.getElementById('desktop-ws-error-desc');
+      if (desc) {
+        desc.innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:center; gap:0.6rem; padding:1.2rem; color:var(--accent-cyan);">
+            <div class="spinner-small" style="width:18px; height:18px; border:2px solid var(--accent-cyan); border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite;"></div>
+            <span style="font-size:0.85rem;">Diagnosing host display pipeline & auto-recovering stream supervisor...</span>
+          </div>
+        `;
+      }
+
       try {
-        const res = await apiRequest(`/api/v1/remote-desktop/diagnostics?machine_id=${encodeURIComponent(machineId)}`);
-        const data = res.data || {};
-        
-        let msg = `Display Context: ${data.gdi_probe?.available ? 'Available' : (data.gdi_probe?.error || 'Unavailable')}\n`;
-        msg += `Session 0: ${data.session?.is_session_0 ? 'YES (Headless)' : 'NO (Interactive)'}\n`;
-        msg += `RustDesk: ${data.rustdesk?.installed ? 'Installed (ID: ' + (data.rustdesk?.id || 'Active') + ')' : 'Not Installed'}\n`;
-        msg += `Primary Recommendation: ${(data.recommendations && data.recommendations[0]) || 'Use RustDesk Direct VIP'}`;
+        // Step 1: Auto-recover stale streams on server and agent
+        const [recRes, diagRes] = await Promise.allSettled([
+          apiRequest('/api/v1/remote-desktop/recover', {
+            method: 'POST',
+            body: JSON.stringify({ machine_id: machineId })
+          }),
+          apiRequest(`/api/v1/remote-desktop/diagnostics?machine_id=${encodeURIComponent(machineId)}`)
+        ]);
 
-        // Auto-recover stale streams
-        await apiRequest('/api/v1/remote-desktop/recover', {
-          method: 'POST',
-          body: JSON.stringify({ machine_id: machineId })
-        });
+        const diag = (diagRes.status === 'fulfilled' && diagRes.value?.data) ? diagRes.value.data : {};
+        const isSession0 = Boolean(diag.session?.is_session_0);
+        const gdiOk = Boolean(diag.gdi_probe?.available);
+        const rustdeskOk = Boolean(diag.rustdesk?.installed);
+        const vip = diag.virtual_ip || '10.77.0.x';
+        const primaryRec = (diag.recommendations && diag.recommendations[0]) || 'Use RustDesk Direct VIP or Reconnect Live Stream';
 
-        alert(`🛰️ CyberVPS Remote Desktop Supervisor\n\n${msg}`);
-        showToast('Diagnostics complete. Stale sessions flushed.', 'success');
+        let html = `
+          <div style="background:rgba(0,0,0,0.3); border:1px solid var(--border-subtle); border-radius:8px; padding:1rem; text-align:left; font-size:0.8rem; margin-bottom:1rem;">
+            <div style="font-weight:700; color:var(--accent-cyan); margin-bottom:0.6rem; display:flex; align-items:center; gap:0.4rem;">
+              <span>⚡ 360° Remote Desktop Diagnostics & Recovery Report</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; margin-bottom:0.75rem; font-family:var(--font-mono); font-size:0.75rem;">
+              <div>Target Host: <strong style="color:var(--text-primary);">${escapeHtml(machineId)}</strong></div>
+              <div>Display Context: <strong style="color:${gdiOk ? '#22c55e' : 'var(--accent-yellow)'}">${gdiOk ? 'GDI+ Ready' : 'Virtual / Headless'}</strong></div>
+              <div>Session 0: <strong style="color:${isSession0 ? 'var(--accent-yellow)' : '#22c55e'}">${isSession0 ? 'Isolated (Background Service)' : 'Interactive (Session 1)'}</strong></div>
+              <div>RustDesk Service: <strong style="color:${rustdeskOk ? '#22c55e' : 'var(--text-muted)'}">${rustdeskOk ? 'Running (1-Click Mesh)' : 'Not Installed'}</strong></div>
+            </div>
+            <div style="padding:0.45rem 0.65rem; background:rgba(6,182,212,0.1); border-left:3px solid var(--accent-cyan); border-radius:4px; font-size:0.75rem; margin-bottom:0.75rem;">
+              <strong>Recommendation:</strong> ${escapeHtml(primaryRec)}
+            </div>
+            <div style="font-size:0.72rem; color:var(--text-muted);">
+              ✅ Stale stream handles purged. Agent display worker reset.
+            </div>
+          </div>
+          <div style="display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
+            <button class="btn btn-primary" style="font-size:0.78rem;" onclick="retryWebRemoteDesktop()">🔄 Connect Live HD Desktop Now</button>
+            <button class="btn btn-secondary" style="font-size:0.78rem;" onclick="launchRdpFileDownload('${escapeHtml(machineId)}')">🚀 Connect via Windows RDP (3389)</button>
+            ${rustdeskOk ? `<button class="btn btn-secondary" style="font-size:0.78rem; color:#f97316; border-color:#f97316;" onclick="connectViaRustDesk('${escapeHtml(vip)}')">🛡️ RustDesk VIP (${escapeHtml(vip)})</button>` : ''}
+          </div>
+        `;
+
+        if (desc) desc.innerHTML = html;
+        showToast('Diagnostics complete. Stale sessions flushed & ready to connect.', 'success');
       } catch (e) {
         showToast('Diagnostics error: ' + e.message, 'error');
+        if (desc) {
+          desc.innerHTML = `
+            <div style="color:var(--accent-red); margin-bottom:1rem;">⚠️ ${escapeHtml(e.message)}</div>
+            <button class="btn btn-primary" style="font-size:0.78rem;" onclick="retryWebRemoteDesktop()">🔄 Retry Connection</button>
+          `;
+        }
       }
     }
 
