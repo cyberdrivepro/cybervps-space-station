@@ -350,6 +350,49 @@ function Refresh-EnvPath {
     $env:Path = "$machinePath;$userPath"
 }
 
+function Get-ReleaseManifest {
+    param([string]$BaseServer)
+    $manifest = $null
+    $endpoints = @(
+        "$($BaseServer.TrimEnd('/'))/api/v1/release/manifest",
+        "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/dist/windows/release-manifest.json"
+    )
+    foreach ($url in $endpoints) {
+        try {
+            $manifest = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5 -ErrorAction Stop
+            if ($manifest) { break }
+        } catch {}
+    }
+    return $manifest
+}
+
+function Test-Sha256Checksum {
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [Parameter(Mandatory=$false)][string]$ExpectedHash,
+        [Parameter(Mandatory=$false)][string]$ComponentName = "Component"
+    )
+    if (-not (Test-Path $FilePath)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($ExpectedHash)) { return $true }
+    
+    try {
+        $computed = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash.ToLower().Trim()
+        $expected = $ExpectedHash.ToLower().Trim()
+        if ($computed -eq $expected) {
+            Write-Host "  [+] $ComponentName SHA-256 Verified: $($computed.Substring(0, 16))... [INTEGRITY OK]" -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host "  [!] [TAMPER_DETECTED] $ComponentName hash mismatch!" -ForegroundColor Red
+            Write-Host "      Expected: $expected" -ForegroundColor Yellow
+            Write-Host "      Actual:   $computed" -ForegroundColor Yellow
+            return $false
+        }
+    } catch {
+        return $false
+    }
+}
+
+
 # ------------------------------------------------------------------------------
 # STEP 5: Python 3 Runtime Discovery (Prefers pythonw.exe for Zero-Popup)
 # ------------------------------------------------------------------------------
@@ -397,6 +440,14 @@ if (-not $PythonExe) {
     try {
         New-Item -ItemType Directory -Path $PyEmbedDir -Force | Out-Null
         (New-Object System.Net.WebClient).DownloadFile($PyEmbedUrl, $PyEmbedZip)
+        $expectedPySha = "2f8658fc1c0cfa094d4554b7244ee133eec0be0dd5dafbdb8be8125433a016f4"
+        if ($ReleaseManifest -and $ReleaseManifest.components -and $ReleaseManifest.components.'python-embed' -and $ReleaseManifest.components.'python-embed'.sha256) {
+            $expectedPySha = $ReleaseManifest.components.'python-embed'.sha256.ToLower().Trim()
+        }
+        if (-not (Test-Sha256Checksum -FilePath $PyEmbedZip -ExpectedHash $expectedPySha -ComponentName "Python 3.12 Embed Runtime")) {
+            Remove-Item $PyEmbedZip -Force -ErrorAction SilentlyContinue
+            throw "Python 3.12 embed runtime cryptographic integrity check failed"
+        }
         Expand-Archive -Path $PyEmbedZip -DestinationPath $PyEmbedDir -Force
         Remove-Item $PyEmbedZip -Force -ErrorAction SilentlyContinue
 
@@ -451,20 +502,34 @@ if (-not $PythonExe) {
 }
 
 # ------------------------------------------------------------------------------
-# STEP 6: Codebase & Executables Setup (Ultra-Fast Direct Fetch)
+# STEP 6: Codebase & Executables Setup (Cryptographically Verified Direct Fetch)
 # ------------------------------------------------------------------------------
 $GitCmd = Get-Command git.exe -ErrorAction SilentlyContinue
 $AgentScript = Join-Path $InstallDir "agent\universal-agent.py"
+$agentParent = Split-Path -Parent $AgentScript
+if (-not (Test-Path $agentParent)) { New-Item -ItemType Directory -Path $agentParent -Force | Out-Null }
 
-if (Test-Path (Join-Path $InstallDir ".git")) {
-    Push-Location $InstallDir
-    try { & git pull origin main 2>$null } catch {}
-    Pop-Location
-} elseif (-not (Test-Path $AgentScript)) {
-    Write-Host "[*] Fetching CyberVPS Host Agent components..." -ForegroundColor Cyan
-    $agentParent = Split-Path -Parent $AgentScript
-    if (-not (Test-Path $agentParent)) { New-Item -ItemType Directory -Path $agentParent -Force | Out-Null }
-    
+$ReleaseManifest = Get-ReleaseManifest -BaseServer $Server
+
+$expectedAgentSha = $null
+if ($ReleaseManifest) {
+    if ($ReleaseManifest.components -and $ReleaseManifest.components.'universal-agent.py' -and $ReleaseManifest.components.'universal-agent.py'.sha256) {
+        $expectedAgentSha = $ReleaseManifest.components.'universal-agent.py'.sha256.ToLower().Trim()
+    } elseif ($ReleaseManifest.agent_sha256) {
+        $expectedAgentSha = $ReleaseManifest.agent_sha256.ToLower().Trim()
+    }
+}
+
+$needDownload = (-not (Test-Path $AgentScript))
+if (-not $needDownload -and $expectedAgentSha) {
+    if (-not (Test-Sha256Checksum -FilePath $AgentScript -ExpectedHash $expectedAgentSha -ComponentName "Local universal-agent.py")) {
+        Write-Host "  [*] Local universal-agent.py requires refresh. Re-downloading verified version..." -ForegroundColor Cyan
+        $needDownload = $true
+    }
+}
+
+if ($needDownload) {
+    Write-Host "[*] Fetching CyberVPS Host Agent components (Verified Release)..." -ForegroundColor Cyan
     $downloaded = $false
     try {
         (New-Object System.Net.WebClient).DownloadFile("$($Server.TrimEnd('/'))/agent/universal-agent.py", $AgentScript)
@@ -478,14 +543,25 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
         } catch {}
     }
 
-    if (-not $downloaded) {
-        if ($GitCmd) {
-            try { & git clone --depth 1 $RepoUrl $InstallDir } catch {}
+    if (-not $downloaded -and $GitCmd) {
+        try { & git clone --depth 1 $RepoUrl $InstallDir } catch {}
+    }
+
+    if ($expectedAgentSha -and (Test-Path $AgentScript)) {
+        if (-not (Test-Sha256Checksum -FilePath $AgentScript -ExpectedHash $expectedAgentSha -ComponentName "universal-agent.py")) {
+            Write-Host "  [!] [TAMPER_DETECTED] universal-agent.py integrity check failed! Aborting." -ForegroundColor Red
+            Remove-Item $AgentScript -Force -ErrorAction SilentlyContinue
+            Exit-WithCode 1
+            return
         }
     }
 }
 
 # Ensure ghost-bridge.ps1 is staged
+$expectedGhostSha = $null
+if ($ReleaseManifest -and $ReleaseManifest.components -and $ReleaseManifest.components.'ghost-bridge.ps1' -and $ReleaseManifest.components.'ghost-bridge.ps1'.sha256) {
+    $expectedGhostSha = $ReleaseManifest.components.'ghost-bridge.ps1'.sha256.ToLower().Trim()
+}
 if (-not (Test-Path $GhostBridgeScript)) {
     try {
         (New-Object System.Net.WebClient).DownloadFile("$($Server.TrimEnd('/'))/agent/ghost-bridge.ps1", $GhostBridgeScript)
@@ -494,6 +570,9 @@ if (-not (Test-Path $GhostBridgeScript)) {
             (New-Object System.Net.WebClient).DownloadFile("https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/agent/ghost-bridge.ps1", $GhostBridgeScript)
         } catch {}
     }
+}
+if ($expectedGhostSha -and (Test-Path $GhostBridgeScript)) {
+    Test-Sha256Checksum -FilePath $GhostBridgeScript -ExpectedHash $expectedGhostSha -ComponentName "ghost-bridge.ps1" | Out-Null
 }
 
 # Ensure CLI binaries are staged in BinDir

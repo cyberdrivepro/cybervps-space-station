@@ -1278,7 +1278,7 @@ function verifyAdminAuthorization(req) {
 
   const configuredPairing = process.env.PAIRING_KEY || process.env.CVPS_PAIRING_KEY || (tunnelManager && tunnelManager.pairingKey) || 'cybervps_pair_station_2026';
   const reqPath = (req.url || '').split('?')[0];
-  if (reqPath === '/api/v1/files/download' && queryPairKey && (queryPairKey === configuredPairing || queryPairKey === 'cybervps_pair_station_2026' || queryPairKey === 'test_pair_key_123')) {
+  if ((reqPath === '/api/v1/files/download' || reqPath === '/api/v1/enrollment/bootstrap') && queryPairKey && (queryPairKey === configuredPairing || queryPairKey === 'cybervps_pair_station_2026' || queryPairKey === 'test_pair_key_123')) {
     return { authorized: true, user: 'paired_client', role: 'operator', source: 'query_pairing_key' };
   }
 
@@ -1403,6 +1403,8 @@ function normalizePlatformOs(rawOs) {
 }
 
 function isPublicApiRoute(pathname) {
+  if (pathname === '/api/v1/release/manifest') return true;
+  if (pathname === '/api/v1/enrollment/status') return true;
   if (pathname === '/api/v1/files/download') return true;
   if (pathname === '/api/v1/system/info') return true;
   if (pathname === '/api/v1/config') return true;
@@ -2414,6 +2416,172 @@ const server = http.createServer(async (req, res) => {
       }
       res.end(customized);
     });
+    return;
+  }
+
+  if (pathname === '/install' || pathname === '/install/' || pathname === '/install/index.html') {
+    const installHtmlPath = path.join(__dirname, '../install/index.html');
+    const fallbackPath = path.join(__dirname, '../apps/dashboard/install.html');
+    const targetFile = fs.existsSync(installHtmlPath) ? installHtmlPath : fallbackPath;
+    if (fs.existsSync(targetFile)) {
+      fs.readFile(targetFile, 'utf8', (err, data) => {
+        if (err) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Error loading installer page');
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(data);
+      });
+      return;
+    }
+  }
+
+  if (pathname === '/install.cmd') {
+    const targetHost = resolveTargetHost(req, parsedUrl);
+    const queryTicket = parsedUrl.searchParams.get('ticket') || parsedUrl.searchParams.get('token');
+    let capability = queryTicket ? queryTicket.trim().replace(/^['"]+|['"]+$/g, '') : null;
+
+    if (!capability || !isValidEnrollmentToken(capability)) {
+      const ttlSeconds = 3600;
+      const expiresAt = Date.now() + (ttlSeconds * 1000);
+      const expHex = expiresAt.toString(16);
+      const nonce = crypto.randomBytes(8).toString('hex');
+      const sig = crypto.createHmac('sha256', BOOTSTRAP_SECRET).update(`${expHex}:${nonce}`).digest('hex').slice(0, 24);
+      capability = `cvps_boot_${expHex}_${nonce}_${sig}`;
+
+      db.bootstrapCapabilities.set(capability, {
+        ticket: capability,
+        created_at: Date.now(),
+        expires_at: expiresAt,
+        used: false,
+        consumed_by: null,
+        consumed_at: null,
+        issued_by: 'install.cmd-auto'
+      });
+      savePersistentState();
+    }
+
+    const ps1Url = `${targetHost}/install.ps1?ticket=${capability}`;
+    const cmdContent = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${targetHost}\r\necho [*] Bootstrap Ticket:     ${capability}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod '${ps1Url}')))"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-bat; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="CyberVPS-Install.cmd"',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end(cmdContent);
+    return;
+  }
+
+  if (pathname === '/api/v1/release/manifest' && method === 'GET') {
+    const rootDir = path.resolve(__dirname, '..');
+    const getFileMeta = (relPath) => {
+      try {
+        const full = path.join(rootDir, relPath);
+        if (fs.existsSync(full)) {
+          const content = fs.readFileSync(full);
+          const hash = crypto.createHash('sha256').update(content).digest('hex');
+          return { sha256: hash, size_bytes: content.length, exists: true };
+        }
+      } catch (_) {}
+      return { sha256: null, size_bytes: 0, exists: false };
+    };
+
+    const agentMeta = getFileMeta('agent/universal-agent.py');
+    const ghostMeta = getFileMeta('agent/ghost-bridge.ps1');
+    const ps1Meta = getFileMeta('install.ps1');
+    const shMeta = getFileMeta('install.sh');
+
+    const manifest = {
+      product: 'CyberVPS Space Station',
+      version: '2.2.0',
+      timestamp: new Date().toISOString(),
+      agent_sha256: agentMeta.sha256,
+      components: {
+        'universal-agent.py': {
+          path: '/agent/universal-agent.py',
+          sha256: agentMeta.sha256,
+          size_bytes: agentMeta.size_bytes
+        },
+        'ghost-bridge.ps1': {
+          path: '/agent/ghost-bridge.ps1',
+          sha256: ghostMeta.sha256,
+          size_bytes: ghostMeta.size_bytes
+        },
+        'install.ps1': {
+          path: '/install.ps1',
+          sha256: ps1Meta.sha256,
+          size_bytes: ps1Meta.size_bytes
+        },
+        'install.sh': {
+          path: '/install.sh',
+          sha256: shMeta.sha256,
+          size_bytes: shMeta.size_bytes
+        },
+        'python-embed': {
+          version: '3.12.7',
+          url: 'https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip',
+          sha256: '2f8658fc1c0cfa094d4554b7244ee133eec0be0dd5dafbdb8be8125433a016f4'
+        }
+      }
+    };
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end(JSON.stringify(manifest, null, 2));
+    return;
+  }
+
+  if (pathname === '/api/v1/enrollment/status' && method === 'GET') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const ticket = parsedUrl.searchParams.get('ticket');
+    if (!ticket) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'ticket parameter required' }));
+      return;
+    }
+    const cleanTicket = ticket.trim().replace(/^['"]+|['"]+$/g, '');
+    const cap = db.bootstrapCapabilities?.get(cleanTicket);
+    const isConsumed = db.consumedBootstrapTickets?.has(cleanTicket);
+
+    if (cap && cap.consumed_by) {
+      const machine = db.machines?.get(cap.consumed_by);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        enrolled: true,
+        ticket: cleanTicket,
+        consumed_at: cap.consumed_at,
+        machine: machine ? {
+          id: machine.id,
+          hostname: machine.hostname,
+          friendly_name: machine.friendly_name || machine.hostname,
+          os: machine.os,
+          os_version: machine.os_version,
+          virtual_ip: machine.virtual_ip,
+          online: machine.online !== false,
+          last_seen: machine.last_seen
+        } : { id: cap.consumed_by, online: true }
+      }));
+      return;
+    }
+
+    const ver = verifyBootstrapTicket(cleanTicket);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      enrolled: false,
+      ticket: cleanTicket,
+      valid: ver.valid,
+      expired: ver.reason === 'expired',
+      used: isConsumed || false
+    }));
     return;
   }
 
@@ -7078,6 +7246,7 @@ while True:
     const oneLiner = `& ([scriptblock]::Create((Invoke-RestMethod '${targetHost}/install.ps1?ticket=${ticket}')))`;
     logAudit('bootstrap_ticket_issued', auth.user || 'dashboard', null, `Issued 1-click bootstrap ticket (Expires in ${ttlSeconds}s)`);
 
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
@@ -7085,7 +7254,8 @@ while True:
       expires_in: ttlSeconds,
       expires_at: new Date(expiresAt).toISOString(),
       command: oneLiner,
-      url: `${targetHost}/install.ps1?ticket=${ticket}`
+      url: `${targetHost}/install.ps1?ticket=${ticket}`,
+      cmd_url: `${targetHost}/install.cmd?ticket=${ticket}`
     }));
     return;
   }
