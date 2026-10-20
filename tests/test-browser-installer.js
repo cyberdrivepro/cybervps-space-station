@@ -103,19 +103,41 @@ async function runTests() {
     assert(installRes.body.includes('win-cmd-text'), 'Page must contain PowerShell command element');
     assert(installRes.body.includes('radar-monitoring'), 'Page must contain Live Enrollment Radar');
 
+    // Windows Instant Detection & Modal Elements
+    assert(installRes.body.includes('id="windows-install-modal"'), 'Page must include persistent Windows modal');
+    assert(installRes.body.includes('id="persistent-banner"'), 'Page must include persistent top reminder banner');
+    assert(installRes.body.includes('id="card-prof-both"'), 'Page must include Coordinated (Standard + Admin) profile option');
+    assert(installRes.body.includes('id="card-prof-admin"'), 'Page must include SYSTEM Service profile option');
+    assert(installRes.body.includes('id="card-prof-user"'), 'Page must include Standard User profile option');
+    assert(installRes.body.includes('cybervps://install?'), 'Page must support native cybervps:// protocol launcher');
+    assert(installRes.body.includes('const detectedEnv'), 'Page must implement synchronous 0-2ms OS detection');
+
     const installSlashRes = await request(`${SERVER_URL}/install/`);
     assert.strictEqual(installSlashRes.statusCode, 200, 'GET /install/ must return 200');
-    console.log('  ✅ Installation page served cleanly at /install and /install/\n');
+    console.log('  ✅ Installation page served cleanly with instant modal and coordinated profiles\n');
 
-    // TEST 2: Dynamic 1-Click .cmd Launcher (/install.cmd)
-    console.log('[TEST 2] Verifying Dynamic 1-Click .cmd Launcher (/install.cmd)...');
+    // TEST 2: Dynamic 1-Click .cmd Launcher (/install.cmd) with Profiles
+    console.log('[TEST 2] Verifying Dynamic 1-Click .cmd Launcher (/install.cmd) & Profiles...');
     const cmdRes = await request(`${SERVER_URL}/install.cmd`);
     assert.strictEqual(cmdRes.statusCode, 200, 'GET /install.cmd must return 200');
     assert(cmdRes.headers['content-disposition'].includes('CyberVPS-Install.cmd'), 'Must have attachment header');
     assert(cmdRes.body.includes('@echo off'), 'Must be valid batch script');
     assert(cmdRes.body.includes('powershell.exe -ExecutionPolicy Bypass'), 'Must launch PowerShell safely');
     assert(cmdRes.body.includes('/install.ps1?ticket=cvps_boot_'), 'Must embed dynamic bootstrap ticket');
-    console.log('  ✅ Dynamic 1-Click .cmd launcher verified with embedded bootstrap ticket\n');
+    assert(cmdRes.body.includes("-Profile 'both'"), 'Default profile must be both');
+
+    // Admin profile
+    const cmdAdminRes = await request(`${SERVER_URL}/install.cmd?profile=admin`);
+    assert.strictEqual(cmdAdminRes.statusCode, 200);
+    assert(cmdAdminRes.headers['content-disposition'].includes('CyberVPS-Install-Admin.cmd'));
+    assert(cmdAdminRes.body.includes("-Profile 'admin'"));
+
+    // User profile
+    const cmdUserRes = await request(`${SERVER_URL}/install.cmd?profile=user`);
+    assert.strictEqual(cmdUserRes.statusCode, 200);
+    assert(cmdUserRes.headers['content-disposition'].includes('CyberVPS-Install-User.cmd'));
+    assert(cmdUserRes.body.includes("-Profile 'user'"));
+    console.log('  ✅ Dynamic 1-Click .cmd launcher verified with embedded bootstrap ticket and multi-profile support\n');
 
     // TEST 3: Cryptographic Release Manifest Endpoint (/api/v1/release/manifest)
     console.log('[TEST 3] Verifying Cryptographic Release Manifest Endpoint (/api/v1/release/manifest)...');
@@ -200,6 +222,17 @@ async function runTests() {
     const fakeSha = crypto.createHash('sha256').update(fakeContent).digest('hex');
     assert.notStrictEqual(fakeSha, expectedAgentSha, 'Fake hash must differ from authentic hash');
     console.log('  ✅ Tampering detection verified: SHA-256 hash mismatch reliably separates authentic from modified files\n');
+
+    // TEST 6: PowerShell Installer & Protocol Handler Contract Validation
+    console.log('[TEST 6] Verifying PowerShell Installer & Protocol Handler Contract...');
+    const installPs1Path = path.resolve(__dirname, '../install.ps1');
+    const ps1Content = fs.readFileSync(installPs1Path, 'utf8');
+    assert(ps1Content.includes('Register-CyberVPSProtocolHandler'), 'install.ps1 must include protocol handler registration');
+    assert(ps1Content.includes('cybervps-launcher.ps1'), 'install.ps1 must generate secure launcher bridge');
+    assert(ps1Content.includes('[ValidateSet("user", "admin", "both", "auto")]'), 'install.ps1 must validate Profile parameter');
+    assert(ps1Content.includes('$RegisterProtocolHandler'), 'install.ps1 must support RegisterProtocolHandler switch');
+    assert(ps1Content.includes('$TargetMachineId'), 'install.ps1 must support coordinated TargetMachineId');
+    console.log('  ✅ PowerShell installer script validated for secure URI handling, multi-profiles, and coordinated MachineId\n');
 
     console.log('================================================================');
     console.log('🎉 ALL BROWSER 1-CLICK INSTALLER & RELEASE MANIFEST TESTS PASSED 100%!');

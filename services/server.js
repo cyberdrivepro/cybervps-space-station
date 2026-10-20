@@ -2444,6 +2444,8 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/install.cmd') {
     const targetHost = resolveTargetHost(req, parsedUrl);
     const queryTicket = parsedUrl.searchParams.get('ticket') || parsedUrl.searchParams.get('token');
+    const rawProfile = (parsedUrl.searchParams.get('profile') || 'both').toLowerCase().replace(/[^a-z]/g, '');
+    const profile = ['user', 'admin', 'both'].includes(rawProfile) ? rawProfile : 'both';
     let capability = queryTicket ? queryTicket.trim().replace(/^['"]+|['"]+$/g, '') : null;
 
     if (!capability || !isValidEnrollmentToken(capability)) {
@@ -2467,11 +2469,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ps1Url = `${targetHost}/install.ps1?ticket=${capability}`;
-    const cmdContent = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${targetHost}\r\necho [*] Bootstrap Ticket:     ${capability}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod '${ps1Url}')))"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
+    const filename = profile === 'admin' ? 'CyberVPS-Install-Admin.cmd' : (profile === 'user' ? 'CyberVPS-Install-User.cmd' : 'CyberVPS-Install.cmd');
+    const cmdContent = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${targetHost}\r\necho [*] Bootstrap Ticket:     ${capability}\r\necho [*] Execution Profile:    ${profile}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod '${ps1Url}'))) -Profile '${profile}' -RegisterProtocolHandler"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
 
     res.writeHead(200, {
       'Content-Type': 'application/x-bat; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="CyberVPS-Install.cmd"',
+      'Content-Disposition': `attachment; filename="${filename}"`,
       'Access-Control-Allow-Origin': '*'
     });
     res.end(cmdContent);

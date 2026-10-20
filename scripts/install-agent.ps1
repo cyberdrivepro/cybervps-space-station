@@ -13,7 +13,13 @@ param (
     [string]$Token = $(if ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" }),
     [Parameter(Position=2)]
     [Alias("BootstrapTicket", "Capability", "OneClickTicket")]
-    [string]$Ticket = ""
+    [string]$Ticket = "",
+    [Parameter()]
+    [ValidateSet("user", "admin", "both", "auto")]
+    [string]$Profile = "auto",
+    [switch]$RegisterProtocolHandler,
+    [Parameter()]
+    [string]$TargetMachineId = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -158,7 +164,9 @@ foreach ($dir in @($InstallBase, $ShadowBase, $BinDir, $LogsDir, $RunDir)) {
 }
 
 $MachineId = ""
-if ($existingMachineId -and $existingMachineId -ne "test_machine" -and $existingMachineId -notlike "*test*") {
+if ($TargetMachineId -and $TargetMachineId.Length -ge 4) {
+    $MachineId = $TargetMachineId
+} elseif ($existingMachineId -and $existingMachineId -ne "test_machine" -and $existingMachineId -notlike "*test*") {
     $MachineId = $existingMachineId
 }
 if (($MachineId.Length -lt 4) -and (Test-Path $MachineIdFile)) {
@@ -366,6 +374,74 @@ function Get-ReleaseManifest {
     return $manifest
 }
 
+function Register-CyberVPSProtocolHandler {
+    try {
+        $launcherPs1 = Join-Path $BinDir "cybervps-launcher.ps1"
+        $launcherContent = @'
+[CmdletBinding()]
+param([string]$Uri = "")
+Write-Host "================================================================" -ForegroundColor Cyan
+Write-Host "   CYBERVPS SPACE STATION - NATIVE PROTOCOL LAUNCHER            " -ForegroundColor Cyan
+Write-Host "================================================================" -ForegroundColor Cyan
+
+if (-not $Uri -or $Uri -notmatch '^cybervps://install\?(.+)$') {
+    Write-Host "[!] Invalid or missing cybervps:// URI format." -ForegroundColor Red
+    Start-Sleep -Seconds 3
+    exit 1
+}
+
+$queryString = $matches[1]
+$queryParts = $queryString -split '&'
+$params = @{}
+foreach ($part in $queryParts) {
+    $kv = $part -split '=', 2
+    if ($kv.Count -eq 2) {
+        $params[[System.Uri]::UnescapeDataString($kv[0])] = [System.Uri]::UnescapeDataString($kv[1])
+    }
+}
+
+$targetServer = if ($params['server']) { $params['server'] } else { "https://cyberdrivepro.github.io/cybervps-space-station" }
+$targetTicket = if ($params['ticket']) { $params['ticket'] } else { "" }
+$targetProfile = if ($params['profile']) { $params['profile'] } else { "both" }
+
+if (-not $targetTicket -or $targetTicket -notmatch '^cvps_boot_[a-zA-Z0-9_]+$') {
+    Write-Host "[!] Invalid bootstrap ticket format." -ForegroundColor Red
+    Start-Sleep -Seconds 3
+    exit 1
+}
+
+Write-Host "  * Target Control Plane: $targetServer" -ForegroundColor White
+Write-Host "  * Bootstrap Ticket:     $targetTicket" -ForegroundColor White
+Write-Host "  * Execution Profile:    $targetProfile" -ForegroundColor White
+Write-Host ""
+
+$localPs1 = Join-Path (Split-Path -Parent $PSScriptRoot) "install.ps1"
+if (-not (Test-Path $localPs1)) {
+    $localPs1 = Join-Path $HOME ".cybervps\space-station\install.ps1"
+}
+
+if (Test-Path $localPs1) {
+    & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $localPs1 -Server $targetServer -Ticket $targetTicket -Profile $targetProfile
+} else {
+    & ([scriptblock]::Create((Invoke-RestMethod "$targetServer/install.ps1?ticket=$targetTicket"))) -Profile $targetProfile
+}
+'@
+        Set-Content -Path $launcherPs1 -Value $launcherContent -Force
+
+        $regBase = "HKCU:\Software\Classes\cybervps"
+        New-Item -Path $regBase -Force | Out-Null
+        Set-ItemProperty -Path $regBase -Name "(Default)" -Value "URL:CyberVPS Protocol" -Force
+        Set-ItemProperty -Path $regBase -Name "URL Protocol" -Value "" -Force
+        $cmdKey = "$regBase\shell\open\command"
+        New-Item -Path $cmdKey -Force | Out-Null
+        $cmdVal = "`"$([Environment]::GetFolderPath([Environment+SpecialFolder]::System))\WindowsPowerShell\v1.0\powershell.exe`" -ExecutionPolicy Bypass -NoProfile -File `"$launcherPs1`" `"%1`""
+        Set-ItemProperty -Path $cmdKey -Name "(Default)" -Value $cmdVal -Force
+        Write-Host "  [+] Registered native protocol handler: cybervps://" -ForegroundColor Green
+    } catch {
+        Write-Host "  [!] Protocol handler registration notice: $_" -ForegroundColor Gray
+    }
+}
+
 function Test-Sha256Checksum {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
@@ -492,7 +568,7 @@ if (-not $PythonExe) {
         Write-Host "================================================================" -ForegroundColor Green
         Write-Host "Host:        $env:COMPUTERNAME (Windows Pure PowerShell)" -ForegroundColor White
         Write-Host "Backend:     $Server (Connected)" -ForegroundColor White
-        Write-Host "Status:      ONLINE (Zero external dependencies required)" -ForegroundColor Green
+        Write-Host "Status:      HANDSHAKE ACTIVE (Ghost Bridge Running - Enrollment Syncing)" -ForegroundColor Cyan
         Write-Host "Ghost PID:   $($ghostProc.Id) (100% Invisible Background Daemon)" -ForegroundColor Green
         Write-Host "Machine ID:  $MachineId" -ForegroundColor White
         Write-Host "Dashboard:   https://cyberdrivepro.github.io/cybervps-space-station/" -ForegroundColor Yellow
@@ -664,6 +740,27 @@ if ($PythonExe) {
 $ServicePyExe = if ($PythonWExe) { $PythonWExe } else { $PythonExe }
 
 $IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+# Always register the cybervps:// protocol handler in HKCU
+Register-CyberVPSProtocolHandler
+
+# If admin profile explicitly requested and currently not elevated, prompt UAC
+if ($Profile -eq "admin" -and -not $IsElevated) {
+    Write-Host "[*] Requesting administrator elevation (UAC prompt)..." -ForegroundColor Cyan
+    try {
+        $elevArgs = "-ExecutionPolicy Bypass -NoProfile -File `"$PSCommandPath`" -Server `"$Server`" -Ticket `"$Token`" -Profile admin"
+        if ($MachineId) { $elevArgs += " -TargetMachineId `"$MachineId`"" }
+        Start-Process powershell.exe -Verb RunAs -ArgumentList $elevArgs -Wait
+        Write-Host "  [+] Elevated administrator installation completed." -ForegroundColor Green
+        Exit-WithCode 0
+        return
+    } catch {
+        Write-Host "  [!] Administrator elevation cancelled by user." -ForegroundColor Yellow
+        Exit-WithCode 1
+        return
+    }
+}
+
 $CurrentUserName = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $IsPythonInUserProfile = ($ServicePyExe -like "*\Users\*" -or $ServicePyExe -like "*AppData*")
 $ProgramDataBase = if ($env:ProgramData) { Join-Path $env:ProgramData "CyberVPS" } else { "C:\ProgramData\CyberVPS" }

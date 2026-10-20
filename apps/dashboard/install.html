@@ -36,6 +36,7 @@
       --radius-lg: 14px;
       --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
       --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+      --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.8);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -59,6 +60,36 @@
       margin: 0 auto;
       padding: 2.5rem 1.5rem;
       width: 100%;
+    }
+
+    /* Sticky Top Notification Banner */
+    #persistent-banner {
+      display: none;
+      background: linear-gradient(90deg, rgba(0, 240, 255, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);
+      border-bottom: 1px solid var(--accent-cyan);
+      padding: 0.65rem 1.5rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 20px rgba(0, 240, 255, 0.15);
+    }
+    .banner-inner {
+      max-width: 960px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .banner-text {
+      font-size: 0.88rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #ffffff;
     }
 
     /* Header */
@@ -297,7 +328,7 @@
       background: #04060a;
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-md);
-      padding: 1.25rem 1.25rem 1.25rem 1.25rem;
+      padding: 1.25rem;
       margin-bottom: 1.5rem;
     }
     .code-header {
@@ -373,7 +404,7 @@
       box-shadow: 0 1px 2px rgba(0,0,0,0.4);
     }
 
-    /* Live Enrollment Radar */
+    /* Radar Card */
     .radar-card {
       background: linear-gradient(180deg, rgba(18, 24, 38, 0.95) 0%, rgba(13, 18, 28, 0.95) 100%);
       border: 1px solid var(--border-strong);
@@ -428,9 +459,7 @@
       box-shadow: 0 0 16px var(--accent-cyan);
     }
 
-    .radar-info {
-      flex: 1;
-    }
+    .radar-info { flex: 1; }
     .radar-status-text {
       font-size: 0.95rem;
       font-weight: 600;
@@ -448,9 +477,7 @@
       display: none;
       animation: fadeIn 0.4s ease-out;
     }
-    .enrolled-view.active {
-      display: block;
-    }
+    .enrolled-view.active { display: block; }
     .enrolled-badge {
       display: inline-flex;
       align-items: center;
@@ -488,6 +515,157 @@
       font-size: 0.9rem;
       font-weight: 600;
       color: var(--accent-cyan);
+    }
+
+    /* Modal Styles */
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(4, 6, 11, 0.85);
+      backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 1.5rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease-out;
+    }
+    .modal-backdrop.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .modal-dialog {
+      background: var(--bg-surface);
+      border: 1px solid var(--accent-cyan);
+      box-shadow: 0 0 40px rgba(0, 240, 255, 0.2), var(--shadow-xl);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 620px;
+      padding: 2rem;
+      position: relative;
+      transform: scale(0.96) translateY(8px);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .modal-backdrop.show .modal-dialog {
+      transform: scale(1) translateY(0);
+    }
+    .modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+    .modal-title-group h3 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .modal-title-group p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      margin-top: 0.25rem;
+    }
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.25rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0.25rem;
+      border-radius: var(--radius-sm);
+    }
+    .modal-close-btn:hover { color: var(--text-primary); }
+
+    /* Profile Selection Cards */
+    .profile-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .profile-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.85rem;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 0.95rem 1.15rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .profile-card:hover {
+      border-color: var(--border-strong);
+      background: var(--bg-surface-elevated);
+    }
+    .profile-card.selected {
+      border-color: var(--accent-cyan);
+      background: rgba(0, 240, 255, 0.06);
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.12);
+    }
+    .profile-radio {
+      margin-top: 0.25rem;
+      accent-color: var(--accent-cyan);
+    }
+    .profile-body { flex: 1; }
+    .profile-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.2rem;
+    }
+    .profile-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .profile-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      background: var(--accent-cyan-dim);
+      color: var(--accent-cyan);
+    }
+    .profile-desc {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      line-height: 1.35;
+    }
+
+    /* Live Progress Stages */
+    .progress-stages {
+      background: #04060a;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .stage-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+      color: var(--accent-cyan);
+      background: rgba(0, 240, 255, 0.08);
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+    }
+    .stage-instruction {
+      font-size: 0.85rem;
+      color: var(--text-primary);
+      line-height: 1.4;
     }
 
     /* Manifest Inspector Drawer */
@@ -536,6 +714,25 @@
   </style>
 </head>
 <body>
+
+  <!-- Persistent Banner (Visible if user postpones modal) -->
+  <div id="persistent-banner">
+    <div class="banner-inner">
+      <div class="banner-text">
+        <span>⚡</span>
+        <span>Windows Device Ready — CyberVPS 1-Click Installation Available</span>
+      </div>
+      <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <button class="btn btn-primary" onclick="openWindowsModal()" style="padding: 4px 12px; font-size: 0.8rem;">
+          🚀 Open Windows Installer
+        </button>
+        <button class="btn btn-secondary" onclick="triggerDownloadCmd('both')" style="padding: 4px 12px; font-size: 0.8rem;">
+          📥 Download .cmd
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div class="container">
     <header>
       <div class="brand-badge">
@@ -543,7 +740,7 @@
         CyberVPS Space Station • Universal Mesh
       </div>
       <h1>Universal Host Agent Web Installer</h1>
-      <p class="subtitle">1-Click Zero-Prompt Provisioning • Zero SmartScreen Blocks • Cryptographically Verified</p>
+      <p class="subtitle">Millisecond OS Detection • Zero SmartScreen Blocks • Standard &amp; Admin Coordinated Agent</p>
     </header>
 
     <!-- Target Control Plane Endpoint & Pairing Key -->
@@ -570,7 +767,7 @@
       </button>
       <button class="tab-btn" id="tab-btn-linux" onclick="switchTab('linux')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12.003 2C6.477 2 2 6.477 2 12.003c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.341-3.369-1.341-.454-1.155-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.53 1.03 1.53 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.179 22 16.426 22 12.003 22 6.477 17.523 2 12.003 2z"/></svg>
-        Linux VPS & macOS (Bash)
+        Linux VPS &amp; macOS (Bash)
       </button>
     </div>
 
@@ -585,9 +782,13 @@
       </div>
 
       <div class="action-group">
-        <button class="btn btn-primary" id="btn-download-cmd" onclick="downloadOneClickCmd()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-          ⚡ Download 1-Click Launcher (CyberVPS-Install.cmd)
+        <button class="btn btn-primary" onclick="openWindowsModal()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          ⚡ Open 1-Click Installation Launcher
+        </button>
+        <button class="btn btn-secondary" onclick="triggerDownloadCmd('both')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          📥 Download 1-Click .cmd
         </button>
         <button class="btn btn-secondary" id="btn-copy-win" onclick="copyWinCommand()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -600,19 +801,19 @@
           <span class="code-title">Verified PowerShell 1-Liner (Single Round-Trip Provisioning)</span>
           <span id="win-copy-status" style="font-size:0.75rem; color:var(--accent-cyan); display:none;">✓ Copied to clipboard!</span>
         </div>
-        <div class="code-box" id="win-cmd-text">&amp; ([scriptblock]::Create((Invoke-RestMethod 'https://cybervps-space-station.up.railway.app/install.ps1')))</div>
+        <div class="code-box" id="win-cmd-text">&amp; ([scriptblock]::Create((Invoke-RestMethod 'https://cybervps-space-station.up.railway.app/install.ps1'))) -Profile both</div>
       </div>
 
       <div class="steps-grid">
         <div class="step-item">
           <div class="step-num">1</div>
-          <h5>Open PowerShell</h5>
-          <p>Press <span class="kbd">Win</span> + <span class="kbd">X</span> and select <strong>Terminal</strong> or <strong>Windows PowerShell</strong>.</p>
+          <h5>Launch or Click .cmd</h5>
+          <p>Click <strong>Open 1-Click Launcher</strong> or double-click the downloaded <code>.cmd</code>.</p>
         </div>
         <div class="step-item">
           <div class="step-num">2</div>
-          <h5>Paste &amp; Execute</h5>
-          <p>Press <span class="kbd">Ctrl</span> + <span class="kbd">V</span> to paste the verified command and press <span class="kbd">Enter</span>.</p>
+          <h5>Coordinated Setup</h5>
+          <p>Installs standard user agent and requests UAC consent for 24/7 background SYSTEM service.</p>
         </div>
         <div class="step-item">
           <div class="step-num">3</div>
@@ -742,18 +943,138 @@
     </div>
   </div>
 
+  <!-- PERSISTENT WINDOWS INSTALLATION MODAL -->
+  <div id="windows-install-modal" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#00f0ff"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.949-1.801"/></svg>
+            Windows Detected — Ready to Install
+          </h3>
+          <p id="modal-detected-env">Detected: Windows (x64) • Ready for 1-Click Provisioning</p>
+        </div>
+        <button class="modal-close-btn" onclick="postponeWindowsModal()" title="Close and postpone">✕</button>
+      </div>
+
+      <!-- Execution Profile Options -->
+      <div class="profile-cards" id="modal-profile-list">
+        <!-- Profile: Both -->
+        <div class="profile-card selected" id="card-prof-both" onclick="selectProfile('both')">
+          <input type="radio" name="install-profile" value="both" checked class="profile-radio" id="rad-both">
+          <div class="profile-body">
+            <div class="profile-title-bar">
+              <span class="profile-title">⚡ Install Both Profiles (Recommended)</span>
+              <span class="profile-badge">Complete 24/7 Mesh + Desktop</span>
+            </div>
+            <p class="profile-desc">Coordinates both privileged background SYSTEM service (24/7 headless mesh &amp; port routing) + current user interactive session (GDI+ Live HD screen capture &amp; clipboard sync) under unified host identity.</p>
+          </div>
+        </div>
+
+        <!-- Profile: Admin only -->
+        <div class="profile-card" id="card-prof-admin" onclick="selectProfile('admin')">
+          <input type="radio" name="install-profile" value="admin" class="profile-radio" id="rad-admin">
+          <div class="profile-body">
+            <div class="profile-title-bar">
+              <span class="profile-title">🛡️ Administrator System Service</span>
+              <span class="profile-badge" style="color:var(--status-warning); background:var(--status-warning-dim);">Privileged SYSTEM</span>
+            </div>
+            <p class="profile-desc">Installs machine-wide to <code>C:\ProgramData\CyberVPS</code>. Runs under SYSTEM account 24/7 even before user logs in. Requests standard Windows UAC approval once.</p>
+          </div>
+        </div>
+
+        <!-- Profile: User only -->
+        <div class="profile-card" id="card-prof-user" onclick="selectProfile('user')">
+          <input type="radio" name="install-profile" value="user" class="profile-radio" id="rad-user">
+          <div class="profile-body">
+            <div class="profile-title-bar">
+              <span class="profile-title">👤 Standard-User Installation</span>
+              <span class="profile-badge" style="color:var(--text-secondary); background:var(--bg-subtle);">Zero UAC Prompts</span>
+            </div>
+            <p class="profile-desc">Installs to user profile <code>%LOCALAPPDATA%\CyberVPS</code>. Zero elevation required. Autostarts as silent background daemon whenever current user logs in.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Stage Tracker & Feedback inside Modal -->
+      <div class="progress-stages" id="modal-progress-box" style="display:none;">
+        <div class="stage-pill" id="stage-pill-text">DETECTING_OS</div>
+        <div class="stage-instruction" id="stage-desc-text">Preparing installation...</div>
+      </div>
+
+      <!-- Modal Actions -->
+      <div style="display:flex; flex-direction:column; gap:0.75rem;">
+        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+          <button class="btn btn-primary" id="btn-modal-open-launcher" onclick="executeOneClickWorkflow()" style="flex:1; padding:0.85rem 1.25rem;">
+            ⚡ OPEN INSTALLER
+          </button>
+          <button class="btn btn-secondary" onclick="executeBothProfilesWorkflow()" style="padding:0.85rem 1.25rem;">
+            INSTALL BOTH PROFILES
+          </button>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.25rem;">
+          <button class="btn btn-secondary" onclick="postponeWindowsModal()" style="padding:0.4rem 0.85rem; font-size:0.8rem; border:none; background:transparent;">
+            ✕ Postpone &amp; View Manual Steps
+          </button>
+          <button class="btn btn-secondary" onclick="copyWinCommand()" style="padding:0.4rem 0.85rem; font-size:0.8rem;">
+            📋 Copy Command
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
+    // --- MILLISECOND ENVIRONMENT & OS DETECTION ---
+    const detectedEnv = (() => {
+      const start = performance.now();
+      const ua = navigator.userAgent || '';
+      const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+      
+      let os = 'unknown';
+      if (/Windows/i.test(platform) || /Windows/i.test(ua)) os = 'windows';
+      else if (/Android/i.test(ua)) os = 'android';
+      else if (/Linux/i.test(platform) || /Linux/i.test(ua)) os = 'linux';
+      else if (/Mac/i.test(platform) || /Mac/i.test(ua)) os = 'macos';
+
+      let arch = 'unknown';
+      if (/x86_64|x64|Win64|WOW64|AMD64/i.test(ua)) arch = 'x64';
+      else if (/arm64|aarch64/i.test(ua)) arch = 'arm64';
+      else if (/x86|i686|i386/i.test(ua)) arch = 'x86';
+
+      let browser = 'unknown';
+      if (/Edg/i.test(ua)) browser = 'Edge';
+      else if (/Chrome/i.test(ua)) browser = 'Chrome';
+      else if (/Firefox/i.test(ua)) browser = 'Firefox';
+      else if (/Safari/i.test(ua)) browser = 'Safari';
+
+      const durationMs = (performance.now() - start).toFixed(2);
+      return { os, arch, browser, durationMs, isWindows: os === 'windows' };
+    })();
+
+    let selectedProfile = 'both';
     let activeTicket = '';
     let ticketExpiresAt = Date.now() + 1800000;
     let pollInterval = null;
     let countdownInterval = null;
+    let currentStage = 'DETECTING_OS';
+
+    function setStage(stage, instruction) {
+      currentStage = stage;
+      const pill = document.getElementById('stage-pill-text');
+      const desc = document.getElementById('stage-desc-text');
+      const box = document.getElementById('modal-progress-box');
+      if (pill) pill.innerText = stage;
+      if (desc) desc.innerText = instruction;
+      if (box) box.style.display = 'block';
+    }
 
     function getBaseUrl() {
       const input = document.getElementById('server-url-input');
       if (input && input.value.trim()) {
         return input.value.trim().replace(/\/+$/, '');
       }
-      // If served from an HTTP origin that is NOT github pages or file, use current origin
       if (window.location.protocol.startsWith('http') && !window.location.hostname.includes('github.io')) {
         return window.location.origin;
       }
@@ -765,14 +1086,6 @@
       return (input && input.value.trim()) ? input.value.trim() : 'cybervps_pair_station_2026';
     }
 
-    // Auto-detect OS on load
-    function autoDetectPlatform() {
-      const ua = navigator.userAgent || '';
-      const platform = navigator.platform || '';
-      const isWin = ua.includes('Windows') || platform.includes('Win');
-      switchTab(isWin ? 'win' : 'linux');
-    }
-
     function switchTab(type) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -782,6 +1095,30 @@
       if (btn) btn.classList.add('active');
       if (type === 'win' && content) content.classList.add('active');
       if (type === 'linux' && linuxContent) linuxContent.classList.add('active');
+    }
+
+    function selectProfile(prof) {
+      selectedProfile = prof;
+      document.querySelectorAll('.profile-card').forEach(c => c.classList.remove('selected'));
+      const card = document.getElementById(`card-prof-${prof}`);
+      if (card) card.classList.add('selected');
+      const rad = document.getElementById(`rad-${prof}`);
+      if (rad) rad.checked = true;
+      updateCommandsUI(getBaseUrl(), activeTicket);
+    }
+
+    function openWindowsModal() {
+      const modal = document.getElementById('windows-install-modal');
+      const banner = document.getElementById('persistent-banner');
+      if (modal) modal.classList.add('show');
+      if (banner) banner.style.display = 'none';
+    }
+
+    function postponeWindowsModal() {
+      const modal = document.getElementById('windows-install-modal');
+      const banner = document.getElementById('persistent-banner');
+      if (modal) modal.classList.remove('show');
+      if (banner && detectedEnv.isWindows) banner.style.display = 'block';
     }
 
     async function checkServerHealth() {
@@ -837,7 +1174,7 @@
         }
       } catch (_) {}
 
-      // Fallback: Generate valid client capability if server is offline or direct
+      // Fallback ticket
       const expHex = (Date.now() + 1800000).toString(16);
       const nonce = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('');
       activeTicket = `cvps_boot_${expHex}_${nonce}_fastpath`;
@@ -853,26 +1190,65 @@
       const winEl = document.getElementById('win-cmd-text');
       const linuxEl = document.getElementById('linux-cmd-text');
       const ticketParam = ticket ? `?ticket=${ticket}` : '';
+      const profParam = selectedProfile ? ` -Profile ${selectedProfile}` : '';
       
       if (winEl) {
-        winEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${base}/install.ps1${ticketParam}')))`;
+        winEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${base}/install.ps1${ticketParam}')))${profParam}`;
       }
       if (linuxEl) {
         linuxEl.innerText = `curl -sSL "${base}/install.sh${ticketParam}" | bash`;
       }
     }
 
-    function downloadOneClickCmd() {
+    // 1-Click Protocol / Bootstrap Execution
+    function executeOneClickWorkflow() {
+      executeLaunchWithProfile(selectedProfile);
+    }
+
+    function executeBothProfilesWorkflow() {
+      selectProfile('both');
+      executeLaunchWithProfile('both');
+    }
+
+    function executeLaunchWithProfile(prof) {
+      setStage('CHECKING_LAUNCHER', 'Attempting native protocol launch (cybervps://)...');
       const base = getBaseUrl();
       const ticket = activeTicket;
-      const ps1Url = `${base}/install.ps1?ticket=${ticket}`;
 
-      const cmdText = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${base}\r\necho [*] Bootstrap Ticket:     ${ticket}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod '${ps1Url}')))"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
+      // 1. Try invoking registered protocol handler
+      const protocolUrl = `cybervps://install?server=${encodeURIComponent(base)}&ticket=${encodeURIComponent(ticket)}&profile=${encodeURIComponent(prof)}`;
+      
+      try {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = protocolUrl;
+        document.body.appendChild(iframe);
+        setTimeout(() => { try { document.body.removeChild(iframe); } catch(_) {} }, 3000);
+      } catch (_) {}
+
+      // 2. Also trigger 1-click .cmd download for first-time machines
+      setTimeout(() => {
+        triggerDownloadCmd(prof);
+        setStage('AWAITING_APPROVAL', 'Launcher dispatched. If first-time, click the downloaded file CyberVPS-Install.cmd in your browser to run PowerShell automatically!');
+      }, 400);
+
+      startPolling();
+    }
+
+    function triggerDownloadCmd(prof) {
+      const base = getBaseUrl();
+      const ticket = activeTicket;
+      const targetUrl = `${base}/install.cmd?ticket=${encodeURIComponent(ticket)}&profile=${encodeURIComponent(prof)}`;
+
+      // Fallback blob generation if remote download is blocked by sandbox
+      const filename = prof === 'admin' ? 'CyberVPS-Install-Admin.cmd' : (prof === 'user' ? 'CyberVPS-Install-User.cmd' : 'CyberVPS-Install.cmd');
+      const ps1Url = `${base}/install.ps1?ticket=${ticket}`;
+      const cmdText = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${base}\r\necho [*] Bootstrap Ticket:     ${ticket}\r\necho [*] Execution Profile:    ${prof}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod '${ps1Url}'))) -Profile '${prof}' -RegisterProtocolHandler"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
 
       const blob = new Blob([cmdText], { type: 'application/x-bat' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'CyberVPS-Install.cmd';
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -882,8 +1258,10 @@
       const text = document.getElementById('win-cmd-text').innerText;
       navigator.clipboard.writeText(text).then(() => {
         const status = document.getElementById('win-copy-status');
-        status.style.display = 'inline';
-        setTimeout(() => { status.style.display = 'none'; }, 3000);
+        if (status) {
+          status.style.display = 'inline';
+          setTimeout(() => { status.style.display = 'none'; }, 3000);
+        }
       });
     }
 
@@ -891,8 +1269,10 @@
       const text = document.getElementById('linux-cmd-text').innerText;
       navigator.clipboard.writeText(text).then(() => {
         const status = document.getElementById('linux-copy-status');
-        status.style.display = 'inline';
-        setTimeout(() => { status.style.display = 'none'; }, 3000);
+        if (status) {
+          status.style.display = 'inline';
+          setTimeout(() => { status.style.display = 'none'; }, 3000);
+        }
       });
     }
 
@@ -910,6 +1290,7 @@
             const data = await res.json();
             if (data && data.enrolled && data.machine) {
               clearInterval(pollInterval);
+              setStage('COMPLETE', 'Host node enrolled and connected!');
               showEnrolledSuccess(data.machine);
             }
           }
@@ -918,6 +1299,12 @@
     }
 
     function showEnrolledSuccess(machine) {
+      // Close modal
+      const modal = document.getElementById('windows-install-modal');
+      if (modal) modal.classList.remove('show');
+      const banner = document.getElementById('persistent-banner');
+      if (banner) banner.style.display = 'none';
+
       document.getElementById('radar-monitoring').style.display = 'none';
       const enrolledView = document.getElementById('radar-enrolled');
       enrolledView.classList.add('active');
@@ -999,9 +1386,28 @@
       fetchNewBootstrapTicket();
     }
 
+    // --- INSTANT INITIALIZATION ---
+    // Runs in 0-2 milliseconds
+    if (detectedEnv.isWindows) {
+      switchTab('win');
+      // Show modal immediately upon script execution
+      const envText = document.getElementById('modal-detected-env');
+      if (envText) {
+        envText.innerText = `Detected in ${detectedEnv.durationMs}ms: Windows (${detectedEnv.arch}) via ${detectedEnv.browser}`;
+      }
+      openWindowsModal();
+    } else {
+      switchTab('linux');
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
-      autoDetectPlatform();
       initInstaller();
+      if (detectedEnv.isWindows) {
+        const envText = document.getElementById('modal-detected-env');
+        if (envText) {
+          envText.innerText = `Detected in ${detectedEnv.durationMs}ms: Windows (${detectedEnv.arch}) via ${detectedEnv.browser}`;
+        }
+      }
     });
   </script>
 </body>
