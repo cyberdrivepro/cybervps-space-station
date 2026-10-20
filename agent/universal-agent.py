@@ -7743,14 +7743,55 @@ class CyberVPSAgent:
                 return
 
             with self.lock:
-                for old_sid in list(self.active_app_streams.keys()):
-                    try:
-                        self.active_app_streams[old_sid]["running"] = False
-                    except Exception:
-                        pass
-                self.active_app_streams.clear()
+                for old_sid, old_cfg in list(self.active_app_streams.items()):
+                    if old_sid == stream_id or (desktop_mode and old_cfg.get("desktop_mode")) or (pid and old_cfg.get("pid") == pid):
+                        try:
+                            old_cfg["running"] = False
+                        except Exception:
+                            pass
+                        self.active_app_streams.pop(old_sid, None)
 
-            # Milestone: Send immediate authenticated agent delivery acknowledgement
+            # Preflight Display Checks BEFORE acknowledging or starting worker loop
+            sys_os = platform.system()
+            if sys_os == "Windows" and desktop_mode:
+                try:
+                    import ctypes
+                    kernel32 = ctypes.windll.kernel32
+                    proc_session = ctypes.c_ulong()
+                    kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(proc_session))
+                    active_console = kernel32.WTSGetActiveConsoleSessionId()
+                    if proc_session.value == 0 and active_console != 0:
+                        self.send_agent_event({
+                            "type": "RemoteDesktopStatus",
+                            "payload": {
+                                "stream_id": stream_id,
+                                "correlation_id": correlation_id,
+                                "status": "session_0_isolated",
+                                "error": f"Windows Session 0 Isolation: Agent service running in Session 0 cannot capture active user Session {active_console} display directly. Connect via 1-Click RDP Bridge or run agent in active user session."
+                            }
+                        }, skip_if_busy=False)
+                        return
+                except Exception:
+                    pass
+            elif sys_os == "Linux" and desktop_mode:
+                try:
+                    import glob
+                    has_disp = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or glob.glob("/tmp/.X11-unix/X*"))
+                    if not has_disp:
+                        self.send_agent_event({
+                            "type": "RemoteDesktopStatus",
+                            "payload": {
+                                "stream_id": stream_id,
+                                "correlation_id": correlation_id,
+                                "status": "no_display",
+                                "error": "Headless Linux Host: No active graphical display found (/tmp/.X11-unix/X* is empty). Start Xvfb or an X11/Wayland desktop session."
+                            }
+                        }, skip_if_busy=False)
+                        return
+                except Exception:
+                    pass
+
+            # Preflight succeeded: send confirmed agent acknowledgement
             self.send_agent_event({
                 "type": "RemoteDesktopStarted",
                 "payload": {
@@ -7762,44 +7803,6 @@ class CyberVPSAgent:
                     "timestamp": int(time.time() * 1000)
                 }
             }, skip_if_busy=False)
-
-            # Preflight Display Checks
-            sys_os = platform.system()
-            if sys_os == "Windows" and desktop_mode:
-                try:
-                    import ctypes
-                    kernel32 = ctypes.windll.kernel32
-                    proc_session = ctypes.c_ulong()
-                    kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(proc_session))
-                    active_console = kernel32.WTSGetActiveConsoleSessionId()
-                    if proc_session.value == 0 and active_console != 0:
-                        self.send_agent_event({
-                            "type": "AppStreamStatus",
-                            "payload": {
-                                "stream_id": stream_id,
-                                "correlation_id": correlation_id,
-                                "status": "session_0_isolated",
-                                "error": "Windows Session 0 Isolation: Agent service cannot capture active user display directly. Connect via 1-Click RDP Bridge or run agent in active user session."
-                            }
-                        })
-                except Exception:
-                    pass
-            elif sys_os == "Linux" and desktop_mode:
-                try:
-                    import glob
-                    has_disp = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or glob.glob("/tmp/.X11-unix/X*"))
-                    if not has_disp:
-                        self.send_agent_event({
-                            "type": "AppStreamStatus",
-                            "payload": {
-                                "stream_id": stream_id,
-                                "correlation_id": correlation_id,
-                                "status": "no_display",
-                                "error": "Headless Linux Host: No active graphical display found (/tmp/.X11-unix/X* is empty). Start Xvfb or an X11/Wayland desktop session."
-                            }
-                        })
-                except Exception:
-                    pass
 
             with self.lock:
                 self.active_app_streams[stream_id] = {

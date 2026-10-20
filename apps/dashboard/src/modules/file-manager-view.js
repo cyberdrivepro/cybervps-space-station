@@ -120,7 +120,7 @@ class FileManagerView {
     if (typeof window !== 'undefined' && typeof window.openFmRunModal === 'function') {
       window.openFmRunModal(path, name || path.split(/[\\/]/).pop());
     } else {
-      alert(`Initiating execution for: ${path}`);
+      if (typeof window !== 'undefined' && typeof window.openFmRunModal === 'function') { window.openFmRunModal(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('Execution requested for ' + path, 'info'); }
     }
   }
 
@@ -153,7 +153,7 @@ class FileManagerView {
     if (typeof window !== 'undefined' && typeof window.downloadFile === 'function') {
       window.downloadFile(path, name || path.split(/[\\/]/).pop());
     } else {
-      alert(`Initiating download for: ${path}`);
+      if (typeof window !== 'undefined' && typeof window.downloadFile === 'function') { window.downloadFile(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('Download requested for ' + path, 'info'); }
     }
   }
 
@@ -161,13 +161,13 @@ class FileManagerView {
     if (typeof window !== 'undefined' && typeof window.downloadDirectoryAsZip === 'function') {
       window.downloadDirectoryAsZip(path, name || path.split(/[\\/]/).pop());
     } else {
-      alert(`Initiating ZIP archive for: ${path}`);
+      if (typeof window !== 'undefined' && typeof window.downloadDirectoryAsZip === 'function') { window.downloadDirectoryAsZip(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('ZIP requested for ' + path, 'info'); }
     }
   }
 
   static deleteItem(path) {
     if (confirm(`Permanently delete [${path}]?`)) {
-      alert(`Delete operation dispatched for: ${path}`);
+      if (typeof window !== 'undefined' && typeof window.promptDeleteFile === 'function') { window.promptDeleteFile(path, path.split(/[\\/]/).pop(), false); } else if (typeof showToast === 'function') { showToast('Delete requested for ' + path, 'info'); }
     }
   }
 }

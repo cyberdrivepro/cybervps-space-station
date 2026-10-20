@@ -13,7 +13,7 @@ const { spawn } = require('child_process');
 
 const SERVER_URL = 'http://127.0.0.1:8080';
 const WS_URL = 'ws://127.0.0.1:8080';
-const PAIRING_KEY = 'test_pair_key_elevation_123';
+const PAIRING_KEY = process.env.PAIRING_KEY || process.env.CVPS_PAIRING_KEY || 'cybervps_pair_station_2026';
 
 function wait(ms) {
   return new Promise(r => setTimeout(r, ms));

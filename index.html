@@ -3167,7 +3167,7 @@
               <button class="btn btn-secondary" onclick="replitDesktopAction('restart')">Restart Desktop</button>
               <button class="btn btn-secondary" onclick="replitDesktopAction('stop')">Stop Desktop</button>
               <button class="btn btn-secondary" onclick="toggleEmbeddedNoVNC()">Toggle Embedded noVNC</button>
-              <a id="replit-external-vnc-btn" class="btn btn-secondary" href="http://localhost:8080/vnc.html" target="_blank" rel="noopener">Open noVNC in New Tab</a>
+              <a id="replit-external-vnc-btn" class="btn btn-secondary" href="javascript:void(0)" onclick="openExternalVncTab()" target="_blank" rel="noopener">Open noVNC in New Tab</a>
               <button class="btn btn-secondary" onclick="replitSshxAction('start')">Start sshx Collaborative Terminal</button>
             </div>
 
@@ -12952,16 +12952,16 @@
         const icon = it.is_directory
           ? '<span style="color:var(--accent-cyan); margin-right:8px; font-size:1.1rem;">📁</span>'
           : getFileIcon(it.name);
-        const sizeStr = it.is_directory ? '<span style="color:var(--text-muted);">—</span>' : formatBytes(it.size);
+        const sizeStr = it.is_directory ? '<span style="color:var(--text-muted);">&mdash;</span>' : formatBytes(it.size);
         const modStr = formatTime(it.modified);
-        const modeStr = it.permissions ? `<code style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(it.permissions)}</code>` : '<span style="color:var(--text-muted);">—</span>';
+        const modeStr = it.permissions ? `<code style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(it.permissions)}</code>` : '<span style="color:var(--text-muted);">&mdash;</span>';
 
-        const safePath = escapeHtml(it.path).replace(/'/g, "\\'");
-        const safeName = escapeHtml(it.name).replace(/'/g, "\\'");
+        const attrPath = escapeHtml(it.path);
+        const attrName = escapeHtml(it.name);
 
         let nameHtml = '';
         if (it.is_directory) {
-          nameHtml = `<a href="javascript:void(0)" onclick="initFileManager('${appState.selectedMachineId}', '${safePath}')" style="color:var(--text-primary); font-weight:600; text-decoration:none; display:flex; align-items:center;">${icon}<span>${escapeHtml(it.name)}</span></a>`;
+          nameHtml = `<a href="javascript:void(0)" class="fm-open-dir" data-path="${attrPath}" style="color:var(--text-primary); font-weight:600; text-decoration:none; display:flex; align-items:center;">${icon}<span>${escapeHtml(it.name)}</span></a>`;
         } else {
           nameHtml = `<span style="display:flex; align-items:center; color:var(--text-secondary);">${icon}<span style="font-family:var(--font-mono); font-size:0.83rem;">${escapeHtml(it.name)}</span></span>`;
         }
@@ -12973,25 +12973,25 @@
 
         if (it.is_directory) {
           actionsHtml = `
-            <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="initFileManager('${appState.selectedMachineId}', '${safePath}')">Open</button>
-            <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="downloadDirectoryAsZip('${safePath}', '${safeName}')">📦 ZIP</button>
-            <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptRenameFile('${safePath}', '${safeName}')">Rename</button>
-            <button class="btn btn-danger" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptDeleteFile('${safePath}', '${safeName}', true)">Delete</button>
+            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem;" data-action="open" data-path="${attrPath}">Open</button>
+            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="zip" data-path="${attrPath}" data-name="${attrName}">📦 ZIP</button>
+            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="rename" data-path="${attrPath}" data-name="${attrName}">Rename</button>
+            <button class="btn btn-danger fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="delete" data-path="${attrPath}" data-name="${attrName}" data-isdir="true">Delete</button>
           `;
         } else {
           actionsHtml = `
-            ${isRunnable ? `<button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; color:var(--accent-cyan); font-weight:600;" onclick="openFmRunModal('${safePath}', '${safeName}')">⚡ Run</button>` : ''}
-            ${isArchive ? `<button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; color:#f59e0b;" onclick="promptExtractArchive('${safePath}', '${safeName}')">📂 Extract</button>` : ''}
-            <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="openFileInEditor('${safePath}', '${safeName}', ${it.size || 0})">Edit</button>
-            <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem; margin-left:3px;" onclick="downloadFile('${safePath}', '${safeName}')">Download</button>
-            <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptRenameFile('${safePath}', '${safeName}')">Rename</button>
-            <button class="btn btn-danger" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="promptDeleteFile('${safePath}', '${safeName}', false)">Delete</button>
+            ${isRunnable ? `<button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; color:var(--accent-cyan); font-weight:600;" data-action="run" data-path="${attrPath}" data-name="${attrName}">⚡ Run</button>` : ''}
+            ${isArchive ? `<button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; color:#f59e0b;" data-action="extract" data-path="${attrPath}" data-name="${attrName}">📂 Extract</button>` : ''}
+            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem;" data-action="edit" data-path="${attrPath}" data-name="${attrName}" data-size="${it.size || 0}">Edit</button>
+            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem; margin-left:3px;" data-action="download" data-path="${attrPath}" data-name="${attrName}">Download</button>
+            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="rename" data-path="${attrPath}" data-name="${attrName}">Rename</button>
+            <button class="btn btn-danger fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="delete" data-path="${attrPath}" data-name="${attrName}" data-isdir="false">Delete</button>
           `;
         }
 
         return `
           <tr>
-            <td style="text-align:center;"><input type="checkbox" class="fm-row-check" data-path="${safePath}" data-name="${safeName}" data-isdir="${it.is_directory}" onchange="fmOnRowCheckChange()"></td>
+            <td style="text-align:center;"><input type="checkbox" class="fm-row-check" data-path="${attrPath}" data-name="${attrName}" data-isdir="${it.is_directory}" onchange="fmOnRowCheckChange()"></td>
             <td>${nameHtml}</td>
             <td style="font-family:var(--font-mono); font-size:0.78rem;">${sizeStr}</td>
             <td>${modeStr}</td>
@@ -13000,9 +13000,38 @@
           </tr>
         `;
       }).join('');
+
+      if (!tbody._hasDelegateHandler) {
+        tbody._hasDelegateHandler = true;
+        tbody.addEventListener('click', (e) => {
+          const dirLink = e.target.closest('.fm-open-dir');
+          if (dirLink) {
+            e.preventDefault();
+            const p = dirLink.getAttribute('data-path');
+            if (p) initFileManager(appState.selectedMachineId, p);
+            return;
+          }
+          const btn = e.target.closest('.fm-act-btn');
+          if (!btn) return;
+          e.preventDefault();
+          const action = btn.getAttribute('data-action');
+          const p = btn.getAttribute('data-path');
+          const n = btn.getAttribute('data-name');
+          const isDir = btn.getAttribute('data-isdir') === 'true';
+          const size = parseInt(btn.getAttribute('data-size') || '0', 10);
+
+          if (action === 'open') initFileManager(appState.selectedMachineId, p);
+          else if (action === 'zip') downloadDirectoryAsZip(p, n);
+          else if (action === 'rename') promptRenameFile(p, n);
+          else if (action === 'delete') promptDeleteFile(p, n, isDir);
+          else if (action === 'run') openFmRunModal(p, n);
+          else if (action === 'extract') promptExtractArchive(p, n);
+          else if (action === 'edit') openFileInEditor(p, n, size);
+          else if (action === 'download') downloadFile(p, n);
+        });
+      }
       fmUpdateSelectionUI();
     }
-
     function getFileIcon(name) {
       const ext = (name.split('.').pop() || '').toLowerCase();
       if (['js', 'ts', 'jsx', 'tsx', 'py', 'sh', 'bash', 'ps1', 'bat', 'cmd', 'c', 'cpp', 'rs', 'go'].includes(ext)) {
@@ -14360,14 +14389,31 @@
               <span class="badge ${isRunning ? 'badge-success' : 'badge-subtle'}">${escapeHtml(p.status || 'Running')}</span>
             </td>
             <td style="text-align:right; white-space:nowrap;">
-              <button class="btn btn-primary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-right:3px; background:rgba(6,182,212,0.15); border-color:var(--accent-cyan); color:var(--accent-cyan);" onclick="openAppLiveViewer('${safeName}', '${safeName}', [${p.pid}])" title="Stream Live HD Window in Background (Zero Popups)">📺 View</button>
-              <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem;" onclick="inspectProcessDetails(${p.pid})" title="View Details">🔍</button>
-              <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="openKillProcessModal(${p.pid}, '${safeName}', '${safeUser}', false)" title="Graceful Terminate">🛑 End</button>
-              <button class="btn btn-danger" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" onclick="openKillProcessModal(${p.pid}, '${safeName}', '${safeUser}', true)" title="Force Kill">⚡ Kill</button>
+              <button class="btn btn-primary proc-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-right:3px; background:rgba(6,182,212,0.15); border-color:var(--accent-cyan); color:var(--accent-cyan);" data-action="view" data-pid="${p.pid}" data-name="${escapeHtml(p.name)}" title="Stream Live HD Window in Background (Zero Popups)">📺 View</button>
+              <button class="btn btn-secondary proc-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem;" data-action="inspect" data-pid="${p.pid}" title="View Details">🔍</button>
+              <button class="btn btn-secondary proc-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="terminate" data-pid="${p.pid}" data-name="${escapeHtml(p.name)}" data-user="${escapeHtml(p.user || 'System')}" title="Graceful Terminate">🛑 End</button>
+              <button class="btn btn-danger proc-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="kill" data-pid="${p.pid}" data-name="${escapeHtml(p.name)}" data-user="${escapeHtml(p.user || 'System')}" title="Force Kill">⚡ Kill</button>
             </td>
           </tr>
         `;
       }).join('');
+
+      if (!tbody._hasProcDelegate) {
+        tbody._hasProcDelegate = true;
+        tbody.addEventListener('click', (e) => {
+          const btn = e.target.closest('.proc-act-btn');
+          if (!btn) return;
+          e.preventDefault();
+          const action = btn.getAttribute('data-action');
+          const pid = parseInt(btn.getAttribute('data-pid'), 10);
+          const name = btn.getAttribute('data-name');
+          const user = btn.getAttribute('data-user');
+          if (action === 'view') openAppLiveViewer(name, name, [pid]);
+          else if (action === 'inspect') inspectProcessDetails(pid);
+          else if (action === 'terminate') openKillProcessModal(pid, name, user, false);
+          else if (action === 'kill') openKillProcessModal(pid, name, user, true);
+        });
+      }
     }
 
     function renderServicesTable() {
@@ -14402,17 +14448,17 @@
         const safeName = escapeHtml(s.name).replace(/'/g, "\\'");
 
         let actions = '';
+        const attrSvcName = escapeHtml(s.name);
         if (isRunning) {
           actions = `
-            <button class="btn btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="executeServiceAction('${safeName}', 'restart')">Restart</button>
-            <button class="btn btn-danger" style="padding:0.25rem 0.55rem; font-size:0.72rem; margin-left:3px;" onclick="executeServiceAction('${safeName}', 'stop')">Stop</button>
+            <button class="btn btn-secondary svc-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem;" data-action="restart" data-name="${attrSvcName}">Restart</button>
+            <button class="btn btn-danger svc-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem; margin-left:3px;" data-action="stop" data-name="${attrSvcName}">Stop</button>
           `;
         } else {
           actions = `
-            <button class="btn btn-primary" style="padding:0.25rem 0.55rem; font-size:0.72rem;" onclick="executeServiceAction('${safeName}', 'start')">Start</button>
+            <button class="btn btn-primary svc-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem;" data-action="start" data-name="${attrSvcName}">Start</button>
           `;
         }
-
         return `
           <tr>
             <td><code style="font-weight:700; font-size:0.82rem; color:var(--text-primary);">${escapeHtml(s.name)}</code></td>
@@ -14423,6 +14469,18 @@
           </tr>
         `;
       }).join('');
+
+      if (!tbody._hasSvcDelegate) {
+        tbody._hasSvcDelegate = true;
+        tbody.addEventListener('click', (e) => {
+          const btn = e.target.closest('.svc-act-btn');
+          if (!btn) return;
+          e.preventDefault();
+          const action = btn.getAttribute('data-action');
+          const name = btn.getAttribute('data-name');
+          if (name && action) executeServiceAction(name, action);
+        });
+      }
     }
 
     function filterProcessesTable() { renderProcessesTable(); }
@@ -16188,7 +16246,7 @@
       grid.innerHTML = backends.map(b => {
         const isPrimary = b.role === 'primary';
         const roleBadge = isPrimary ? '<span class="badge badge-cyan" style="background:#0284c722; color:#38bdf8; border:1px solid #0284c7;">PRIMARY LEADER</span>' : '<span class="badge badge-subtle">STANDBY PILLAR</span>';
-        const isHealthy = b.observed_state === 'healthy' || b.state === 'healthy';
+        const isHealthy = b.observed_state === 'healthy' || b.state === 'healthy' || b.status === 'healthy' || b.status === 'online' || (typeof b.latency_ms === 'number' && b.latency_ms > 0 && b.latency_ms < 5000 && (Date.now() - new Date(b.last_check || b.updated_at || 0).getTime() < 180000));
         const isRecovering = b.observed_state === 'recovering' || b.state === 'recovering';
         const stateBadge = isHealthy
           ? '<span class="badge badge-success">HEALTHY</span>'
@@ -16736,7 +16794,59 @@
     }
 
     // =========================================================================
-    // 18. INFRASTRUCTURE: WIREGUARD, DOCKER, SANDBOXES & CYBERROOT CONTROLLER
+    
+    // -------------------------------------------------------------------------
+    // DELEGATED CONTROL BUTTON HANDLERS (AUDIT RESOLUTIONS)
+    // -------------------------------------------------------------------------
+    function openAddWireguardPeerModal() {
+      if (typeof openAddWireguardModal === 'function') {
+        openAddWireguardModal();
+      } else {
+        const modal = document.getElementById('modal-add-wireguard');
+        if (modal) modal.style.display = 'flex';
+      }
+    }
+    window.openAddWireguardPeerModal = openAddWireguardPeerModal;
+
+    async function syncDockerContainers() {
+      showToast('Refreshing Docker containers & container engines...', 'info');
+      try {
+        if (typeof syncInfra === 'function') {
+          await syncInfra();
+        }
+      } catch (err) {
+        showToast('Docker sync error: ' + err.message, 'error');
+      }
+    }
+    window.syncDockerContainers = syncDockerContainers;
+
+    function launchRdpFileDownload(machineId) {
+      const targetMid = machineId || currentDesktopState.machineId || (document.getElementById('desktop-machine-select')?.value);
+      if (targetMid) {
+        currentDesktopState.machineId = targetMid;
+        const select = document.getElementById('desktop-machine-select');
+        if (select) select.value = targetMid;
+      }
+      if (typeof downloadRdpConfig === 'function') {
+        downloadRdpConfig();
+      } else {
+        showToast('Preparing .rdp download...', 'info');
+      }
+    }
+    window.launchRdpFileDownload = launchRdpFileDownload;
+
+    function connectViaRustDesk(vip) {
+      const targetVip = vip || currentDesktopState.data?.virtual_ip || '10.77.0.x';
+      try {
+        window.location.href = `rustdesk://${targetVip}`;
+        showToast(`Initiating RustDesk client connection to VIP ${targetVip}...`, 'info');
+      } catch (_) {
+        if (typeof connectRustDeskDirect === 'function') connectRustDeskDirect();
+      }
+    }
+    window.connectViaRustDesk = connectViaRustDesk;
+
+// 18. INFRASTRUCTURE: WIREGUARD, DOCKER, SANDBOXES & CYBERROOT CONTROLLER
     // =========================================================================
     async function syncInfra() {
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
@@ -18672,7 +18782,7 @@ class FileManagerView {
     if (typeof window !== 'undefined' && typeof window.openFmRunModal === 'function') {
       window.openFmRunModal(path, name || path.split(/[\\/]/).pop());
     } else {
-      alert(`Initiating execution for: ${path}`);
+      if (typeof window !== 'undefined' && typeof window.openFmRunModal === 'function') { window.openFmRunModal(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('Execution requested for ' + path, 'info'); }
     }
   }
 
@@ -18705,7 +18815,7 @@ class FileManagerView {
     if (typeof window !== 'undefined' && typeof window.downloadFile === 'function') {
       window.downloadFile(path, name || path.split(/[\\/]/).pop());
     } else {
-      alert(`Initiating download for: ${path}`);
+      if (typeof window !== 'undefined' && typeof window.downloadFile === 'function') { window.downloadFile(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('Download requested for ' + path, 'info'); }
     }
   }
 
@@ -18713,13 +18823,13 @@ class FileManagerView {
     if (typeof window !== 'undefined' && typeof window.downloadDirectoryAsZip === 'function') {
       window.downloadDirectoryAsZip(path, name || path.split(/[\\/]/).pop());
     } else {
-      alert(`Initiating ZIP archive for: ${path}`);
+      if (typeof window !== 'undefined' && typeof window.downloadDirectoryAsZip === 'function') { window.downloadDirectoryAsZip(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('ZIP requested for ' + path, 'info'); }
     }
   }
 
   static deleteItem(path) {
     if (confirm(`Permanently delete [${path}]?`)) {
-      alert(`Delete operation dispatched for: ${path}`);
+      if (typeof window !== 'undefined' && typeof window.promptDeleteFile === 'function') { window.promptDeleteFile(path, path.split(/[\\/]/).pop(), false); } else if (typeof showToast === 'function') { showToast('Delete requested for ' + path, 'info'); }
     }
   }
 }
