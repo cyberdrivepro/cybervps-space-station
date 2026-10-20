@@ -13002,7 +13002,6 @@
       }).join('');
       fmUpdateSelectionUI();
     }
-    }
 
     function getFileIcon(name) {
       const ext = (name.split('.').pop() || '').toLowerCase();
@@ -13822,15 +13821,6 @@
 
           showToast(`Process finished with exit code ${data.exit_code}${elevatedLabel}`, isSuccess ? 'success' : 'warning');
         }
-      } catch (err) {
-        btn.disabled = false;
-        btn.innerText = '⚡ Execute Again';
-        badge.className = 'badge badge-danger';
-        badge.innerText = 'Error';
-        outputEl.innerText = err.message;
-        showToast('Run error: ' + err.message, 'error');
-      }
-    }
       } catch (err) {
         btn.disabled = false;
         btn.innerText = '⚡ Execute Again';
