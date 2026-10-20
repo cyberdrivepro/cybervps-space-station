@@ -7614,7 +7614,7 @@ class CyberVPSAgent:
                     stream_cfg["hwnd"] = res.get("hwnd")
 
                 self.send_agent_event({
-                    "type": "AppStreamFrame",
+                    "type": "RemoteDesktopFrame" if desktop_mode else "AppStreamFrame",
                     "payload": {
                         "stream_id": stream_id,
                         "correlation_id": correlation_id,
@@ -7632,10 +7632,10 @@ class CyberVPSAgent:
                         "is_diagnostic_frame": res.get("is_diagnostic_frame", False),
                         "timestamp": int(now * 1000)
                     }
-                }, skip_if_busy=True)
+                }, skip_if_busy=(frame_counter > 2))
                 if res.get("is_diagnostic_frame"):
                     self.send_agent_event({
-                        "type": "AppStreamStatus",
+                        "type": "RemoteDesktopStatus" if desktop_mode else "AppStreamStatus",
                         "payload": {
                             "stream_id": stream_id,
                             "correlation_id": correlation_id,
@@ -7648,7 +7648,7 @@ class CyberVPSAgent:
                     time.sleep(1.0)
             else:
                 self.send_agent_event({
-                    "type": "AppStreamStatus",
+                    "type": "RemoteDesktopStatus" if desktop_mode else "AppStreamStatus",
                     "payload": {
                         "stream_id": stream_id,
                         "correlation_id": correlation_id,
