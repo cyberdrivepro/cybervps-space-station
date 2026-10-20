@@ -137,7 +137,7 @@ if sys.platform == "win32":
         _orig_popen_init(self, *args, **kwargs)
     subprocess.Popen.__init__ = _silent_popen_init
 
-PROTOCOL_VERSION = "2.1.1"
+PROTOCOL_VERSION = "2.3.1"
 AGENT_CAPABILITIES = [
     "apps", "desktop_launch", "wireguard", "docker", "sandboxes", "rdp", "vnc", "terminal", "file_manager", "interactive_gui", "ota_update"
 ]
@@ -853,6 +853,27 @@ class RelayWebSocket:
             masked = b""
         with self._send_lock:
             sock.sendall(bytes(header) + masked)
+
+
+class ElevationRequiredError(Exception):
+    def __init__(self, message="The requested operation requires elevation (WinError 740)."):
+        super().__init__(message)
+        self.code = "ELEVATION_REQUIRED"
+        self.status = 422
+        self.requires_elevation = True
+
+class UacCancelledError(Exception):
+    def __init__(self, message="UAC elevation request was cancelled or dismissed by the user (WinError 1223)."):
+        super().__init__(message)
+        self.code = "UAC_CANCELLED"
+        self.status = 400
+
+class ElevationNotAvailableError(Exception):
+    def __init__(self, message="Elevation not available in current environment."):
+        super().__init__(message)
+        self.code = "ELEVATION_NOT_AVAILABLE_IN_SERVICE"
+        self.status = 422
+        self.requires_elevation = True
 
 
 class CyberVPSAgent:
@@ -2897,21 +2918,38 @@ class CyberVPSAgent:
         chunk_b64 = payload.get("chunk_data_base64") or payload.get("content_base64", "")
         is_first = bool(payload.get("is_first", False) or offset == 0)
         is_last = bool(payload.get("is_last", False))
+        total_size = payload.get("total_size")
+        use_staging = bool(payload.get("staging", True) if payload.get("staging") is not None else True)
         try:
             target_path = self._sanitize_path(raw_path)
             parent = os.path.dirname(target_path)
             if parent and not os.path.exists(parent):
                 os.makedirs(parent, exist_ok=True)
 
-            chunk_bytes = base64.b64decode(chunk_b64)
-            mode = "wb" if (is_first and (not os.path.exists(target_path) or offset == 0)) else ("r+b" if os.path.exists(target_path) else "wb")
+            part_path = target_path + ".cvps_part"
+            write_path = part_path if (use_staging or (os.path.exists(part_path) and not os.path.exists(target_path))) else target_path
 
-            with open(target_path, mode) as f:
+            chunk_bytes = base64.b64decode(chunk_b64)
+            mode = "wb" if (is_first and (not os.path.exists(write_path) or offset == 0)) else ("r+b" if os.path.exists(write_path) else "wb")
+
+            with open(write_path, mode) as f:
                 f.seek(offset)
                 f.write(chunk_bytes)
                 f.flush()
 
-            file_size = os.path.getsize(target_path)
+            file_size = os.path.getsize(write_path)
+
+            if is_last and write_path == part_path:
+                if total_size and int(total_size) > 0 and file_size != int(total_size):
+                    raise ValueError(f"Final file size mismatch: expected {total_size} bytes, got {file_size} bytes")
+                if os.path.exists(target_path):
+                    try:
+                        os.remove(target_path)
+                    except Exception:
+                        pass
+                os.replace(part_path, target_path)
+                file_size = os.path.getsize(target_path)
+
             res = {
                 "path": target_path.replace("\\", "/"),
                 "native_path": target_path,
@@ -2921,6 +2959,54 @@ class CyberVPSAgent:
                 "total_size": file_size,
                 "is_last": is_last
             }
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+        except Exception as e:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_file_upload_status(self, payload):
+        req_id = payload.get("request_id")
+        raw_path = payload.get("path")
+        try:
+            target_path = self._sanitize_path(raw_path)
+            part_path = target_path + ".cvps_part"
+            if os.path.isfile(part_path):
+                sz = os.path.getsize(part_path)
+                res = {
+                    "exists": True,
+                    "is_partial": True,
+                    "offset": sz,
+                    "committed_offset": sz,
+                    "total_size": sz,
+                    "path": target_path.replace("\\", "/"),
+                    "native_path": target_path
+                }
+            elif os.path.isfile(target_path):
+                sz = os.path.getsize(target_path)
+                res = {
+                    "exists": True,
+                    "is_partial": False,
+                    "offset": sz,
+                    "committed_offset": sz,
+                    "total_size": sz,
+                    "path": target_path.replace("\\", "/"),
+                    "native_path": target_path
+                }
+            else:
+                res = {
+                    "exists": False,
+                    "is_partial": False,
+                    "offset": 0,
+                    "committed_offset": 0,
+                    "total_size": 0,
+                    "path": target_path.replace("\\", "/"),
+                    "native_path": target_path
+                }
             self.send_agent_event({
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": res}
@@ -3159,16 +3245,206 @@ class CyberVPSAgent:
                 "payload": {"request_id": req_id, "success": False, "error": str(e)}
             })
 
-    def _start_managed_process(self, cmd, working_dir, job_id, is_msi=False, msi_log_path=None):
-        """Spawns process with non-blocking bounded ring buffer draining (prevents pipe deadlocks)."""
-        proc = subprocess.Popen(
-            cmd,
-            cwd=working_dir,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False
-        )
+    def _start_elevated_windows_process(self, cmd, working_dir, job_id, is_msi=False, msi_log_path=None):
+        """Spawns elevated process on Windows via ShellExecuteExW (lpVerb='runas') and tracks PID/exit code."""
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        shell32 = ctypes.windll.shell32
+
+        # Session 0 isolation check: Session 0 cannot display interactive UAC prompts to Session 1
+        proc_session = ctypes.c_ulong()
+        if kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(proc_session)):
+            if proc_session.value == 0:
+                active_console = kernel32.WTSGetActiveConsoleSessionId()
+                if active_console != 0:
+                    raise ElevationNotAvailableError(
+                        "Windows Session 0 Isolation: Host agent is running as a non-interactive service (Session 0) "
+                        "and cannot display an interactive UAC elevation prompt on Session 1. "
+                        "To execute elevated installers, run the agent in the interactive user desktop session or "
+                        "configure a scheduled task with highest privileges."
+                    )
+
+        # SHELLEXECUTEINFOW structure
+        class SHELLEXECUTEINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("fMask", wintypes.ULONG),
+                ("hwnd", wintypes.HWND),
+                ("lpVerb", wintypes.LPCWSTR),
+                ("lpFile", wintypes.LPCWSTR),
+                ("lpParameters", wintypes.LPCWSTR),
+                ("lpDirectory", wintypes.LPCWSTR),
+                ("nShow", ctypes.c_int),
+                ("hInstApp", wintypes.HINSTANCE),
+                ("lpIDList", wintypes.LPVOID),
+                ("lpClass", wintypes.LPCWSTR),
+                ("hkeyClass", wintypes.HKEY),
+                ("dwHotKey", wintypes.DWORD),
+                ("hIconOrMonitor", wintypes.HANDLE),
+                ("hProcess", wintypes.HANDLE),
+            ]
+
+        SEE_MASK_NOCLOSEPROCESS = 0x00000040
+        SW_SHOWNORMAL = 1
+
+        executable = cmd[0]
+        params = subprocess.list2cmdline(cmd[1:]) if len(cmd) > 1 else ""
+
+        sei = SHELLEXECUTEINFOW()
+        sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS
+        sei.hwnd = None
+        sei.lpVerb = "runas"
+        sei.lpFile = executable
+        sei.lpParameters = params if params else None
+        sei.lpDirectory = working_dir if working_dir else None
+        sei.nShow = SW_SHOWNORMAL
+        sei.hProcess = None
+
+        success = shell32.ShellExecuteExW(ctypes.byref(sei))
+        if not success:
+            err_code = kernel32.GetLastError()
+            if err_code == 1223:
+                raise UacCancelledError("UAC elevation request was cancelled or dismissed by the user (WinError 1223).")
+            elif err_code == 5:
+                raise PermissionError("Access denied: insufficient administrative permissions to execute this binary (WinError 5).")
+            else:
+                raise RuntimeError(f"Failed to execute elevated process via ShellExecuteExW (WinError {err_code}).")
+
+        h_process = sei.hProcess
+        pid = kernel32.GetProcessId(h_process) if h_process else 0
+
+        stdout_lines = collections.deque(maxlen=1000)
+        stderr_lines = collections.deque(maxlen=1000)
+        stdout_lines.append("[Elevated Process: Output redirection not available via Windows UAC Appinfo service]")
+        if is_msi and msi_log_path:
+            stdout_lines.append(f"[Verbose MSI Installer Log: {msi_log_path}]")
+
+        class ElevatedProcessProxy:
+            def __init__(self, pid_val, handle):
+                self.pid = pid_val
+                self.handle = handle
+                self.returncode = None
+                self._poll_lock = threading.Lock()
+
+            def poll(self):
+                if self.returncode is not None:
+                    return self.returncode
+                with self._poll_lock:
+                    if self.handle:
+                        exit_code = wintypes.DWORD()
+                        if kernel32.GetExitCodeProcess(self.handle, ctypes.byref(exit_code)):
+                            STILL_ACTIVE = 259
+                            if exit_code.value != STILL_ACTIVE:
+                                self.returncode = exit_code.value
+                                kernel32.CloseHandle(self.handle)
+                                self.handle = None
+                                return self.returncode
+                return None
+
+            def wait(self, timeout=None):
+                if self.returncode is not None:
+                    return self.returncode
+                deadline = (time.time() + timeout) if timeout else None
+                while True:
+                    rc = self.poll()
+                    if rc is not None:
+                        return rc
+                    if deadline and time.time() > deadline:
+                        raise subprocess.TimeoutExpired(cmd, timeout)
+                    time.sleep(0.1)
+
+            def terminate(self):
+                with self._poll_lock:
+                    if self.handle:
+                        kernel32.TerminateProcess(self.handle, 1)
+
+            def kill(self):
+                self.terminate()
+
+        proc = ElevatedProcessProxy(pid, h_process)
+
+        job_info = {
+            "job_id": job_id,
+            "pid": pid,
+            "cmd": " ".join(cmd),
+            "proc": proc,
+            "running": True,
+            "elevated": True,
+            "exit_code": None,
+            "exit_reason": "Running (Elevated)",
+            "started_at": _iso_now(),
+            "finished_at": None,
+            "duration_ms": 0,
+            "is_msi": is_msi,
+            "msi_log_path": msi_log_path,
+            "stdout_lines": stdout_lines,
+            "stderr_lines": stderr_lines
+        }
+
+        with self.managed_processes_lock:
+            if len(self.managed_processes) >= 50:
+                finished_keys = [k for k, v in self.managed_processes.items() if not v.get("running")]
+                for old_k in finished_keys[:10]:
+                    self.managed_processes.pop(old_k, None)
+            self.managed_processes[job_id] = job_info
+
+        start_time = time.time()
+
+        def _monitor_elevated():
+            try:
+                proc.wait()
+            except Exception:
+                pass
+            finished_time = time.time()
+            duration_ms = int((finished_time - start_time) * 1000)
+            exit_code = proc.returncode
+
+            exit_reason = ""
+            if is_msi:
+                if exit_code == 0: exit_reason = "Success"
+                elif exit_code == 3010: exit_reason = "Success (Reboot Required)"
+                elif exit_code == 1602: exit_reason = "User Cancelled"
+                elif exit_code == 1603: exit_reason = "Fatal Error (Elevation or prerequisite required)"
+                elif exit_code == 1618: exit_reason = "Another installation is already in progress"
+                elif exit_code == 1619: exit_reason = "Package could not be opened"
+                elif exit_code == 1638: exit_reason = "Another version already installed"
+                else: exit_reason = f"MSI Exit Code {exit_code}"
+            else:
+                exit_reason = "Success" if exit_code == 0 else f"Process exited with code {exit_code}"
+
+            with self.managed_processes_lock:
+                if job_id in self.managed_processes:
+                    self.managed_processes[job_id]["running"] = False
+                    self.managed_processes[job_id]["exit_code"] = exit_code
+                    self.managed_processes[job_id]["exit_reason"] = exit_reason
+                    self.managed_processes[job_id]["finished_at"] = _iso_now()
+                    self.managed_processes[job_id]["duration_ms"] = duration_ms
+
+        threading.Thread(target=_monitor_elevated, daemon=True).start()
+        return proc, job_info
+
+    def _start_managed_process(self, cmd, working_dir, job_id, is_msi=False, msi_log_path=None, run_as_admin=False):
+        """Spawns process with non-blocking bounded ring buffer draining (prevents pipe deadlocks) or elevates on Windows."""
+        sys_os = platform.system()
+        if sys_os == "Windows" and run_as_admin:
+            return self._start_elevated_windows_process(cmd, working_dir, job_id, is_msi=is_msi, msi_log_path=msi_log_path)
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=working_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False
+            )
+        except OSError as e:
+            if getattr(e, 'winerror', None) == 740 or (sys_os == "Windows" and "[WinError 740]" in str(e)):
+                raise ElevationRequiredError("The requested executable requires administrator privileges (WinError 740). Please check 'Run as Administrator / Request UAC' to authorize elevation.")
+            raise
 
         stdout_lines = collections.deque(maxlen=1000)
         stderr_lines = collections.deque(maxlen=1000)
@@ -3197,6 +3473,7 @@ class CyberVPSAgent:
             "cmd": " ".join(cmd),
             "proc": proc,
             "running": True,
+            "elevated": False,
             "exit_code": None,
             "exit_reason": "Running",
             "started_at": _iso_now(),
@@ -3270,6 +3547,7 @@ class CyberVPSAgent:
         interpreter = (payload.get("interpreter") or "auto").lower()
         working_dir = payload.get("working_dir") or payload.get("cwd")
         run_in_background = bool(payload.get("background", False))
+        run_as_admin = bool(payload.get("run_as_admin", False) or payload.get("request_uac", False) or payload.get("elevated", False))
         job_id = payload.get("job_id") or f"run_{int(time.time()*1000)}"
 
         # MSI options
@@ -3339,7 +3617,7 @@ class CyberVPSAgent:
                         pass
                     cmd = [target_path] + list(args)
 
-            proc, job_info = self._start_managed_process(cmd, working_dir, job_id, is_msi=is_msi, msi_log_path=msi_log_path)
+            proc, job_info = self._start_managed_process(cmd, working_dir, job_id, is_msi=is_msi, msi_log_path=msi_log_path, run_as_admin=run_as_admin)
 
             if run_in_background:
                 res = {
@@ -3347,12 +3625,13 @@ class CyberVPSAgent:
                     "pid": proc.pid,
                     "running": True,
                     "background": True,
+                    "elevated": job_info.get("elevated", False),
                     "cmd": " ".join(cmd),
                     "started_at": job_info["started_at"],
                     "is_msi": is_msi,
                     "msi_log_path": msi_log_path,
                     "exit_code": None,
-                    "exit_reason": "Running"
+                    "exit_reason": "Running (Elevated)" if job_info.get("elevated") else "Running"
                 }
             else:
                 wait_sec = min(int(payload.get("timeout_s", 10)), 20)
@@ -3376,6 +3655,7 @@ class CyberVPSAgent:
                         "job_id": job_id,
                         "pid": proc.pid,
                         "running": False,
+                        "elevated": job_info.get("elevated", False),
                         "exit_code": cur_exit_code,
                         "exit_reason": cur_exit_reason,
                         "stdout": out_text,
@@ -3391,12 +3671,13 @@ class CyberVPSAgent:
                         "pid": proc.pid,
                         "running": True,
                         "background": True,
+                        "elevated": job_info.get("elevated", False),
                         "cmd": " ".join(cmd),
                         "started_at": job_info["started_at"],
                         "stdout": out_text or "[Execution continues in background...]",
                         "stderr": err_text,
                         "exit_code": None,
-                        "exit_reason": "Running",
+                        "exit_reason": "Running (Elevated)" if job_info.get("elevated") else "Running",
                         "is_msi": is_msi,
                         "msi_log_path": msi_log_path
                     }
@@ -3405,10 +3686,75 @@ class CyberVPSAgent:
                 "type": "AgentRpcResponse",
                 "payload": {"request_id": req_id, "success": True, "result": res}
             })
-        except Exception as e:
+        except ElevationRequiredError as ere:
             self.send_agent_event({
                 "type": "AgentRpcResponse",
-                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+                "payload": {
+                    "request_id": req_id,
+                    "success": False,
+                    "code": "ELEVATION_REQUIRED",
+                    "status": 422,
+                    "requires_elevation": True,
+                    "error": str(ere)
+                }
+            })
+        except UacCancelledError as uce:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": False,
+                    "code": "UAC_CANCELLED",
+                    "status": 400,
+                    "error": str(uce)
+                }
+            })
+        except ElevationNotAvailableError as ena:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": False,
+                    "code": "ELEVATION_NOT_AVAILABLE_IN_SERVICE",
+                    "status": 422,
+                    "requires_elevation": True,
+                    "error": str(ena)
+                }
+            })
+        except PermissionError as pe:
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": False,
+                    "code": "ACCESS_DENIED",
+                    "status": 403,
+                    "error": f"Access denied: {str(pe)}"
+                }
+            })
+        except Exception as e:
+            err_msg = str(e)
+            code = "EXECUTION_FAILED"
+            status = 500
+            if "WinError 740" in err_msg or "requires elevation" in err_msg:
+                code = "ELEVATION_REQUIRED"
+                status = 422
+            elif "WinError 1223" in err_msg or "cancelled" in err_msg.lower():
+                code = "UAC_CANCELLED"
+                status = 400
+            elif "WinError 5" in err_msg or "access is denied" in err_msg.lower():
+                code = "ACCESS_DENIED"
+                status = 403
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {
+                    "request_id": req_id,
+                    "success": False,
+                    "code": code,
+                    "status": status,
+                    "requires_elevation": (code == "ELEVATION_REQUIRED"),
+                    "error": err_msg
+                }
             })
 
     def handle_process_status(self, payload):
@@ -3536,43 +3882,80 @@ class CyberVPSAgent:
 
     def handle_file_archive_zip(self, payload):
         req_id = payload.get("request_id")
-        raw_path = payload.get("path")
-        dest_zip = payload.get("dest_zip")
+        raw_path = payload.get("path") or payload.get("dir_path")
+        paths = payload.get("paths")
+        dest_zip = payload.get("dest_zip") or payload.get("zip_path")
         try:
             import zipfile
-            target_path = self._sanitize_path(raw_path)
-            if not os.path.exists(target_path):
-                raise FileNotFoundError(f"Path to archive not found: {target_path}")
-
-            if not dest_zip:
-                dest_zip = target_path.rstrip("/\\") + ".zip"
-            else:
-                dest_zip = self._sanitize_path(dest_zip)
-
-            parent = os.path.dirname(dest_zip)
-            if parent and not os.path.exists(parent):
-                os.makedirs(parent, exist_ok=True)
-
-            total_files = 0
-            with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
-                if os.path.isdir(target_path):
-                    for root, dirs, files in os.walk(target_path):
-                        for file in files:
-                            full_path = os.path.join(root, file)
-                            rel_path = os.path.relpath(full_path, target_path)
-                            zf.write(full_path, rel_path)
-                            total_files += 1
+            if paths and isinstance(paths, list):
+                items_to_zip = [self._sanitize_path(p) for p in paths if str(p).strip()]
+                if not items_to_zip:
+                    raise ValueError("No valid paths provided for ZIP creation")
+                if not dest_zip:
+                    parent_dir = os.path.dirname(items_to_zip[0]) or os.path.expanduser("~")
+                    dest_zip = os.path.join(parent_dir, f"archive_{int(time.time())}.zip")
                 else:
-                    zf.write(target_path, os.path.basename(target_path))
-                    total_files = 1
+                    dest_zip = self._sanitize_path(dest_zip)
+
+                parent = os.path.dirname(dest_zip)
+                if parent and not os.path.exists(parent):
+                    os.makedirs(parent, exist_ok=True)
+
+                total_files = 0
+                with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                    for item_path in items_to_zip:
+                        if not os.path.exists(item_path):
+                            continue
+                        if os.path.isdir(item_path):
+                            base_name = os.path.basename(item_path) or "folder"
+                            for root, dirs, files in os.walk(item_path):
+                                for file in files:
+                                    full_path = os.path.join(root, file)
+                                    rel_inside = os.path.relpath(full_path, item_path)
+                                    archive_name = os.path.join(base_name, rel_inside).replace("\\", "/")
+                                    zf.write(full_path, archive_name)
+                                    total_files += 1
+                        else:
+                            zf.write(item_path, os.path.basename(item_path))
+                            total_files += 1
+            else:
+                if not raw_path:
+                    raise ValueError("Path or dir_path required for ZIP creation")
+                target_path = self._sanitize_path(raw_path)
+                if not os.path.exists(target_path):
+                    raise FileNotFoundError(f"Path to archive not found: {target_path}")
+
+                if not dest_zip:
+                    dest_zip = target_path.rstrip("/\\") + ".zip"
+                else:
+                    dest_zip = self._sanitize_path(dest_zip)
+
+                parent = os.path.dirname(dest_zip)
+                if parent and not os.path.exists(parent):
+                    os.makedirs(parent, exist_ok=True)
+
+                total_files = 0
+                with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                    if os.path.isdir(target_path):
+                        for root, dirs, files in os.walk(target_path):
+                            for file in files:
+                                full_path = os.path.join(root, file)
+                                rel_path = os.path.relpath(full_path, target_path).replace("\\", "/")
+                                zf.write(full_path, rel_path)
+                                total_files += 1
+                    else:
+                        zf.write(target_path, os.path.basename(target_path))
+                        total_files = 1
 
             zip_size = os.path.getsize(dest_zip)
             res = {
                 "archive_path": dest_zip.replace("\\", "/"),
+                "zip_path": dest_zip.replace("\\", "/"),
                 "native_path": dest_zip,
                 "filename": os.path.basename(dest_zip),
                 "total_files": total_files,
-                "total_size": zip_size
+                "total_size": zip_size,
+                "archive_size_bytes": zip_size
             }
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -3586,8 +3969,8 @@ class CyberVPSAgent:
 
     def handle_file_archive_extract(self, payload):
         req_id = payload.get("request_id")
-        archive_path = payload.get("archive_path")
-        dest_dir = payload.get("dest_dir")
+        archive_path = payload.get("archive_path") or payload.get("path")
+        dest_dir = payload.get("dest_dir") or payload.get("destination")
         try:
             import zipfile, tarfile
             src_archive = self._sanitize_path(archive_path)
@@ -3602,29 +3985,40 @@ class CyberVPSAgent:
             os.makedirs(dest_dir, exist_ok=True)
             real_dest = os.path.abspath(dest_dir)
             extracted_count = 0
+            total_extracted_bytes = 0
 
             if zipfile.is_zipfile(src_archive):
                 with zipfile.ZipFile(src_archive, "r") as zf:
                     for member in zf.infolist():
-                        target = os.path.abspath(os.path.join(real_dest, member.filename))
+                        norm_name = os.path.normpath(member.filename)
+                        if norm_name.startswith("..") or os.path.isabs(norm_name) or (len(norm_name) >= 2 and norm_name[1] == ":"):
+                            raise PermissionError(f"ZIP Slip vulnerability detected: illegal path '{member.filename}'")
+                        target = os.path.abspath(os.path.join(real_dest, norm_name))
                         if not (target == real_dest or target.startswith(real_dest + os.sep)):
                             raise PermissionError(f"ZIP Slip vulnerability detected: illegal path '{member.filename}'")
                         zf.extract(member, real_dest)
                         extracted_count += 1
+                        total_extracted_bytes += getattr(member, 'file_size', 0)
             elif tarfile.is_tarfile(src_archive):
                 with tarfile.open(src_archive, "r:*") as tf:
                     for member in tf.getmembers():
-                        target = os.path.abspath(os.path.join(real_dest, member.name))
+                        norm_name = os.path.normpath(member.name)
+                        if norm_name.startswith("..") or os.path.isabs(norm_name) or (len(norm_name) >= 2 and norm_name[1] == ":"):
+                            raise PermissionError(f"Tar traversal detected: illegal path '{member.name}'")
+                        target = os.path.abspath(os.path.join(real_dest, norm_name))
                         if not (target == real_dest or target.startswith(real_dest + os.sep)):
                             raise PermissionError(f"Tar traversal detected: illegal path '{member.name}'")
                         tf.extract(member, real_dest)
                         extracted_count += 1
+                        total_extracted_bytes += getattr(member, 'size', 0)
             else:
                 raise ValueError("Unsupported archive format. Only .zip, .tar, .tar.gz supported.")
 
             res = {
                 "dest_dir": dest_dir.replace("\\", "/"),
-                "extracted_files": extracted_count
+                "native_dest_dir": dest_dir,
+                "extracted_files": extracted_count,
+                "total_extracted_bytes": total_extracted_bytes
             }
             self.send_agent_event({
                 "type": "AgentRpcResponse",
@@ -8751,6 +9145,8 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_file_stat, args=(payload,), daemon=True).start()
         elif c_type == "FileChunkWrite":
             threading.Thread(target=self.handle_file_chunk_write, args=(payload,), daemon=True).start()
+        elif c_type in ["FileUploadStatus", "FileChunkStatus"]:
+            threading.Thread(target=self.handle_file_upload_status, args=(payload,), daemon=True).start()
         elif c_type == "FileChunkRead":
             threading.Thread(target=self.handle_file_chunk_read, args=(payload,), daemon=True).start()
         elif c_type == "FileInspect":

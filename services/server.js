@@ -1169,7 +1169,23 @@ function sendHttpError(res, err) {
   let status = 500;
   let code = 'INTERNAL_ERROR';
   const msg = (err && err.message) ? err.message : String(err || 'Unknown error');
-  if (msg.includes('offline') || msg.includes('not found in fleet') || msg.includes('disconnected')) {
+  if (err && err.status && typeof err.status === 'number') {
+    status = err.status;
+  }
+  if (err && err.code && typeof err.code === 'string') {
+    code = err.code;
+  }
+
+  if (code === 'ELEVATION_REQUIRED' || msg.includes('WinError 740') || msg.includes('requires elevation')) {
+    status = 422;
+    code = 'ELEVATION_REQUIRED';
+  } else if (code === 'UAC_CANCELLED' || msg.includes('WinError 1223') || msg.includes('cancelled')) {
+    status = 400;
+    code = 'UAC_CANCELLED';
+  } else if (code === 'ELEVATION_NOT_AVAILABLE_IN_SERVICE') {
+    status = 422;
+    code = 'ELEVATION_NOT_AVAILABLE_IN_SERVICE';
+  } else if (msg.includes('offline') || msg.includes('not found in fleet') || msg.includes('disconnected')) {
     status = 503;
     code = 'MACHINE_OFFLINE';
   } else if (msg.includes('timed out')) {
@@ -1178,15 +1194,25 @@ function sendHttpError(res, err) {
   } else if (msg.includes('not found') || msg.includes('Directory not found') || msg.includes('File not found')) {
     status = 404;
     code = 'NOT_FOUND';
-  } else if (msg.includes('Permission denied') || msg.includes('Access is denied')) {
+  } else if (msg.includes('Permission denied') || msg.includes('Access is denied') || code === 'ACCESS_DENIED') {
     status = 403;
     code = 'PERMISSION_DENIED';
-  } else if (msg.includes('required') || msg.includes('Safety guard') || msg.includes('invalid')) {
+  } else if (status === 500 && (msg.includes('required') || msg.includes('Safety guard') || msg.includes('invalid'))) {
     status = 400;
     code = 'BAD_REQUEST';
   }
+
+  const responseBody = {
+    error: msg,
+    code,
+    status
+  };
+  if ((err && err.requires_elevation) || code === 'ELEVATION_REQUIRED' || code === 'ELEVATION_NOT_AVAILABLE_IN_SERVICE') {
+    responseBody.requires_elevation = true;
+  }
+
   res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: msg, code, status }));
+  res.end(JSON.stringify(responseBody));
 }
 
 function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 15000) {
@@ -1370,6 +1396,7 @@ function normalizePlatformOs(rawOs) {
 }
 
 function isPublicApiRoute(pathname) {
+  if (pathname === '/api/v1/files/download') return true;
   if (pathname === '/api/v1/system/info') return true;
   if (pathname === '/api/v1/config') return true;
   if (pathname === '/api/v1/telemetry/stream') return true;
@@ -4440,6 +4467,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if ((pathname === '/api/v1/files/upload-status' || pathname === '/api/v1/files/upload/status') && (method === 'GET' || method === 'POST')) {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        let machine_id = parsedUrl.searchParams.get('machine_id');
+        let filePath = parsedUrl.searchParams.get('path');
+        if (!machine_id || !filePath) {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            machine_id = machine_id || parsed.machine_id;
+            filePath = filePath || parsed.path;
+          } catch (_) {}
+        }
+        if (!machine_id || !filePath) throw new Error('machine_id and path required');
+        const data = await sendAgentRequest(machine_id, 'FileUploadStatus', { path: filePath }, 15000);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ...data }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+    });
+    return;
+  }
+
   if (pathname === '/api/v1/files/upload-chunk' && method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
@@ -4455,7 +4507,7 @@ const server = http.createServer(async (req, res) => {
           is_first: Boolean(is_first),
           is_last: Boolean(is_last),
           total_size
-        }, 30000);
+        }, 60000);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ...data }));
       } catch (err) {
@@ -4471,12 +4523,41 @@ const server = http.createServer(async (req, res) => {
     let filename = '';
     const ticket = parsedUrl.searchParams.get('ticket');
 
-    if (ticket && db.downloadTickets && db.downloadTickets.has(ticket)) {
+    if (ticket) {
+      if (!db.downloadTickets || !db.downloadTickets.has(ticket)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid or expired download ticket', code: 'INVALID_TICKET', authenticated: false }));
+        return;
+      }
       const ticketData = db.downloadTickets.get(ticket);
-      if (ticketData && ticketData.expires_at > Date.now()) {
-        machineId = machineId || ticketData.machine_id;
-        filePath = filePath || ticketData.path;
-        filename = ticketData.filename;
+      if (!ticketData || ticketData.expires_at <= Date.now()) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Download ticket has expired', code: 'TICKET_EXPIRED', authenticated: false }));
+        return;
+      }
+      if (ticketData.consumed) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Download ticket has already been used', code: 'TICKET_ALREADY_USED', authenticated: false }));
+        return;
+      }
+      if (machineId && machineId !== ticketData.machine_id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Ticket machine mismatch', code: 'TICKET_MACHINE_MISMATCH', authenticated: false }));
+        return;
+      }
+      if (filePath && filePath !== ticketData.path) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Ticket file path mismatch', code: 'TICKET_PATH_MISMATCH', authenticated: false }));
+        return;
+      }
+      ticketData.consumed = true;
+      ticketData.consumed_at = Date.now();
+      machineId = ticketData.machine_id;
+      filePath = ticketData.path;
+      filename = ticketData.filename;
+    } else {
+      if (!requireAdminAuth(req, res)) {
+        return;
       }
     }
 
@@ -4487,8 +4568,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      // Chunked streaming download with bounded memory for arbitrary file sizes up to 100 GB+
-      const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB per slice
+      const CHUNK_SIZE = 2 * 1024 * 1024;
       let offset = 0;
       let isFirst = true;
 
@@ -4497,7 +4577,7 @@ const server = http.createServer(async (req, res) => {
           path: filePath,
           offset,
           length: CHUNK_SIZE
-        }, 35000);
+        }, 45000);
 
         if (isFirst) {
           const downloadName = filename || chunkData.filename || filePath.split(/[\\/]/).pop() || 'download';
@@ -4524,9 +4604,8 @@ const server = http.createServer(async (req, res) => {
       if (!res.writableEnded) {
         res.end();
       }
-      logAudit('file_downloaded', 'user', machineId, `Downloaded file: ${filePath} (${offset} bytes transferred)`);
+      logAudit('file_downloaded', req.adminUser || 'ticket_user', machineId, `Downloaded file: ${filePath} (${offset} bytes transferred)`);
     } catch (err) {
-      // Graceful fallback to classic FileRead if FileChunkRead is not supported or failed on initial chunk
       try {
         if (!res.headersSent) {
           const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, download: true, max_bytes: 500 * 1024 * 1024 }, 60000);
@@ -4539,7 +4618,7 @@ const server = http.createServer(async (req, res) => {
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.end(data.content || '');
           }
-          logAudit('file_downloaded', 'user', machineId, `Downloaded file: ${filePath}`);
+          logAudit('file_downloaded', req.adminUser || 'ticket_user', machineId, `Downloaded file: ${filePath}`);
         } else {
           res.end();
         }
@@ -4576,9 +4655,10 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { machine_id, path: execPath, command, args, cwd, working_dir, timeout_ms, background, msi_mode, msi_ui, msi_logging } = JSON.parse(body || '{}');
+        const { machine_id, path: execPath, command, args, cwd, working_dir, timeout_ms, background, msi_mode, msi_ui, msi_logging, run_as_admin, request_uac, elevated } = JSON.parse(body || '{}');
         const targetPath = execPath || command;
         if (!machine_id || !targetPath) throw new Error('machine_id and path required');
+        const isElevate = Boolean(run_as_admin || request_uac || elevated);
         const data = await sendAgentRequest(machine_id, 'FileRun', {
           path: targetPath,
           command: targetPath,
@@ -4586,12 +4666,14 @@ const server = http.createServer(async (req, res) => {
           cwd: cwd || working_dir || '',
           working_dir: cwd || working_dir || '',
           background: Boolean(background),
+          run_as_admin: isElevate,
+          request_uac: isElevate,
           msi_mode: msi_mode || 'install',
           msi_ui: msi_ui || 'qn',
           msi_logging: msi_logging !== false,
           timeout_s: timeout_ms ? Math.round(timeout_ms / 1000) : 10
         }, (timeout_ms || 25000) + 10000);
-        logAudit('file_executed', 'user', machine_id, `Executed: ${targetPath} (PID: ${data.pid || 'N/A'}, Running: ${Boolean(data.running)}, ExitCode: ${data.exit_code})`);
+        logAudit('file_executed', req.adminUser || 'user', machine_id, `Executed: ${targetPath} (PID: ${data.pid || 'N/A'}, Running: ${Boolean(data.running)}, Elevated: ${Boolean(data.elevated)}, ExitCode: ${data.exit_code})`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ...data }));
       } catch (err) {
@@ -4653,13 +4735,20 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { machine_id, dir_path, zip_path } = JSON.parse(body || '{}');
-        if (!machine_id || !dir_path) throw new Error('machine_id and dir_path required');
+        const { machine_id, dir_path, path: filePath, paths, zip_path, dest_zip } = JSON.parse(body || '{}');
+        const targetPath = filePath || dir_path;
+        if (!machine_id || (!targetPath && (!paths || !paths.length))) {
+          throw new Error('machine_id and dir_path (or paths array) required');
+        }
         const data = await sendAgentRequest(machine_id, 'FileArchiveZip', {
-          dir_path,
-          zip_path
-        }, 120000);
-        logAudit('archive_created', 'user', machine_id, `Created ZIP archive: ${data.zip_path} from ${dir_path}`);
+          path: targetPath,
+          dir_path: targetPath,
+          paths: paths || null,
+          zip_path: zip_path || dest_zip,
+          dest_zip: dest_zip || zip_path
+        }, 180000);
+        const resolvedZip = data.zip_path || data.archive_path;
+        logAudit('archive_created', req.adminUser || 'user', machine_id, `Created ZIP archive: ${resolvedZip}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ...data }));
       } catch (err) {
@@ -4674,13 +4763,16 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { machine_id, archive_path, dest_dir } = JSON.parse(body || '{}');
-        if (!machine_id || !archive_path) throw new Error('machine_id and archive_path required');
+        const { machine_id, archive_path, path: altPath, dest_dir, destination } = JSON.parse(body || '{}');
+        const targetArchive = archive_path || altPath;
+        if (!machine_id || !targetArchive) throw new Error('machine_id and archive_path required');
         const data = await sendAgentRequest(machine_id, 'FileArchiveExtract', {
-          archive_path,
-          dest_dir
-        }, 120000);
-        logAudit('archive_extracted', 'user', machine_id, `Extracted archive ${archive_path} into ${data.dest_dir}`);
+          archive_path: targetArchive,
+          path: targetArchive,
+          dest_dir: dest_dir || destination,
+          destination: dest_dir || destination
+        }, 180000);
+        logAudit('archive_extracted', req.adminUser || 'user', machine_id, `Extracted archive ${targetArchive} into ${data.dest_dir}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ...data }));
       } catch (err) {
@@ -9021,7 +9113,11 @@ function handleAgentMessage(ws, msg) {
       if (success) {
         pending.resolve(finalResult);
       } else {
-        pending.reject(new Error(error || 'Agent operation failed'));
+        const errObj = new Error(error || 'Agent operation failed');
+        if (payload && payload.code) errObj.code = payload.code;
+        if (payload && payload.status) errObj.status = payload.status;
+        if (payload && payload.requires_elevation) errObj.requires_elevation = true;
+        pending.reject(errObj);
       }
     }
     return { success: true };

@@ -106,7 +106,7 @@ class FileManagerView {
           <td><small>${item.modified_at ? new Date(item.modified_at).toLocaleDateString() : '-'}</small></td>
           <td>
             ${isRunnable ? `<button class="btn-sm" style="color:var(--accent-cyan); font-weight:600;" onclick="FileManagerView.runItem('${item.path}', '${item.name}')">⚡ Run</button>` : ''}
-            ${!item.is_dir ? `<button class="btn-sm" onclick="FileManagerView.downloadFile('${item.path}')">Download</button>` : ''}
+            ${item.is_dir ? `<button class="btn-sm" style="color:var(--accent-cyan);" onclick="FileManagerView.downloadZip('${item.path}', '${item.name}')">📦 ZIP</button>` : `<button class="btn-sm" onclick="FileManagerView.downloadFile('${item.path}')">Download</button>`}
             <button class="btn-sm btn-danger" onclick="FileManagerView.deleteItem('${item.path}')">Delete</button>
           </td>
         </tr>
@@ -154,6 +154,14 @@ class FileManagerView {
       window.downloadFile(path, name || path.split(/[\\/]/).pop());
     } else {
       alert(`Initiating download for: ${path}`);
+    }
+  }
+
+  static downloadZip(path, name) {
+    if (typeof window !== 'undefined' && typeof window.downloadDirectoryAsZip === 'function') {
+      window.downloadDirectoryAsZip(path, name || path.split(/[\\/]/).pop());
+    } else {
+      alert(`Initiating ZIP archive for: ${path}`);
     }
   }
 

@@ -1546,7 +1546,8 @@
               <button class="btn btn-secondary btn-icon" onclick="fmRefresh()" title="Refresh directory"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></button>
             </div>
             <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-              <button class="btn btn-primary" onclick="openFmUploadModal()">⬆️ Upload</button>
+              <button class="btn btn-primary" onclick="openFmUploadModal(false)">⬆️ Upload Files</button>
+              <button class="btn btn-secondary" onclick="openFmUploadModal(true)">📁 Upload Folder</button>
               <button class="btn btn-secondary" onclick="openFmNewFolderModal()">+ New Folder</button>
               <button class="btn btn-secondary" onclick="openFmNewFileModal()">+ New File</button>
               <button class="btn btn-secondary" id="btn-show-hidden" onclick="fmToggleHidden()" title="Toggle Hidden Files">👁️ Hidden</button>
@@ -1554,19 +1555,30 @@
             </div>
           </div>
 
+          <!-- BULK SELECTION ACTION BAR -->
+          <div id="fm-bulk-actions" style="display:none; align-items:center; justify-content:space-between; background:rgba(6,182,212,0.12); border:1px solid rgba(6,182,212,0.35); border-radius:6px; padding:0.45rem 0.85rem; margin-bottom:0.75rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem; font-size:0.82rem;">
+              <span style="font-weight:600; color:var(--accent-cyan);"><span id="fm-selected-count">0</span> item(s) selected</span>
+              <button class="btn btn-primary" style="padding:0.25rem 0.65rem; font-size:0.75rem;" onclick="downloadSelectedAsZip()">📦 Download Selected as ZIP</button>
+              <button class="btn btn-danger" style="padding:0.25rem 0.65rem; font-size:0.75rem;" onclick="deleteSelectedFiles()">🗑️ Delete Selected</button>
+            </div>
+            <button class="btn btn-secondary" style="padding:0.2rem 0.55rem; font-size:0.72rem;" onclick="fmClearSelection()">Deselect All</button>
+          </div>
+
           <div class="table-container">
             <table>
               <thead>
                 <tr>
-                  <th style="width:40%;">Name</th>
+                  <th style="width:4%; text-align:center;"><input type="checkbox" id="fm-select-all" title="Select all items" onchange="fmToggleSelectAll(this.checked)"></th>
+                  <th style="width:38%;">Name</th>
                   <th style="width:12%;">Size</th>
                   <th style="width:10%;">Mode</th>
                   <th style="width:18%;">Modified</th>
-                  <th style="width:20%; text-align:right;">Actions</th>
+                  <th style="width:18%; text-align:right;">Actions</th>
                 </tr>
               </thead>
               <tbody id="fm-table-body">
-                <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:3rem;">Select an enrolled machine to browse files.</td></tr>
+                <tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:3rem;">Select an enrolled machine to browse files.</td></tr>
               </tbody>
             </table>
           </div>
@@ -4082,11 +4094,11 @@
     </div>
   </div>
 
-  <!-- MODAL: UPLOAD FILE -->
+  <!-- MODAL: UPLOAD FILE & FOLDER -->
   <div id="modal-fm-upload" class="modal-backdrop">
-    <div class="modal">
+    <div class="modal" style="max-width:640px;">
       <div class="modal-header">
-        <strong style="color:var(--text-primary); font-size:1rem;">Upload File to Remote Machine (Streamed 100 GB+)</strong>
+        <strong style="color:var(--text-primary); font-size:1rem;">Upload Files & Folders to Remote Machine (Streamed 100 GB+)</strong>
         <button class="btn-icon" onclick="closeFmUploadModal()">&times;</button>
       </div>
       <div class="modal-body">
@@ -4094,14 +4106,22 @@
           <label class="form-label">Destination Folder on Host</label>
           <input type="text" id="fm-upload-dest" class="form-control" readonly>
         </div>
-        <div class="form-group">
-          <label class="form-label">Select File to Upload</label>
-          <input type="file" id="fm-upload-file-input" class="form-control" onchange="handleFmFileSelect(this)">
+        <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem; flex-wrap:wrap;">
+          <button class="btn btn-secondary" type="button" onclick="document.getElementById('fm-upload-file-input').click()">📄 Select File(s)</button>
+          <button class="btn btn-secondary" type="button" onclick="document.getElementById('fm-upload-folder-input').click()">📁 Select Entire Folder</button>
+          <input type="file" id="fm-upload-file-input" style="display:none;" multiple onchange="handleFmFilesSelect(this.files)">
+          <input type="file" id="fm-upload-folder-input" style="display:none;" webkitdirectory directory onchange="handleFmFilesSelect(this.files)">
         </div>
-        <div id="fm-upload-preview" style="display:none; font-size:0.8rem; color:var(--text-secondary); margin-top:0.5rem;">
-          Selected: <strong id="fm-upload-preview-name" style="color:var(--accent-cyan);"></strong> (<span id="fm-upload-preview-size"></span>)
+
+        <div id="fm-upload-queue-container" style="display:none; max-height:160px; overflow-y:auto; background:rgba(0,0,0,0.3); border:1px solid var(--border-color); border-radius:6px; padding:0.6rem; margin-bottom:0.75rem; font-size:0.78rem;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:0.4rem; font-weight:600; color:var(--text-secondary);">
+            <span id="fm-upload-queue-summary">Queued Files (0)</span>
+            <span id="fm-upload-queue-totalsize">0 B</span>
+          </div>
+          <div id="fm-upload-queue-list"></div>
         </div>
-        <div id="fm-upload-progress-container" style="display:none; margin-top:1rem; padding:0.75rem; background:rgba(0,0,0,0.25); border:1px solid var(--border-color); border-radius:6px;">
+
+        <div id="fm-upload-progress-container" style="display:none; margin-top:0.75rem; padding:0.75rem; background:rgba(0,0,0,0.25); border:1px solid var(--border-color); border-radius:6px;">
           <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:0.4rem;">
             <span id="fm-upload-status-text" style="color:var(--accent-cyan); font-weight:600;">Streaming chunks...</span>
             <span id="fm-upload-percent-text" style="color:var(--text-primary); font-weight:700;">0%</span>
@@ -4216,6 +4236,11 @@
         <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.8rem; color:var(--text-secondary); margin-bottom:0.75rem;">
           <input type="checkbox" id="fm-run-bg-check">
           <label for="fm-run-bg-check">Run in background (asynchronous non-blocking daemon job)</label>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.82rem; color:#f59e0b; margin-bottom:0.75rem; background:rgba(245,158,11,0.08); padding:0.5rem 0.75rem; border-radius:6px; border:1px solid rgba(245,158,11,0.25);">
+          <input type="checkbox" id="fm-run-elevate-check" style="width:16px; height:16px; cursor:pointer;">
+          <label for="fm-run-elevate-check" style="font-weight:600; cursor:pointer;">🛡️ Run as Administrator / Request UAC Elevation</label>
         </div>
 
         <div id="fm-run-results-box" style="display:none; margin-top:1rem;">
@@ -12913,7 +12938,8 @@
       }
 
       if (items.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:2.5rem;">Empty folder or no matching files.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2.5rem;">Empty folder or no matching files.</td></tr>';
+        fmUpdateSelectionUI();
         return;
       }
 
@@ -12965,6 +12991,7 @@
 
         return `
           <tr>
+            <td style="text-align:center;"><input type="checkbox" class="fm-row-check" data-path="${safePath}" data-name="${safeName}" data-isdir="${it.is_directory}" onchange="fmOnRowCheckChange()"></td>
             <td>${nameHtml}</td>
             <td style="font-family:var(--font-mono); font-size:0.78rem;">${sizeStr}</td>
             <td>${modeStr}</td>
@@ -12973,6 +13000,8 @@
           </tr>
         `;
       }).join('');
+      fmUpdateSelectionUI();
+    }
     }
 
     function getFileIcon(name) {
@@ -13155,38 +13184,81 @@
       fmRefresh();
     }
 
-    function openFmUploadModal() {
+    function openFmUploadModal(isFolder = false) {
       if (!appState.selectedMachineId) return showToast('Select a machine first', 'warning');
       document.getElementById('fm-upload-dest').value = appState.currentFmPath || 'Current Directory';
-      document.getElementById('fm-upload-file-input').value = '';
-      document.getElementById('fm-upload-preview').style.display = 'none';
-      appState.selectedUploadFile = null;
+      const fileInput = document.getElementById('fm-upload-file-input');
+      const folderInput = document.getElementById('fm-upload-folder-input');
+      if (fileInput) fileInput.value = '';
+      if (folderInput) folderInput.value = '';
+      const queueContainer = document.getElementById('fm-upload-queue-container');
+      if (queueContainer) queueContainer.style.display = 'none';
+      const progressContainer = document.getElementById('fm-upload-progress-container');
+      if (progressContainer) progressContainer.style.display = 'none';
+      appState.uploadQueue = [];
       document.getElementById('modal-fm-upload').style.display = 'flex';
+      if (isFolder && folderInput) {
+        folderInput.click();
+      }
     }
 
     function closeFmUploadModal() {
       document.getElementById('modal-fm-upload').style.display = 'none';
-      appState.selectedUploadFile = null;
+      appState.uploadQueue = [];
+    }
+
+    function handleFmFilesSelect(files) {
+      if (!files || !files.length) return;
+      appState.uploadQueue = [];
+      const fileList = Array.from(files);
+      let totalBytes = 0;
+
+      const queueListEl = document.getElementById('fm-upload-queue-list');
+      if (queueListEl) queueListEl.innerHTML = '';
+
+      fileList.forEach(file => {
+        const relPath = file.webkitRelativePath || file.name;
+        totalBytes += file.size;
+        appState.uploadQueue.push({ file, relPath });
+      });
+
+      const summaryEl = document.getElementById('fm-upload-queue-summary');
+      if (summaryEl) summaryEl.innerText = `Queued Files (${fileList.length})`;
+      const totalSizeEl = document.getElementById('fm-upload-queue-totalsize');
+      if (totalSizeEl) totalSizeEl.innerText = formatBytes(totalBytes);
+
+      if (queueListEl) {
+        const previewItems = appState.uploadQueue.slice(0, 20);
+        queueListEl.innerHTML = previewItems.map(item => `
+          <div style="display:flex; justify-content:space-between; padding:0.2rem 0; border-bottom:1px solid rgba(255,255,255,0.05); color:var(--text-secondary);">
+            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:70%; font-family:var(--font-mono); font-size:0.75rem;">${escapeHtml(item.relPath)}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted);">${formatBytes(item.file.size)}</span>
+          </div>
+        `).join('') + (appState.uploadQueue.length > 20 ? `<div style="text-align:center; padding:0.25rem 0; color:var(--text-muted); font-size:0.72rem;">...and ${appState.uploadQueue.length - 20} more files</div>` : '');
+      }
+
+      const queueContainer = document.getElementById('fm-upload-queue-container');
+      if (queueContainer) queueContainer.style.display = 'block';
     }
 
     function handleFmFileSelect(input) {
-      if (input.files && input.files[0]) {
-        const file = input.files[0];
-        appState.selectedUploadFile = file;
-        document.getElementById('fm-upload-preview-name').innerText = file.name;
-        document.getElementById('fm-upload-preview-size').innerText = formatBytes(file.size);
-        document.getElementById('fm-upload-preview').style.display = 'block';
+      if (input && input.files) {
+        handleFmFilesSelect(input.files);
       }
     }
 
     async function submitFmUpload() {
-      if (!appState.selectedUploadFile || !appState.selectedMachineId) {
-        return showToast('Please select a file to upload', 'warning');
+      if (!appState.uploadQueue || !appState.uploadQueue.length) {
+        return showToast('Please select at least one file or folder to upload', 'warning');
       }
-      const file = appState.selectedUploadFile;
+      if (!appState.selectedMachineId) {
+        return showToast('Select a machine first', 'warning');
+      }
+
+      const queue = appState.uploadQueue;
       const btn = document.getElementById('btn-submit-upload');
       btn.disabled = true;
-      btn.innerText = 'Uploading...';
+      btn.innerText = 'Uploading Queue...';
 
       const progressContainer = document.getElementById('fm-upload-progress-container');
       const progressBar = document.getElementById('fm-upload-progress-bar');
@@ -13198,96 +13270,122 @@
 
       if (progressContainer) progressContainer.style.display = 'block';
 
-      let destPath = appState.currentFmPath || '';
-      if (destPath.endsWith('/') || destPath.endsWith('\\')) {
-        destPath += file.name;
-      } else {
-        const sep = destPath.includes('\\') ? '\\' : '/';
-        destPath = destPath ? `${destPath}${sep}${file.name}` : file.name;
-      }
+      const rootDest = appState.currentFmPath || '';
+      const sep = rootDest.includes('\\') ? '\\' : '/';
+
+      const totalQueueBytes = queue.reduce((acc, it) => acc + it.file.size, 0);
+      let cumulativeBytesUploaded = 0;
+      const queueStartTime = performance.now();
 
       try {
         const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB slice per chunk
-        const totalSize = file.size;
-        let offset = 0;
-        const startTime = performance.now();
 
-        while (offset < totalSize) {
-          const sliceEnd = Math.min(offset + CHUNK_SIZE, totalSize);
-          const chunkBlob = file.slice(offset, sliceEnd);
-          const chunkBuffer = await chunkBlob.arrayBuffer();
+        for (let fileIdx = 0; fileIdx < queue.length; fileIdx++) {
+          const item = queue[fileIdx];
+          const file = item.file;
+          const normalizedRel = item.relPath.replace(/\//g, sep);
 
-          // Bounded conversion to base64
-          let binary = '';
-          const bytes = new Uint8Array(chunkBuffer);
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i += 32768) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 32768, len)));
-          }
-          const chunkBase64 = btoa(binary);
-          const isFirst = (offset === 0);
-          const isLast = (sliceEnd >= totalSize);
-
-          const res = await apiRequest('/api/v1/files/upload-chunk', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              machine_id: appState.selectedMachineId,
-              path: destPath,
-              offset,
-              total_size: totalSize,
-              chunk_base64: chunkBase64,
-              is_first: isFirst,
-              is_last: isLast
-            })
-          });
-
-          if (!res.ok) {
-            throw new Error(res.error || 'Chunk upload failed at offset ' + offset);
+          let destFilePath = rootDest;
+          if (destFilePath.endsWith('/') || destFilePath.endsWith('\\')) {
+            destFilePath += normalizedRel;
+          } else {
+            destFilePath = destFilePath ? `${destFilePath}${sep}${normalizedRel}` : normalizedRel;
           }
 
-          offset = sliceEnd;
-          const percent = Math.min(100, Math.round((offset / totalSize) * 100));
-          const elapsedSec = Math.max(0.001, (performance.now() - startTime) / 1000);
-          const bytesPerSec = offset / elapsedSec;
-          const remainingBytes = Math.max(0, totalSize - offset);
-          const etaSec = bytesPerSec > 0 ? Math.round(remainingBytes / bytesPerSec) : 0;
+          // Check if partial upload staging exists to resume
+          let fileOffset = 0;
+          try {
+            const statusRes = await apiRequest(`/api/v1/files/upload-status?machine_id=${encodeURIComponent(appState.selectedMachineId)}&path=${encodeURIComponent(destFilePath)}`, {
+              timeout: 15000
+            });
+            if (statusRes.ok && statusRes.is_partial && typeof statusRes.offset === 'number' && statusRes.offset < file.size) {
+              fileOffset = statusRes.offset;
+              cumulativeBytesUploaded += fileOffset;
+              showToast(`Resuming "${file.name}" from ${formatBytes(fileOffset)}...`, 'info');
+            }
+          } catch (_) {}
 
-          if (progressBar) progressBar.style.width = percent + '%';
-          if (percentText) percentText.innerText = percent + '%';
-          if (statusText) statusText.innerText = isLast ? 'Finalizing...' : 'Streaming chunk...';
-          if (transferredText) transferredText.innerText = `${formatBytes(offset)} / ${formatBytes(totalSize)}`;
-          if (speedText) speedText.innerText = `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
-          if (etaText) etaText.innerText = isLast ? 'Complete' : `ETA: ${Math.floor(etaSec / 60)}m ${etaSec % 60}s`;
+          while (fileOffset < file.size || (file.size === 0 && fileOffset === 0)) {
+            const sliceEnd = Math.min(fileOffset + CHUNK_SIZE, file.size);
+            const chunkBlob = file.slice(fileOffset, sliceEnd);
+            const chunkBuffer = await chunkBlob.arrayBuffer();
+
+            // Convert to base64
+            let binary = '';
+            const bytes = new Uint8Array(chunkBuffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i += 32768) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 32768, len)));
+            }
+            const chunkBase64 = btoa(binary);
+            const isFirst = (fileOffset === 0);
+            const isLast = (sliceEnd >= file.size);
+
+            // Resilient upload with up to 3 retries per chunk
+            let attempt = 0;
+            let success = false;
+            let lastErr = null;
+
+            while (attempt < 3 && !success) {
+              attempt++;
+              try {
+                const res = await apiRequest('/api/v1/files/upload-chunk', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  timeout: 60000,
+                  body: JSON.stringify({
+                    machine_id: appState.selectedMachineId,
+                    path: destFilePath,
+                    offset: fileOffset,
+                    total_size: file.size,
+                    chunk_base64: chunkBase64,
+                    is_first: isFirst,
+                    is_last: isLast
+                  })
+                });
+
+                if (res.ok) {
+                  success = true;
+                } else {
+                  lastErr = new Error(res.error || 'Upload error');
+                  if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+                }
+              } catch (chunkErr) {
+                lastErr = chunkErr;
+                if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+              }
+            }
+
+            if (!success) {
+              throw new Error(`Failed uploading chunk of "${item.relPath}" at ${formatBytes(fileOffset)}: ${lastErr ? lastErr.message : 'timeout'}`);
+            }
+
+            const chunkSizeWritten = sliceEnd - fileOffset;
+            fileOffset = sliceEnd;
+            cumulativeBytesUploaded += chunkSizeWritten;
+
+            // Update UI progress
+            const overallPercent = totalQueueBytes > 0 ? Math.min(100, Math.round((cumulativeBytesUploaded / totalQueueBytes) * 100)) : 100;
+            const elapsedSec = Math.max(0.001, (performance.now() - queueStartTime) / 1000);
+            const bytesPerSec = cumulativeBytesUploaded / elapsedSec;
+            const remainingBytes = Math.max(0, totalQueueBytes - cumulativeBytesUploaded);
+            const etaSec = bytesPerSec > 0 ? Math.round(remainingBytes / bytesPerSec) : 0;
+
+            if (progressBar) progressBar.style.width = overallPercent + '%';
+            if (percentText) percentText.innerText = overallPercent + '%';
+            if (statusText) statusText.innerText = `[${fileIdx + 1}/${queue.length}] ${file.name}`;
+            if (transferredText) transferredText.innerText = `${formatBytes(cumulativeBytesUploaded)} / ${formatBytes(totalQueueBytes)}`;
+            if (speedText) speedText.innerText = `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+            if (etaText) etaText.innerText = `ETA: ${Math.floor(etaSec / 60)}m ${etaSec % 60}s`;
+
+            if (file.size === 0) break;
+          }
         }
 
         btn.disabled = false;
         btn.innerText = '⬆️ Start Upload';
         closeFmUploadModal();
-        showToast(`File "${file.name}" (${formatBytes(totalSize)}) uploaded successfully!`, 'success');
-
-        // Post-upload verification: inspect remote file size & SHA-256
-        (async () => {
-          try {
-            const vRes = await apiRequest('/api/v1/files/inspect', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                machine_id: appState.selectedMachineId,
-                path: destPath
-              })
-            });
-            if (vRes.ok) {
-              const vInfo = vRes.result || vRes.data || vRes;
-              if (vInfo.size_bytes === totalSize) {
-                showToast(`✅ Upload Verified: Size matches (${formatBytes(totalSize)}) | SHA-256: ${(vInfo.sha256 || '').substring(0, 10)}...`, 'success');
-              } else {
-                showToast(`⚠️ Upload Size Discrepancy: Local ${totalSize} bytes vs Remote ${vInfo.size_bytes} bytes`, 'warning');
-              }
-            }
-          } catch (_) {}
-        })();
-
+        showToast(`Successfully uploaded ${queue.length} item(s) (${formatBytes(totalQueueBytes)}) to host!`, 'success');
         fmRefresh();
       } catch (err) {
         btn.disabled = false;
@@ -13422,7 +13520,7 @@
 
     async function downloadFile(path, name) {
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
-      showToast(`Preparing secure download for "${name}"...`, 'info');
+      showToast(`Requesting secure download ticket for "${name}"...`, 'info');
       try {
         const ticketRes = await apiRequest('/api/v1/files/ticket', {
           method: 'POST',
@@ -13434,20 +13532,20 @@
           })
         });
 
-        let url = '';
-        if (ticketRes.ok && ticketRes.ticket) {
-          url = `${base}/api/v1/files/download?ticket=${encodeURIComponent(ticketRes.ticket)}`;
-        } else {
-          url = `${base}/api/v1/files/download?machine_id=${encodeURIComponent(appState.selectedMachineId)}&path=${encodeURIComponent(path)}`;
+        if (!ticketRes.ok || !ticketRes.ticket) {
+          const errMsg = ticketRes.error || ticketRes.message || 'Failed to generate download ticket';
+          showToast('Download ticket error: ' + errMsg, 'error');
+          return;
         }
 
+        const url = `${base}/api/v1/files/download?ticket=${encodeURIComponent(ticketRes.ticket)}`;
         const a = document.createElement('a');
         a.href = url;
         a.download = name;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        showToast(`Streaming "${name}" from remote host...`, 'success');
+        showToast(`Streaming "${name}" securely from remote host...`, 'success');
       } catch (err) {
         showToast('Download error: ' + err.message, 'error');
       }
@@ -13491,6 +13589,9 @@
       document.getElementById('btn-view-msi-log').style.display = 'none';
       document.getElementById('fm-run-elevation-warning').style.display = 'none';
       document.getElementById('fm-run-msi-options').style.display = (ext === 'msi') ? 'block' : 'none';
+
+      const cbElevate = document.getElementById('fm-run-elevate-check');
+      if (cbElevate) cbElevate.checked = false;
 
       const inspectStatus = document.getElementById('fm-run-inspect-status');
       inspectStatus.innerText = 'Inspecting binary...';
@@ -13544,6 +13645,10 @@
             }
           }
 
+          if (info.requires_elevation || (info.elevation_warning && (info.file_type === 'pe' || info.is_msi))) {
+            if (cbElevate) cbElevate.checked = true;
+          }
+
           if (info.elevation_warning) {
             const warnEl = document.getElementById('fm-run-elevation-warning');
             const msgEl = document.getElementById('fm-run-elevation-msg');
@@ -13574,6 +13679,7 @@
       const argsStr = document.getElementById('fm-run-args').value.trim();
       const cwd = document.getElementById('fm-run-cwd').value.trim();
       const isBg = document.getElementById('fm-run-bg-check').checked;
+      const isElevate = document.getElementById('fm-run-elevate-check') ? document.getElementById('fm-run-elevate-check').checked : false;
       const msiMode = document.getElementById('fm-run-msi-mode').value;
       const msiUi = document.getElementById('fm-run-msi-ui').value;
       const msiLog = document.getElementById('fm-run-msi-log-check').checked;
@@ -13581,7 +13687,7 @@
 
       if (!path) return;
       btn.disabled = true;
-      btn.innerText = '⚡ Starting Process...';
+      btn.innerText = isElevate ? '🛡️ Elevating Process...' : '⚡ Starting Process...';
 
       if (currentRunPollingInterval) {
         clearInterval(currentRunPollingInterval);
@@ -13599,8 +13705,8 @@
 
       resultsBox.style.display = 'block';
       badge.className = 'badge badge-info';
-      badge.innerText = 'Launching...';
-      outputEl.innerText = 'Dispatching execution RPC to remote agent...\n';
+      badge.innerText = isElevate ? 'Requesting UAC...' : 'Launching...';
+      outputEl.innerText = isElevate ? 'Dispatching elevated (UAC) execution RPC to remote agent...\n' : 'Dispatching execution RPC to remote agent...\n';
 
       try {
         const res = await apiRequest('/api/v1/files/run', {
@@ -13612,6 +13718,9 @@
             args: argsStr,
             cwd,
             background: isBg,
+            run_as_admin: isElevate,
+            request_uac: isElevate,
+            elevated: isElevate,
             msi_mode: msiMode,
             msi_ui: msiUi,
             msi_logging: msiLog
@@ -13620,10 +13729,46 @@
 
         if (!res.ok) {
           btn.disabled = false;
+          const errMsg = res.error || 'Remote command execution failed';
+          const isElevReq = res.code === 'ELEVATION_REQUIRED' || res.requires_elevation || errMsg.includes('740') || errMsg.includes('requires elevation');
+          const isUacCancel = res.code === 'UAC_CANCELLED' || errMsg.includes('1223') || errMsg.includes('cancelled');
+          const isSession0 = res.code === 'ELEVATION_NOT_AVAILABLE_IN_SERVICE';
+
+          if (isElevReq) {
+            badge.className = 'badge badge-warning';
+            badge.innerText = 'Elevation Required (UAC)';
+            const cb = document.getElementById('fm-run-elevate-check');
+            if (cb) cb.checked = true;
+            btn.innerText = '🛡️ Execute with Administrator Elevation';
+            outputEl.innerHTML = `<div style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.4); border-radius:6px; padding:0.75rem; margin-bottom:0.75rem; color:#fbbf24;">
+              <strong>🛡️ Windows Administrator Elevation Required (WinError 740):</strong>
+              <div style="margin-top:0.3rem; font-size:0.78rem; color:#fde68a;">
+                This executable requires elevated privileges. "Run as Administrator / Request UAC Elevation" has been selected for you.
+              </div>
+              <button class="btn btn-primary" style="margin-top:0.5rem; font-size:0.8rem; padding:0.35rem 0.8rem;" onclick="submitFmRun()">⚡ Retry with Elevation Now</button>
+            </div><pre style="margin:0; font-family:var(--font-mono); font-size:0.75rem; color:#94a3b8;">${escapeHtml(errMsg)}</pre>`;
+            showToast('Application requires Administrator elevation', 'warning');
+            return;
+          } else if (isUacCancel) {
+            badge.className = 'badge badge-warning';
+            badge.innerText = 'UAC Prompt Cancelled';
+            btn.innerText = '⚡ Execute Again';
+            outputEl.innerText = 'Elevation cancelled: The Windows UAC prompt was dismissed on the host machine.';
+            showToast('UAC elevation was cancelled on host', 'warning');
+            return;
+          } else if (isSession0) {
+            badge.className = 'badge badge-danger';
+            badge.innerText = 'Session 0 Service Isolation';
+            btn.innerText = '⚡ Execute Again';
+            outputEl.innerText = 'Host agent is running as a non-interactive Windows service (Session 0) where interactive UAC cannot be displayed. Configure an elevated scheduled task or run in interactive Session 1.';
+            showToast('Cannot show UAC prompt in Session 0 service', 'error');
+            return;
+          }
+
           btn.innerText = '⚡ Execute Again';
           badge.className = 'badge badge-danger';
           badge.innerText = 'Execution Failed';
-          outputEl.innerText = res.error || 'Remote command execution failed';
+          outputEl.innerText = errMsg;
           return;
         }
 
@@ -13635,13 +13780,15 @@
           btnMsiLog.style.display = 'inline-block';
         }
 
+        const elevatedLabel = data.elevated ? ' (ELEVATED)' : '';
+
         if (data.running) {
           badge.className = 'badge badge-warning';
-          badge.innerText = `RUNNING (PID: ${data.pid})`;
+          badge.innerText = `RUNNING (PID: ${data.pid})${elevatedLabel}`;
           btnStop.style.display = 'inline-block';
           btn.disabled = false;
           btn.innerText = '⚡ Execute Again';
-          if (pidEl) pidEl.innerText = `PID: ${data.pid}`;
+          if (pidEl) pidEl.innerText = `PID: ${data.pid}${elevatedLabel}`;
           if (exitEl) exitEl.innerText = 'Exit Code: Pending...';
           if (data.stdout) outputEl.innerText = data.stdout;
 
@@ -13654,13 +13801,13 @@
           const isSuccess = data.exit_code === 0 || data.exit_code === 3010;
           if (data.exit_code === 3010) {
             badge.className = 'badge badge-info';
-            badge.innerText = 'Exit 3010 (Reboot Required)';
+            badge.innerText = `Exit 3010 (Reboot Required)${elevatedLabel}`;
           } else if (isSuccess) {
             badge.className = 'badge badge-success';
-            badge.innerText = 'Exit 0 (Success)';
+            badge.innerText = `Exit 0 (Success)${elevatedLabel}`;
           } else {
             badge.className = 'badge badge-danger';
-            badge.innerText = `Exit ${data.exit_code} (${data.exit_reason || 'Failed'})`;
+            badge.innerText = `Exit ${data.exit_code} (${data.exit_reason || 'Failed'})${elevatedLabel}`;
           }
 
           let out = '';
@@ -13669,12 +13816,21 @@
           if (!out) out = '(Process completed with no output)';
           outputEl.innerText = out;
 
-          if (pidEl) pidEl.innerText = `PID: ${data.pid || 'N/A'}`;
+          if (pidEl) pidEl.innerText = `PID: ${data.pid || 'N/A'}${elevatedLabel}`;
           if (exitEl) exitEl.innerText = `Exit Code: ${data.exit_code !== undefined ? data.exit_code : 'N/A'}`;
           if (durEl) durEl.innerText = `Duration: ${data.duration_ms || 0} ms`;
 
-          showToast(`Process finished with exit code ${data.exit_code}`, isSuccess ? 'success' : 'warning');
+          showToast(`Process finished with exit code ${data.exit_code}${elevatedLabel}`, isSuccess ? 'success' : 'warning');
         }
+      } catch (err) {
+        btn.disabled = false;
+        btn.innerText = '⚡ Execute Again';
+        badge.className = 'badge badge-danger';
+        badge.innerText = 'Error';
+        outputEl.innerText = err.message;
+        showToast('Run error: ' + err.message, 'error');
+      }
+    }
       } catch (err) {
         btn.disabled = false;
         btn.innerText = '⚡ Execute Again';
@@ -13799,7 +13955,8 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             machine_id: appState.selectedMachineId,
-            dir_path: dirPath
+            dir_path: dirPath,
+            path: dirPath
           })
         });
 
@@ -13807,10 +13964,115 @@
           return showToast('Archive creation failed: ' + res.error, 'error');
         }
 
-        showToast(`ZIP created (${res.total_files} files, ${formatBytes(res.archive_size_bytes)}). Starting download...`, 'success');
-        downloadFile(res.zip_path, dirName + '.zip');
+        const resolvedZip = res.zip_path || res.archive_path || (res.result && (res.result.zip_path || res.result.archive_path)) || (res.data && (res.data.zip_path || res.data.archive_path));
+        const totalFiles = res.total_files || (res.result && res.result.total_files) || (res.data && res.data.total_files) || 0;
+        const totalSize = res.archive_size_bytes || res.total_size || (res.result && res.result.total_size) || (res.data && res.data.total_size) || 0;
+
+        showToast(`ZIP created (${totalFiles} files, ${formatBytes(totalSize)}). Starting download...`, 'success');
+        downloadFile(resolvedZip, dirName + '.zip');
       } catch (err) {
         showToast('Archive error: ' + err.message, 'error');
+      }
+    }
+
+    async function downloadSelectedAsZip() {
+      const selected = Array.from(document.querySelectorAll('.fm-row-check:checked')).map(cb => ({
+        path: cb.getAttribute('data-path'),
+        name: cb.getAttribute('data-name'),
+        isDir: cb.getAttribute('data-isdir') === 'true'
+      }));
+      if (!selected.length) return showToast('Please select at least one file or folder to download', 'warning');
+
+      const paths = selected.map(s => s.path);
+      const zipName = selected.length === 1 ? (selected[0].name + '.zip') : (`selection_${selected.length}_items.zip`);
+      showToast(`Creating ZIP archive of ${selected.length} selected items on host...`, 'info');
+      try {
+        const res = await apiRequest('/api/v1/files/archive/zip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            machine_id: appState.selectedMachineId,
+            paths: paths
+          })
+        });
+
+        if (!res.ok) {
+          return showToast('Archive creation failed: ' + res.error, 'error');
+        }
+
+        const resolvedZip = res.zip_path || res.archive_path || (res.result && (res.result.zip_path || res.result.archive_path)) || (res.data && (res.data.zip_path || res.data.archive_path));
+        const totalFiles = res.total_files || (res.result && res.result.total_files) || (res.data && res.data.total_files) || selected.length;
+        const totalSize = res.archive_size_bytes || res.total_size || (res.result && res.result.total_size) || (res.data && res.data.total_size) || 0;
+
+        showToast(`ZIP created (${totalFiles} files, ${formatBytes(totalSize)}). Starting download...`, 'success');
+        downloadFile(resolvedZip, zipName);
+      } catch (err) {
+        showToast('Archive creation error: ' + err.message, 'error');
+      }
+    }
+
+    async function deleteSelectedFiles() {
+      const selected = Array.from(document.querySelectorAll('.fm-row-check:checked')).map(cb => ({
+        path: cb.getAttribute('data-path'),
+        name: cb.getAttribute('data-name'),
+        isDir: cb.getAttribute('data-isdir') === 'true'
+      }));
+      if (!selected.length) return showToast('No items selected', 'warning');
+      if (!confirm(`Are you sure you want to PERMANENTLY delete ${selected.length} selected items on host?`)) return;
+
+      showToast(`Deleting ${selected.length} items...`, 'info');
+      let deleted = 0;
+      for (const item of selected) {
+        try {
+          const res = await apiRequest('/api/v1/files/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              machine_id: appState.selectedMachineId,
+              path: item.path,
+              recursive: item.isDir
+            })
+          });
+          if (res.ok) deleted++;
+        } catch (_) {}
+      }
+      showToast(`Deleted ${deleted} of ${selected.length} items`, 'success');
+      fmClearSelection();
+      fmRefresh();
+    }
+
+    function fmToggleSelectAll(checked) {
+      const cbs = document.querySelectorAll('.fm-row-check');
+      cbs.forEach(cb => cb.checked = checked);
+      fmUpdateSelectionUI();
+    }
+
+    function fmOnRowCheckChange() {
+      fmUpdateSelectionUI();
+    }
+
+    function fmClearSelection() {
+      const selectAll = document.getElementById('fm-select-all');
+      if (selectAll) selectAll.checked = false;
+      const cbs = document.querySelectorAll('.fm-row-check');
+      cbs.forEach(cb => cb.checked = false);
+      fmUpdateSelectionUI();
+    }
+
+    function fmUpdateSelectionUI() {
+      const cbs = document.querySelectorAll('.fm-row-check');
+      const checkedCbs = document.querySelectorAll('.fm-row-check:checked');
+      const count = checkedCbs.length;
+      const countEl = document.getElementById('fm-selected-count');
+      if (countEl) countEl.innerText = count;
+      const bulkBar = document.getElementById('fm-bulk-actions');
+      if (bulkBar) {
+        bulkBar.style.display = count > 0 ? 'flex' : 'none';
+      }
+      const selectAll = document.getElementById('fm-select-all');
+      if (selectAll) {
+        selectAll.checked = cbs.length > 0 && checkedCbs.length === cbs.length;
+        selectAll.indeterminate = count > 0 && count < cbs.length;
       }
     }
 
@@ -18406,7 +18668,7 @@ class FileManagerView {
           <td><small>${item.modified_at ? new Date(item.modified_at).toLocaleDateString() : '-'}</small></td>
           <td>
             ${isRunnable ? `<button class="btn-sm" style="color:var(--accent-cyan); font-weight:600;" onclick="FileManagerView.runItem('${item.path}', '${item.name}')">⚡ Run</button>` : ''}
-            ${!item.is_dir ? `<button class="btn-sm" onclick="FileManagerView.downloadFile('${item.path}')">Download</button>` : ''}
+            ${item.is_dir ? `<button class="btn-sm" style="color:var(--accent-cyan);" onclick="FileManagerView.downloadZip('${item.path}', '${item.name}')">📦 ZIP</button>` : `<button class="btn-sm" onclick="FileManagerView.downloadFile('${item.path}')">Download</button>`}
             <button class="btn-sm btn-danger" onclick="FileManagerView.deleteItem('${item.path}')">Delete</button>
           </td>
         </tr>
@@ -18454,6 +18716,14 @@ class FileManagerView {
       window.downloadFile(path, name || path.split(/[\\/]/).pop());
     } else {
       alert(`Initiating download for: ${path}`);
+    }
+  }
+
+  static downloadZip(path, name) {
+    if (typeof window !== 'undefined' && typeof window.downloadDirectoryAsZip === 'function') {
+      window.downloadDirectoryAsZip(path, name || path.split(/[\\/]/).pop());
+    } else {
+      alert(`Initiating ZIP archive for: ${path}`);
     }
   }
 
