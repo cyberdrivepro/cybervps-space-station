@@ -1069,6 +1069,15 @@ function findMachine(idOrHost) {
     if (m.hostname && String(m.hostname).toLowerCase().trim() === targetLower) return m;
     if (m.friendly_name && String(m.friendly_name).toLowerCase().trim() === targetLower) return m;
   }
+  const normTarget = String(idOrHost).toLowerCase().replace(/^cvps_/, '').replace(/[^a-z0-9]/g, '');
+  if (normTarget) {
+    for (const [id, m] of db.machines.entries()) {
+      const normId = String(id).toLowerCase().replace(/^cvps_/, '').replace(/[^a-z0-9]/g, '');
+      const normHost = m.hostname ? String(m.hostname).toLowerCase().replace(/^cvps_/, '').replace(/[^a-z0-9]/g, '') : '';
+      if (normId === normTarget || normHost === normTarget) return m;
+      if ((normId.length >= 8 && normTarget.length >= 8) && (normId.startsWith(normTarget) || normTarget.startsWith(normId))) return m;
+    }
+  }
   return null;
 }
 
@@ -1098,6 +1107,17 @@ function getAgentSocket(machineId) {
         if (m.hostname && agentM.hostname && m.hostname.toLowerCase().trim() === agentM.hostname.toLowerCase().trim()) return ws;
       }
       if (String(id).toLowerCase().trim() === String(m.id).toLowerCase().trim()) return ws;
+    }
+  }
+
+  const normTarget = String(machineId).toLowerCase().replace(/^cvps_/, '').replace(/[^a-z0-9]/g, '');
+  if (normTarget) {
+    for (const [id, ws] of db.connectedAgents.entries()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const normId = String(id).toLowerCase().replace(/^cvps_/, '').replace(/[^a-z0-9]/g, '');
+      if (normId === normTarget || (normId.length >= 8 && normTarget.length >= 8 && (normId.startsWith(normTarget) || normTarget.startsWith(normId)))) {
+        return ws;
+      }
     }
   }
 
@@ -8528,59 +8548,20 @@ wssTerminal.on('connection', (ws, request) => {
     });
   };
 
-  const directSocket = getAgentSocket(resolvedMachineId);
-  if (directSocket) {
+  const machineStatus = targetMachine ? getMachineStatus(targetMachine) : 'offline';
+  const isPotentiallyAlive = machineStatus === 'online' || machineStatus === 'reconnecting' || Boolean(getAgentSocket(resolvedMachineId));
+
+  if (isPotentiallyAlive) {
     startTerminalSessionWithAgent();
   } else {
-    const machineStatus = targetMachine ? getMachineStatus(targetMachine) : 'offline';
-    const isPotentiallyAlive = machineStatus === 'online' || machineStatus === 'reconnecting';
-
-    if (isPotentiallyAlive) {
-      ws.send(JSON.stringify({
-        type: 'status',
-        status: 'connecting',
-        session_id: sessionId,
-        message: `Establishing direct relay to host '${targetMachine ? (targetMachine.hostname || resolvedMachineId) : resolvedMachineId}'...`
-      }));
-
-      let elapsed = 0;
-      let sessionStarted = false;
-      const pollTimer = setInterval(() => {
-        elapsed += 250;
-        const sock = getAgentSocket(resolvedMachineId);
-        if (sock && !sessionStarted) {
-          sessionStarted = true;
-          clearInterval(pollTimer);
-          if (ws.readyState === WebSocket.OPEN) {
-            startTerminalSessionWithAgent();
-          }
-        } else if (elapsed >= 6000) {
-          clearInterval(pollTimer);
-          if (!sessionStarted && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'status',
-              status: 'error',
-              code: 'AGENT_OFFLINE',
-              error: `Host machine '${resolvedMachineId}' is offline or agent is disconnected.`
-            }));
-            ws.close(4005, 'Agent Offline');
-          }
-        }
-      }, 250);
-
-      ws.on('close', () => {
-        clearInterval(pollTimer);
-      });
-    } else {
-      ws.send(JSON.stringify({
-        type: 'status',
-        status: 'error',
-        code: 'AGENT_OFFLINE',
-        error: `Host machine '${resolvedMachineId}' is offline or agent is disconnected.`
-      }));
-      ws.close(4005, 'Agent Offline');
-      return;
-    }
+    ws.send(JSON.stringify({
+      type: 'status',
+      status: 'error',
+      code: 'AGENT_OFFLINE',
+      error: `Host machine '${resolvedMachineId}' is offline or agent is disconnected.`
+    }));
+    ws.close(4005, 'Agent Offline');
+    return;
   }
 
   ws.on('message', (data) => {
@@ -8592,7 +8573,7 @@ wssTerminal.on('connection', (ws, request) => {
         if (msg && (msg.type === 'input' || (!msg.type && typeof msg.data === 'string'))) {
           inputData = msg.data;
         } else if (msg && msg.type === 'resize') {
-          sendServerCommand(machineId, {
+          sendServerCommand(resolvedMachineId, {
             type: 'TerminalResize',
             payload: { session_id: sessionId, cols: msg.cols || 80, rows: msg.rows || 24 }
           });
@@ -8605,7 +8586,7 @@ wssTerminal.on('connection', (ws, request) => {
       }
 
       if (inputData !== null && inputData !== undefined) {
-        sendServerCommand(machineId, {
+        sendServerCommand(resolvedMachineId, {
           type: 'TerminalInput',
           payload: { session_id: sessionId, data: inputData }
         });

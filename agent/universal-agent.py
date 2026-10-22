@@ -755,6 +755,8 @@ class RelayWebSocket:
                         if p_ack.get("success"):
                             self.authenticated = True
                             self.agent.ws_connected = True
+                            self.agent._heal_attempts = 0
+                            self.agent._last_heal_time = 0
                             self._backoff = 2.0
                             new_node_tok = p_ack.get("node_token")
                             if new_node_tok and new_node_tok != self.agent.token:
@@ -1825,10 +1827,17 @@ class CyberVPSAgent:
             import hmac
             import hashlib
             heal_attempts = getattr(self, "_heal_attempts", 0)
+            last_heal_time = getattr(self, "_last_heal_time", 0)
+            now = time.time()
+            if now - last_heal_time > 60.0:
+                heal_attempts = 0
+                self._heal_attempts = 0
+
             if heal_attempts >= 5:
-                print(f"[!] Token self-heal rate-limit reached ({heal_attempts} attempts). Manual authentication required.")
+                print(f"[!] Token self-heal rate-limit reached ({heal_attempts} attempts). Retrying in 60s...")
                 return False
             self._heal_attempts = heal_attempts + 1
+            self._last_heal_time = now
 
             pairing_secret = (
                 os.environ.get("CVPS_PAIRING_KEY")
@@ -1849,6 +1858,8 @@ class CyberVPSAgent:
                 healed = True
             elif self.token != pairing_secret:
                 self.persist_token(pairing_secret)
+                healed = True
+            else:
                 healed = True
 
             if healed:

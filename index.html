@@ -6691,16 +6691,26 @@
             } else if (parsed && (parsed.code === 'AGENT_OFFLINE' || (parsed.error && parsed.error.includes('offline or agent is disconnected')))) {
               appState.isTerminalReady = false;
               setQuickChipsEnabled(false);
-              badge.className = 'badge badge-warning';
-              badge.innerText = 'Recovering Relay...';
-              const retryNotice = `\r\n\x1b[33m[*] Host agent relay link is recovering. Auto-reconnecting terminal in 2s...\x1b[0m\r\n`;
-              if (appState.termInstance) appState.termInstance.writeln(retryNotice);
-              else appendTerminalBanner(retryNotice);
-              setTimeout(() => {
-                if (!appState.isTerminalReady && appState.currentTerminalMachineId === machineId) {
-                  initTerminalSession(false);
-                }
-              }, 2000);
+              appState.terminalReconnectCount = (appState.terminalReconnectCount || 0) + 1;
+              if (appState.terminalReconnectCount <= 5) {
+                badge.className = 'badge badge-warning';
+                badge.innerText = 'Recovering Relay...';
+                const retryDelay = Math.min(appState.terminalReconnectCount * 1500, 5000);
+                const retryNotice = `\r\n\x1b[33m[*] Host agent relay link is recovering. Auto-reconnecting terminal in ${Math.round(retryDelay / 1000)}s...\x1b[0m\r\n`;
+                if (appState.termInstance) appState.termInstance.writeln(retryNotice);
+                else appendTerminalBanner(retryNotice);
+                setTimeout(() => {
+                  if (!appState.isTerminalReady && appState.currentTerminalMachineId === machineId) {
+                    initTerminalSession(false);
+                  }
+                }, retryDelay);
+              } else {
+                badge.className = 'badge badge-danger';
+                badge.innerText = 'Agent Offline';
+                const offlineNotice = `\r\n\x1b[31m[!] Host agent is currently unreachable. Please verify the CyberVPS agent is running on ${hostLabel}.\x1b[0m\r\n`;
+                if (appState.termInstance) appState.termInstance.writeln(offlineNotice);
+                else appendTerminalBanner(offlineNotice);
+              }
               return;
             } else if (parsed && parsed.error) {
               appState.isTerminalReady = false;
