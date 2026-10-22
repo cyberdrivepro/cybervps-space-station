@@ -67,6 +67,15 @@ class VirtualIpPool {
         return ip;
       }
     }
+    // Auto-reclaim inactive / offline machines if pool is full
+    for (const [mId, ip] of this.allocated.entries()) {
+      const m = (typeof db !== 'undefined' && db.machines) ? db.machines.get(mId) : null;
+      const isOnline = m && typeof getMachineStatus === 'function' && getMachineStatus(m) === 'online';
+      if (!isOnline && mId !== machineId) {
+        this.release(mId);
+        return this.allocate(machineId);
+      }
+    }
     throw new Error('Virtual IP address pool exhausted (253 peers limit)');
   }
   release(machineId) {
@@ -1237,8 +1246,9 @@ function sendHttpError(res, err) {
 
 function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
-    const machine = db.machines.get(machineId);
+    const machine = findMachine(machineId) || db.machines.get(machineId);
     if (!machine) return reject(new Error(`Machine '${machineId}' not found in fleet`));
+    const targetId = machine.id;
     const status = getMachineStatus(machine);
     if (status === 'offline') return reject(new Error(`Machine '${machineId}' is offline`));
 
@@ -1248,9 +1258,9 @@ function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 15000) {
       reject(new Error(`Host request '${type}' timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    db.pendingRequests.set(requestId, { resolve, reject, timer, machineId, type, createdAt: Date.now() });
+    db.pendingRequests.set(requestId, { resolve, reject, timer, machineId: targetId, type, createdAt: Date.now() });
 
-    sendServerCommand(machineId, {
+    sendServerCommand(targetId, {
       type,
       payload: { ...payload, request_id: requestId }
     });
@@ -4617,10 +4627,12 @@ const server = http.createServer(async (req, res) => {
       try {
         const { machine_id, path: filePath, filename } = JSON.parse(body || '{}');
         if (!machine_id || !filePath) throw new Error('machine_id and path required');
+        const machine = findMachine(machine_id) || db.machines.get(machine_id);
+        const resolvedMachineId = machine ? machine.id : machine_id;
         const ticket = 'cvps_dl_' + crypto.randomBytes(16).toString('hex');
         db.downloadTickets.set(ticket, {
           ticket,
-          machine_id,
+          machine_id: resolvedMachineId,
           path: filePath,
           filename: filename || filePath.split(/[\\/]/).pop() || 'download',
           created_at: Date.now(),
@@ -4739,9 +4751,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (machineId && machineId !== ticketData.machine_id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Ticket machine mismatch', code: 'TICKET_MACHINE_MISMATCH', authenticated: false }));
-        return;
+        const m1 = findMachine(machineId);
+        const m2 = findMachine(ticketData.machine_id);
+        const id1 = m1 ? m1.id : machineId;
+        const id2 = m2 ? m2.id : ticketData.machine_id;
+        if (id1 !== id2) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Ticket machine mismatch', code: 'TICKET_MACHINE_MISMATCH', authenticated: false }));
+          return;
+        }
       }
       if (filePath && filePath !== ticketData.path) {
         res.writeHead(403, { 'Content-Type': 'application/json' });

@@ -3224,6 +3224,10 @@ class CyberVPSAgent:
                 file_type = "shell"
                 subsystem_name = "POSIX Shell Script"
                 suggested_runner = "/bin/bash"
+            elif ext == ".lnk":
+                file_type = "shortcut"
+                subsystem_name = "Windows Shortcut (.lnk)"
+                suggested_runner = 'cmd.exe /c start ""'
 
             res = {
                 "path": target_path,
@@ -3454,7 +3458,12 @@ class CyberVPSAgent:
             )
         except OSError as e:
             if getattr(e, 'winerror', None) == 740 or (sys_os == "Windows" and "[WinError 740]" in str(e)):
-                raise ElevationRequiredError("The requested executable requires administrator privileges (WinError 740). Please check 'Run as Administrator / Request UAC' to authorize elevation.")
+                try:
+                    return self._start_elevated_windows_process(cmd, working_dir, job_id, is_msi=is_msi, msi_log_path=msi_log_path)
+                except Exception as elev_err:
+                    if isinstance(elev_err, (ElevationRequiredError, UacCancelledError, ElevationNotAvailableError)):
+                        raise
+                    raise ElevationRequiredError(f"The requested executable requires administrator privileges (WinError 740). Elevation attempt: {elev_err}")
             raise
 
         stdout_lines = collections.deque(maxlen=1000)
@@ -3603,6 +3612,11 @@ class CyberVPSAgent:
                     cmd = [sys.executable, target_path] + list(args)
                 elif ext == ".exe":
                     cmd = [target_path] + list(args)
+                elif ext == ".lnk":
+                    if run_as_admin:
+                        cmd = [target_path] + list(args)
+                    else:
+                        cmd = ["cmd.exe", "/c", "start", '""', target_path] + list(args)
                 else:
                     if interpreter == "python":
                         cmd = [sys.executable, target_path] + list(args)

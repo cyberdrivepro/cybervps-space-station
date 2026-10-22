@@ -5575,8 +5575,10 @@
         if (!res.ok) {
           let errDetail = res.statusText;
           let errCode = 'HTTP_' + res.status;
+          let errJsonData = null;
           try {
             const errJson = await res.json();
+            errJsonData = errJson;
             if (errJson && errJson.error) errDetail = errJson.error;
             if (errJson && errJson.code) errCode = errJson.code;
           } catch (_) {}
@@ -5598,7 +5600,14 @@
             return apiRequest(endpoint, { ...options, headers: retryHeaders, _retriedWithDefaultKey: true });
           }
 
-          return { ok: false, status: res.status, code: errCode, error: `HTTP ${res.status}: ${errDetail}` };
+          return {
+            ok: false,
+            status: res.status,
+            code: errCode,
+            error: `HTTP ${res.status}: ${errDetail}`,
+            requires_elevation: Boolean(errJsonData && errJsonData.requires_elevation),
+            data: errJsonData
+          };
         }
         const data = await res.json();
         return { ok: true, status: res.status, data, duration };
@@ -12987,12 +12996,12 @@
         let actionsHtml = '';
         const ext = (it.name.split('.').pop() || '').toLowerCase();
         const isArchive = ['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz'].includes(ext);
-        const isRunnable = ['exe', 'bat', 'cmd', 'ps1', 'msi', 'py', 'sh', 'js'].includes(ext);
+        const isRunnable = ['exe', 'bat', 'cmd', 'ps1', 'msi', 'py', 'sh', 'js', 'lnk'].includes(ext);
 
         if (it.is_directory) {
           actionsHtml = `
             <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem;" data-action="open" data-path="${attrPath}">Open</button>
-            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="zip" data-path="${attrPath}" data-name="${attrName}">📦 ZIP</button>
+            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="zip" data-path="${attrPath}" data-name="${attrName}">📦 Download ZIP</button>
             <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="rename" data-path="${attrPath}" data-name="${attrName}">Rename</button>
             <button class="btn btn-danger fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="delete" data-path="${attrPath}" data-name="${attrName}" data-isdir="true">Delete</button>
           `;
@@ -13039,7 +13048,7 @@
           const size = parseInt(btn.getAttribute('data-size') || '0', 10);
 
           if (action === 'open') initFileManager(appState.selectedMachineId, p);
-          else if (action === 'zip') downloadDirectoryAsZip(p, n);
+          else if (action === 'zip' || (action === 'download' && isDir)) downloadDirectoryAsZip(p, n);
           else if (action === 'rename') promptRenameFile(p, n);
           else if (action === 'delete') promptDeleteFile(p, n, isDir);
           else if (action === 'run') openFmRunModal(p, n);
@@ -13578,19 +13587,24 @@
           })
         });
 
-        if (!ticketRes.ok || !ticketRes.ticket) {
-          const errMsg = ticketRes.error || ticketRes.message || 'Failed to generate download ticket';
+        const ticket = (ticketRes && ticketRes.data && ticketRes.data.ticket) || (ticketRes && ticketRes.ticket);
+        if (!ticketRes.ok || !ticket) {
+          const errMsg = ticketRes.error || (ticketRes.data && ticketRes.data.error) || ticketRes.message || 'Failed to generate download ticket';
           showToast('Download ticket error: ' + errMsg, 'error');
           return;
         }
 
-        const url = `${base}/api/v1/files/download?ticket=${encodeURIComponent(ticketRes.ticket)}`;
+        const url = `${base}/api/v1/files/download?ticket=${encodeURIComponent(ticket)}`;
         const a = document.createElement('a');
         a.href = url;
         a.download = name;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
         document.body.appendChild(a);
         a.click();
-        document.body.removeChild(a);
+        setTimeout(() => {
+          try { a.remove(); } catch (_) {}
+        }, 2000);
         showToast(`Streaming "${name}" securely from remote host...`, 'success');
       } catch (err) {
         showToast('Download error: ' + err.message, 'error');
@@ -13611,6 +13625,7 @@
       else if (ext === 'sh' || ext === 'bash') runner = 'POSIX Shell (/bin/bash)';
       else if (ext === 'js' || ext === 'mjs') runner = 'Node.js Runtime';
       else if (ext === 'msi') runner = 'Windows Installer (msiexec.exe /i)';
+      else if (ext === 'lnk') runner = 'Windows Shortcut (Shell Execute)';
 
       let cwd = path.replace(/[\\/]+[^\\/]+$/, '');
       if (!cwd) cwd = path.includes('\\') ? 'C:\\' : '/';
@@ -13662,7 +13677,7 @@
         });
 
         if (inspectRes.ok) {
-          const info = inspectRes.result || inspectRes.data || inspectRes;
+          const info = (inspectRes.data && inspectRes.data.result) || inspectRes.data || inspectRes.result || inspectRes;
           inspectStatus.innerText = 'Verified';
           inspectStatus.style.background = 'rgba(34,197,94,0.15)';
           inspectStatus.style.color = '#4ade80';
@@ -13775,10 +13790,10 @@
 
         if (!res.ok) {
           btn.disabled = false;
-          const errMsg = res.error || 'Remote command execution failed';
-          const isElevReq = res.code === 'ELEVATION_REQUIRED' || res.requires_elevation || errMsg.includes('740') || errMsg.includes('requires elevation');
-          const isUacCancel = res.code === 'UAC_CANCELLED' || errMsg.includes('1223') || errMsg.includes('cancelled');
-          const isSession0 = res.code === 'ELEVATION_NOT_AVAILABLE_IN_SERVICE';
+          const errMsg = res.error || (res.data && res.data.error) || 'Remote command execution failed';
+          const isElevReq = res.code === 'ELEVATION_REQUIRED' || res.requires_elevation || (res.data && res.data.requires_elevation) || errMsg.includes('740') || errMsg.includes('requires elevation');
+          const isUacCancel = res.code === 'UAC_CANCELLED' || (res.data && res.data.code === 'UAC_CANCELLED') || errMsg.includes('1223') || errMsg.includes('cancelled');
+          const isSession0 = res.code === 'ELEVATION_NOT_AVAILABLE_IN_SERVICE' || (res.data && res.data.code === 'ELEVATION_NOT_AVAILABLE_IN_SERVICE');
 
           if (isElevReq) {
             badge.className = 'badge badge-warning';
@@ -13818,7 +13833,7 @@
           return;
         }
 
-        const data = res.result || res.data || res;
+        const data = (res.data && res.data.result) || res.data || res.result || res;
         currentRunJobId = data.job_id;
         currentRunMsiLogPath = data.msi_log_path;
 
@@ -14001,9 +14016,10 @@
           return showToast('Archive creation failed: ' + res.error, 'error');
         }
 
-        const resolvedZip = res.zip_path || res.archive_path || (res.result && (res.result.zip_path || res.result.archive_path)) || (res.data && (res.data.zip_path || res.data.archive_path));
-        const totalFiles = res.total_files || (res.result && res.result.total_files) || (res.data && res.data.total_files) || 0;
-        const totalSize = res.archive_size_bytes || res.total_size || (res.result && res.result.total_size) || (res.data && res.data.total_size) || 0;
+        const data = (res.data && res.data.result) || res.data || res.result || res;
+        const resolvedZip = data.zip_path || data.archive_path || res.zip_path || res.archive_path;
+        const totalFiles = data.total_files || res.total_files || 0;
+        const totalSize = data.archive_size_bytes || data.total_size || res.archive_size_bytes || res.total_size || 0;
 
         showToast(`ZIP created (${totalFiles} files, ${formatBytes(totalSize)}). Starting download...`, 'success');
         downloadFile(resolvedZip, dirName + '.zip');
@@ -14037,9 +14053,10 @@
           return showToast('Archive creation failed: ' + res.error, 'error');
         }
 
-        const resolvedZip = res.zip_path || res.archive_path || (res.result && (res.result.zip_path || res.result.archive_path)) || (res.data && (res.data.zip_path || res.data.archive_path));
-        const totalFiles = res.total_files || (res.result && res.result.total_files) || (res.data && res.data.total_files) || selected.length;
-        const totalSize = res.archive_size_bytes || res.total_size || (res.result && res.result.total_size) || (res.data && res.data.total_size) || 0;
+        const data = (res.data && res.data.result) || res.data || res.result || res;
+        const resolvedZip = data.zip_path || data.archive_path || res.zip_path || res.archive_path;
+        const totalFiles = data.total_files || res.total_files || selected.length;
+        const totalSize = data.archive_size_bytes || data.total_size || res.archive_size_bytes || res.total_size || 0;
 
         showToast(`ZIP created (${totalFiles} files, ${formatBytes(totalSize)}). Starting download...`, 'success');
         downloadFile(resolvedZip, zipName);
@@ -18771,7 +18788,7 @@ class FileManagerView {
 
       tableBody.innerHTML = entries.map(item => {
         const ext = (item.name.split('.').pop() || '').toLowerCase();
-        const isRunnable = !item.is_dir && ['exe', 'msi', 'bat', 'cmd', 'ps1', 'py', 'sh', 'bin'].includes(ext);
+        const isRunnable = !item.is_dir && ['exe', 'msi', 'bat', 'cmd', 'ps1', 'py', 'sh', 'bin', 'lnk'].includes(ext);
         return `
         <tr>
           <td>${item.is_dir ? '📁' : '📄'}</td>
