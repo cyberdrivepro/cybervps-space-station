@@ -3625,10 +3625,11 @@ class CyberVPSAgent:
                 elif ext == ".exe":
                     cmd = [target_path] + list(args)
                 elif ext == ".lnk":
+                    args_param = f" -ArgumentList '{' '.join(args)}'" if args else ""
                     if run_as_admin:
-                        cmd = [target_path] + list(args)
+                        cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", f"Start-Process -FilePath '{target_path}' -Verb RunAs{args_param}"]
                     else:
-                        cmd = ["cmd.exe", "/c", "start", '""', target_path] + list(args)
+                        cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", f"Start-Process -FilePath '{target_path}'{args_param}"]
                 else:
                     if interpreter == "python":
                         cmd = [sys.executable, target_path] + list(args)

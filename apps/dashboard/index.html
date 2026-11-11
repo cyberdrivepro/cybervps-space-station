@@ -1573,7 +1573,15 @@
             <button class="btn btn-secondary" style="padding:0.2rem 0.55rem; font-size:0.72rem;" onclick="fmClearSelection()">Deselect All</button>
           </div>
 
-          <div class="table-container">
+          <div class="table-container" id="fm-table-container" style="position:relative;">
+            <!-- Drag and drop overlay for File Manager -->
+            <div id="fm-drag-overlay" style="display:none; position:absolute; inset:0; background:rgba(8,11,17,0.92); border:2px dashed var(--accent-cyan); border-radius:6px; z-index:50; flex-direction:column; align-items:center; justify-content:center; gap:0.6rem; pointer-events:none; backdrop-filter:blur(4px);">
+              <div style="width:48px; height:48px; border-radius:50%; background:rgba(0,240,255,0.12); display:flex; align-items:center; justify-content:center; border:1px solid rgba(0,240,255,0.3);">
+                <svg viewBox="0 0 24 24" style="width:24px; height:24px; stroke:var(--accent-cyan); fill:none; stroke-width:2;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </div>
+              <div style="font-size:1rem; font-weight:700; color:#fff;">Drop Files or Folder to Upload into Current Directory</div>
+              <div style="font-size:0.76rem; color:var(--text-muted);">Files will be queued for upload into active host path</div>
+            </div>
             <table>
               <thead>
                 <tr>
@@ -13478,7 +13486,48 @@
       initFileManager(machineId, target);
     }
 
+    let _fmDragListenersAttached = false;
+    function setupFmDragAndDrop() {
+      if (_fmDragListenersAttached) return;
+      const container = document.getElementById('fm-table-container');
+      const overlay = document.getElementById('fm-drag-overlay');
+      if (!container || !overlay) return;
+
+      _fmDragListenersAttached = true;
+      let dragCounter = 0;
+
+      container.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        overlay.style.display = 'flex';
+      });
+
+      container.addEventListener('dragover', (e) => {
+        e.preventDefault();
+      });
+
+      container.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          overlay.style.display = 'none';
+        }
+      });
+
+      container.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        overlay.style.display = 'none';
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          openFmUploadModal(false);
+          handleFmFilesSelect(e.dataTransfer.files);
+        }
+      });
+    }
+
     async function initFileManager(machineId, targetPath = '') {
+      setupFmDragAndDrop();
       if (!machineId) {
         machineId = appState.selectedMachineId || (appState.machines[0] ? appState.machines[0].id : null);
       }
@@ -13613,8 +13662,9 @@
 
         let actionsHtml = '';
         const ext = (it.name.split('.').pop() || '').toLowerCase();
-        const isArchive = ['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz'].includes(ext);
+        const isArchive = ['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar'].includes(ext);
         const isRunnable = ['exe', 'bat', 'cmd', 'ps1', 'msi', 'py', 'sh', 'js', 'lnk'].includes(ext);
+        const isTextEditable = !['exe', 'dll', 'sys', 'msi', 'bin', 'iso', 'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar', 'lnk', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'mp4', 'mkv', 'avi', 'mp3', 'wav', 'pdf'].includes(ext);
 
         if (it.is_directory) {
           actionsHtml = `
@@ -13627,7 +13677,7 @@
           actionsHtml = `
             ${isRunnable ? `<button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; color:var(--accent-cyan); font-weight:600;" data-action="run" data-path="${attrPath}" data-name="${attrName}">⚡ Run</button>` : ''}
             ${isArchive ? `<button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; color:#f59e0b;" data-action="extract" data-path="${attrPath}" data-name="${attrName}">📂 Extract</button>` : ''}
-            <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem;" data-action="edit" data-path="${attrPath}" data-name="${attrName}" data-size="${it.size || 0}">Edit</button>
+            ${isTextEditable ? `<button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem;" data-action="edit" data-path="${attrPath}" data-name="${attrName}" data-size="${it.size || 0}">Edit</button>` : ''}
             <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.55rem; font-size:0.72rem; margin-left:3px;" data-action="download" data-path="${attrPath}" data-name="${attrName}">Download</button>
             <button class="btn btn-secondary fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="rename" data-path="${attrPath}" data-name="${attrName}">Rename</button>
             <button class="btn btn-danger fm-act-btn" style="padding:0.25rem 0.5rem; font-size:0.72rem; margin-left:3px;" data-action="delete" data-path="${attrPath}" data-name="${attrName}" data-isdir="false">Delete</button>
@@ -14192,16 +14242,23 @@
     }
 
     async function downloadFile(path, name) {
+      const machineId = document.getElementById('fm-machine-select')?.value ||
+                        document.getElementById('files-machine-select')?.value ||
+                        appState.selectedMachineId ||
+                        (appState.machines && appState.machines[0]?.id);
+      if (!machineId) return showToast('Please select a target host machine first', 'warning');
+      const resolvedName = name || (path ? path.split(/[\\/]/).pop() : 'download');
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
-      showToast(`Requesting secure download ticket for "${name}"...`, 'info');
+
+      showToast(`Requesting secure download ticket for "${resolvedName}"...`, 'info');
       try {
         const ticketRes = await apiRequest('/api/v1/files/ticket', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            machine_id: appState.selectedMachineId,
+            machine_id: machineId,
             path,
-            filename: name
+            filename: resolvedName
           })
         });
 
@@ -14213,17 +14270,76 @@
         }
 
         const url = `${base}/api/v1/files/download?ticket=${encodeURIComponent(ticket)}`;
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          try { a.remove(); } catch (_) {}
-        }, 2000);
-        showToast(`Streaming "${name}" securely from remote host...`, 'success');
+
+        // Smart fetch with progress streaming
+        let downloadedDirectly = false;
+        try {
+          const dlResp = await fetch(url, {
+            headers: {
+              ...(appConfig.pairingKey ? { 'X-CVPS-Pairing-Key': appConfig.pairingKey } : {})
+            }
+          });
+
+          if (dlResp.ok) {
+            const contentLength = dlResp.headers.get('content-length');
+            const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+            let blob;
+            if (dlResp.body && total > 2 * 1024 * 1024) {
+              const reader = dlResp.body.getReader();
+              const chunks = [];
+              let received = 0;
+              let lastToast = 0;
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                received += value.length;
+                const now = Date.now();
+                if (now - lastToast > 1500) {
+                  lastToast = now;
+                  const pct = total ? Math.round((received / total) * 100) : 0;
+                  showToast(`Downloading "${resolvedName}"... ${pct ? pct + '%' : formatBytes(received)}`, 'info');
+                }
+              }
+              blob = new Blob(chunks, { type: dlResp.headers.get('content-type') || 'application/octet-stream' });
+            } else {
+              blob = await dlResp.blob();
+            }
+
+            const objectUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = objectUrl;
+            a.download = resolvedName;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+              try {
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(objectUrl);
+              } catch (_) {}
+            }, 1000);
+
+            showToast(`Downloaded "${resolvedName}" (${formatBytes(blob.size)}) successfully!`, 'success');
+            downloadedDirectly = true;
+            return;
+          }
+        } catch (fetchErr) {
+          console.warn('Direct blob stream failed, falling back to browser navigation:', fetchErr);
+        }
+
+        if (!downloadedDirectly) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = resolvedName;
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            try { a.remove(); } catch (_) {}
+          }, 2000);
+          showToast(`Direct stream started for "${resolvedName}"`, 'success');
+        }
       } catch (err) {
         showToast('Download error: ' + err.message, 'error');
       }
@@ -19450,25 +19566,52 @@ class FileManagerView {
       tableBody.innerHTML = entries.map(item => {
         const ext = (item.name.split('.').pop() || '').toLowerCase();
         const isRunnable = !item.is_dir && ['exe', 'msi', 'bat', 'cmd', 'ps1', 'py', 'sh', 'bin', 'lnk'].includes(ext);
+        const attrPath = escapeHtml(item.path);
+        const attrName = escapeHtml(item.name);
         return `
         <tr>
           <td>${item.is_dir ? '📁' : '📄'}</td>
           <td>
             ${item.is_dir ? `
-              <a href="javascript:void(0)" onclick="FileManagerView.openDir('${item.path}')">
-                <strong>${item.name}</strong>
+              <a href="javascript:void(0)" class="fm-view-open-dir" data-path="${attrPath}">
+                <strong>${attrName}</strong>
               </a>
-            ` : `<span>${item.name}</span>`}
+            ` : `<span>${attrName}</span>`}
           </td>
-          <td><small>${item.size_bytes ? Math.round(item.size_bytes / 1024) + ' KB' : '-'}</small></td>
-          <td><small>${item.modified_at ? new Date(item.modified_at).toLocaleDateString() : '-'}</small></td>
+          <td><small>${item.size_bytes ? formatBytes(item.size_bytes) : (item.size ? formatBytes(item.size) : '-')}</small></td>
+          <td><small>${item.modified_at ? new Date(item.modified_at).toLocaleDateString() : (item.modified ? new Date(item.modified).toLocaleDateString() : '-')}</small></td>
           <td>
-            ${isRunnable ? `<button class="btn-sm" style="color:var(--accent-cyan); font-weight:600;" onclick="FileManagerView.runItem('${item.path}', '${item.name}')">⚡ Run</button>` : ''}
-            ${item.is_dir ? `<button class="btn-sm" style="color:var(--accent-cyan);" onclick="FileManagerView.downloadZip('${item.path}', '${item.name}')">📦 ZIP</button>` : `<button class="btn-sm" onclick="FileManagerView.downloadFile('${item.path}')">Download</button>`}
-            <button class="btn-sm btn-danger" onclick="FileManagerView.deleteItem('${item.path}')">Delete</button>
+            ${isRunnable ? `<button class="btn-sm fm-view-act" style="color:var(--accent-cyan); font-weight:600;" data-action="run" data-path="${attrPath}" data-name="${attrName}">⚡ Run</button>` : ''}
+            ${item.is_dir ? `<button class="btn-sm fm-view-act" style="color:var(--accent-cyan);" data-action="zip" data-path="${attrPath}" data-name="${attrName}">📦 ZIP</button>` : `<button class="btn-sm fm-view-act" data-action="download" data-path="${attrPath}" data-name="${attrName}">Download</button>`}
+            <button class="btn-sm btn-danger fm-view-act" data-action="delete" data-path="${attrPath}" data-name="${attrName}" data-isdir="${item.is_dir}">Delete</button>
           </td>
         </tr>
       `}).join('');
+
+      if (!tableBody._hasDelegateHandler) {
+        tableBody._hasDelegateHandler = true;
+        tableBody.addEventListener('click', (e) => {
+          const dirLink = e.target.closest('.fm-view-open-dir');
+          if (dirLink) {
+            e.preventDefault();
+            const p = dirLink.getAttribute('data-path');
+            if (p) FileManagerView.openDir(p);
+            return;
+          }
+          const btn = e.target.closest('.fm-view-act');
+          if (!btn) return;
+          e.preventDefault();
+          const action = btn.getAttribute('data-action');
+          const p = btn.getAttribute('data-path');
+          const n = btn.getAttribute('data-name');
+          const isDir = btn.getAttribute('data-isdir') === 'true';
+
+          if (action === 'run') FileManagerView.runItem(p, n);
+          else if (action === 'download') FileManagerView.downloadFile(p, n);
+          else if (action === 'zip') FileManagerView.downloadZip(p, n);
+          else if (action === 'delete') FileManagerView.deleteItem(p);
+        });
+      }
     } catch (err) {
       tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">Error: ${err.message}</td></tr>`;
     }
@@ -19477,8 +19620,8 @@ class FileManagerView {
   static runItem(path, name) {
     if (typeof window !== 'undefined' && typeof window.openFmRunModal === 'function') {
       window.openFmRunModal(path, name || path.split(/[\\/]/).pop());
-    } else {
-      if (typeof window !== 'undefined' && typeof window.openFmRunModal === 'function') { window.openFmRunModal(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('Execution requested for ' + path, 'info'); }
+    } else if (typeof showToast === 'function') {
+      showToast('Execution requested for ' + path, 'info');
     }
   }
 
@@ -19508,24 +19651,30 @@ class FileManagerView {
   }
 
   static downloadFile(path, name) {
+    const resolvedName = name || (path ? path.split(/[\\/]/).pop() : 'download');
     if (typeof window !== 'undefined' && typeof window.downloadFile === 'function') {
-      window.downloadFile(path, name || path.split(/[\\/]/).pop());
-    } else {
-      if (typeof window !== 'undefined' && typeof window.downloadFile === 'function') { window.downloadFile(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('Download requested for ' + path, 'info'); }
+      window.downloadFile(path, resolvedName);
+    } else if (typeof showToast === 'function') {
+      showToast('Download requested for ' + path, 'info');
     }
   }
 
   static downloadZip(path, name) {
+    const resolvedName = name || (path ? path.split(/[\\/]/).pop() : 'archive');
     if (typeof window !== 'undefined' && typeof window.downloadDirectoryAsZip === 'function') {
-      window.downloadDirectoryAsZip(path, name || path.split(/[\\/]/).pop());
-    } else {
-      if (typeof window !== 'undefined' && typeof window.downloadDirectoryAsZip === 'function') { window.downloadDirectoryAsZip(path, path.split(/[\\/]/).pop()); } else if (typeof showToast === 'function') { showToast('ZIP requested for ' + path, 'info'); }
+      window.downloadDirectoryAsZip(path, resolvedName);
+    } else if (typeof showToast === 'function') {
+      showToast('ZIP requested for ' + path, 'info');
     }
   }
 
   static deleteItem(path) {
     if (confirm(`Permanently delete [${path}]?`)) {
-      if (typeof window !== 'undefined' && typeof window.promptDeleteFile === 'function') { window.promptDeleteFile(path, path.split(/[\\/]/).pop(), false); } else if (typeof showToast === 'function') { showToast('Delete requested for ' + path, 'info'); }
+      if (typeof window !== 'undefined' && typeof window.promptDeleteFile === 'function') {
+        window.promptDeleteFile(path, path.split(/[\\/]/).pop(), false);
+      } else if (typeof showToast === 'function') {
+        showToast('Delete requested for ' + path, 'info');
+      }
     }
   }
 }

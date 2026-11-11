@@ -2073,6 +2073,14 @@ async function runTests() {
   assert(termUploadTest.includes('ALL 5 TERMINAL UPLOAD & RUN AND SESSION RESILIENCE TESTS PASSED'), 'Terminal upload & run tests must pass');
   console.log('  ✅ Terminal Script/Binary Upload & Run, Keystroke Normalization, and Shell Session Resurrection verified.');
 
+  // [TEST 54] Testing Comprehensive File Manager Upgrade, Re-usable Download Tickets & Shortcut Execution...
+  console.log('\n[TEST 54] Testing Comprehensive File Manager Upgrade, Re-usable Download Tickets & Shortcut Execution...');
+  const fmUpgradeTest = execSync(`node "${require('path').join(__dirname, 'test-file-manager-comprehensive-v2.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(fmUpgradeTest.includes('ALL COMPREHENSIVE FILE MANAGER UPGRADE TESTS PASSED'), 'File Manager upgrade tests must pass');
+  console.log('  ✅ File Manager Re-usable Download Tickets, Spaces in Filenames, Shortcut Execution & DOM Security verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2080,7 +2088,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 53 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 54 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

@@ -1481,7 +1481,7 @@ function normalizePlatformOs(rawOs) {
 function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/release/manifest') return true;
   if (pathname === '/api/v1/enrollment/status') return true;
-  if (pathname === '/api/v1/files/download') return true;
+  if (pathname === '/api/v1/files/download' || pathname === '/api/v1/files/ticket') return true;
   if (pathname === '/api/v1/system/info') return true;
   if (pathname === '/api/v1/config') return true;
   if (pathname === '/api/v1/telemetry/stream') return true;
@@ -5056,9 +5056,9 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Download ticket has expired', code: 'TICKET_EXPIRED', authenticated: false }));
         return;
       }
-      if (ticketData.consumed) {
+      if (ticketData.consumed && ticketData.expires_at <= Date.now()) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Download ticket has already been used', code: 'TICKET_ALREADY_USED', authenticated: false }));
+        res.end(JSON.stringify({ error: 'Download ticket has expired', code: 'TICKET_EXPIRED', authenticated: false }));
         return;
       }
       if (machineId && machineId !== ticketData.machine_id) {
@@ -5077,8 +5077,9 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Ticket file path mismatch', code: 'TICKET_PATH_MISMATCH', authenticated: false }));
         return;
       }
-      ticketData.consumed = true;
-      ticketData.consumed_at = Date.now();
+      if (!ticketData.use_count) ticketData.use_count = 0;
+      ticketData.use_count++;
+      ticketData.last_used_at = Date.now();
       machineId = ticketData.machine_id;
       filePath = ticketData.path;
       filename = ticketData.filename;
@@ -5108,7 +5109,8 @@ const server = http.createServer(async (req, res) => {
 
         if (isFirst) {
           const downloadName = filename || chunkData.filename || filePath.split(/[\\/]/).pop() || 'download';
-          res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(downloadName)}"`);
+          const safeName = downloadName.replace(/[^\w\.\-\s]/g, '_');
+          res.setHeader('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
           res.setHeader('Content-Type', 'application/octet-stream');
           if (chunkData.file_size !== undefined) {
             res.setHeader('Content-Length', chunkData.file_size);
@@ -5137,7 +5139,8 @@ const server = http.createServer(async (req, res) => {
         if (!res.headersSent) {
           const data = await sendAgentRequest(machineId, 'FileRead', { path: filePath, download: true, max_bytes: 500 * 1024 * 1024 }, 60000);
           const downloadName = filename || data.filename || 'download';
-          res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(downloadName)}"`);
+          const safeName = downloadName.replace(/[^\w\.\-\s]/g, '_');
+          res.setHeader('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
           if (data.is_binary && data.content_base64) {
             res.setHeader('Content-Type', 'application/octet-stream');
             res.end(Buffer.from(data.content_base64, 'base64'));
