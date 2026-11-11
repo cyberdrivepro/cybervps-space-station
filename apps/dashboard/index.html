@@ -1965,6 +1965,9 @@
               <button class="btn btn-secondary" onclick="openTerminalScriptModal()" title="Write or paste a multi-line script and execute directly" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
                 <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Paste Script
               </button>
+              <button class="btn btn-secondary" onclick="openCloudflareTunnelModal()" title="Expose port or system files over Cloudflare Quick Tunnel (Public HTTPS URL)" style="font-size:0.78rem; padding:0.35rem 0.65rem; border:1px solid rgba(249,115,22,0.4); color:#fb923c; background:rgba(249,115,22,0.08); display:flex; align-items:center; gap:0.35rem;">
+                <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></svg>🌐 Public Link
+              </button>
               <button class="btn btn-secondary" onclick="copyTerminalOutput()" title="Copy terminal output buffer" style="font-size:0.78rem; padding:0.35rem 0.65rem;">
                 <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy
               </button>
@@ -2012,6 +2015,7 @@
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('ip a')">ip a</button>
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('uptime')">uptime</button>
                   <button class="quick-cmd-chip" onclick="sendTerminalCommand('clear')">clear</button>
+                  <button class="quick-cmd-chip" onclick="openCloudflareTunnelModal()" style="border-color:rgba(249,115,22,0.4); color:#fb923c; font-weight:600;">🌐 Expose Port (CF)</button>
                 </span>
                 <span style="display:inline-flex; align-items:center; gap:0.35rem; margin-left:auto; flex-wrap:wrap;">
                   <span style="font-size:0.7rem; color:var(--text-muted); font-weight:600;">Visible Desktop:</span>
@@ -5508,6 +5512,99 @@
     </div>
   </div>
 
+  <!-- Cloudflare Quick Tunnel / Public HTTPS Link Modal -->
+  <div id="modal-cloudflare-tunnel" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeCloudflareTunnelModal();">
+    <div class="modal" style="max-width:580px; width:95%; border:1px solid rgba(249,115,22,0.35); box-shadow:0 12px 40px rgba(0,0,0,0.8); background:#0c0e14;">
+      <div class="modal-header" style="border-bottom:1px solid var(--border-subtle); padding:0.85rem 1.25rem; display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <strong style="color:var(--text-primary); font-size:1.05rem; display:flex; align-items:center; gap:0.5rem;">
+            <span style="font-size:1.2rem;">🌐</span> Cloudflare Quick Tunnel — On-Demand Public Access
+          </strong>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Expose local host ports or file directories through a secure temporary public HTTPS link (trycloudflare.com).</div>
+        </div>
+        <button class="btn-icon" onclick="closeCloudflareTunnelModal()">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding:1.25rem; display:flex; flex-direction:column; gap:1rem;">
+        <!-- TARGET HOST INFO -->
+        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); border-radius:6px; padding:0.6rem 0.85rem;">
+          <div>
+            <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Target Host Machine</div>
+            <strong id="cf-modal-target-host" style="font-family:var(--font-mono); font-size:0.88rem; color:var(--accent-cyan);">Resolving...</strong>
+          </div>
+          <div id="cf-modal-target-status" class="badge badge-success">ONLINE</div>
+        </div>
+
+        <!-- EXPOSURE MODE TOGGLE -->
+        <div>
+          <label class="form-label" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary); margin-bottom:0.4rem; display:block;">Access Mode</label>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem;">
+            <label style="border:1px solid var(--border-subtle); border-radius:6px; padding:0.6rem 0.75rem; cursor:pointer; display:flex; gap:0.5rem; align-items:flex-start; background:rgba(255,255,255,0.02);">
+              <input type="radio" name="cf-tunnel-mode" value="port" checked onchange="toggleCfMode('port')" style="margin-top:2px;">
+              <div>
+                <strong style="font-size:0.8rem; color:#fff; display:block;">Expose Local Port</strong>
+                <span style="font-size:0.7rem; color:var(--text-muted);">Web server, API, app port (e.g. 8080, 3000, 80)</span>
+              </div>
+            </label>
+            <label style="border:1px solid var(--border-subtle); border-radius:6px; padding:0.6rem 0.75rem; cursor:pointer; display:flex; gap:0.5rem; align-items:flex-start; background:rgba(255,255,255,0.02);">
+              <input type="radio" name="cf-tunnel-mode" value="dir" onchange="toggleCfMode('dir')" style="margin-top:2px;">
+              <div>
+                <strong style="font-size:0.8rem; color:#fff; display:block;">Expose File Browser</strong>
+                <span style="font-size:0.7rem; color:var(--text-muted);">Browse host files/Desktop over public HTTPS</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- PORT CONFIG -->
+        <div id="cf-port-group" class="form-group" style="margin:0;">
+          <label class="form-label" style="font-size:0.75rem;">Local Port to Expose</label>
+          <input type="number" id="cf-tunnel-port" class="form-control" style="font-family:var(--font-mono); font-size:0.85rem;" value="8080" placeholder="e.g. 8080, 3000, 5000">
+          <div style="display:flex; gap:0.35rem; margin-top:0.35rem; flex-wrap:wrap;">
+            <button type="button" class="quick-cmd-chip" onclick="document.getElementById('cf-tunnel-port').value=8080">8080 (Default)</button>
+            <button type="button" class="quick-cmd-chip" onclick="document.getElementById('cf-tunnel-port').value=3000">3000 (React/Node)</button>
+            <button type="button" class="quick-cmd-chip" onclick="document.getElementById('cf-tunnel-port').value=5000">5000 (Flask/API)</button>
+            <button type="button" class="quick-cmd-chip" onclick="document.getElementById('cf-tunnel-port').value=80">80 (HTTP)</button>
+          </div>
+        </div>
+
+        <!-- DIRECTORY CONFIG -->
+        <div id="cf-dir-group" class="form-group" style="margin:0; display:none;">
+          <label class="form-label" style="font-size:0.75rem;">Host Directory Path to Share</label>
+          <input type="text" id="cf-tunnel-dir" class="form-control" style="font-family:var(--font-mono); font-size:0.85rem;" placeholder="e.g. %USERPROFILE%\Desktop or /var/www">
+          <div id="cf-dir-chips" style="display:flex; gap:0.35rem; margin-top:0.35rem; flex-wrap:wrap;"></div>
+        </div>
+
+        <!-- STATUS / RESULTS CONTAINER -->
+        <div id="cf-tunnel-status-box" style="display:none; padding:0.85rem; border-radius:6px; font-size:0.82rem;"></div>
+
+        <!-- ACTIVE PUBLIC URL DISPLAY -->
+        <div id="cf-result-card" style="display:none; background:rgba(34,197,94,0.06); border:1px solid rgba(34,197,94,0.3); border-radius:6px; padding:0.85rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+            <span style="font-size:0.75rem; color:#4ade80; font-weight:700; display:flex; align-items:center; gap:0.35rem;">
+              <span style="width:8px; height:8px; border-radius:50%; background:#22c55e; display:inline-block; box-shadow:0 0 8px #22c55e;"></span>
+              PUBLIC HTTPS LINK ACTIVE
+            </span>
+            <button type="button" class="btn-sm btn-danger" onclick="stopActiveCloudflareTunnel()" style="font-size:0.72rem; padding:0.15rem 0.5rem;">Stop Tunnel</button>
+          </div>
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <input type="text" id="cf-result-url-input" readonly class="form-control" style="font-family:var(--font-mono); font-size:0.85rem; color:#38bdf8; background:rgba(0,0,0,0.5);">
+            <button type="button" class="btn btn-primary" onclick="copyCfResultUrl()" style="white-space:nowrap; font-size:0.78rem; padding:0.35rem 0.65rem;">📋 Copy</button>
+            <a id="cf-result-open-link" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="white-space:nowrap; font-size:0.78rem; padding:0.35rem 0.65rem; text-decoration:none; display:flex; align-items:center; gap:0.25rem;">↗️ Open</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="border-top:1px solid var(--border-subtle); padding:0.75rem 1.25rem; display:flex; justify-content:flex-end; gap:0.5rem;">
+        <button class="btn btn-secondary" onclick="closeCloudflareTunnelModal()">Close</button>
+        <button id="cf-start-tunnel-btn" class="btn btn-primary" onclick="startCloudflareQuickTunnel()" style="background:linear-gradient(135deg, #f97316 0%, #ea580c 100%); color:#fff; font-weight:700; border:none; display:flex; align-items:center; gap:0.4rem;">
+          <svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2.2;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          ⚡ Generate Public Link
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container"></div>
 
@@ -7393,11 +7490,13 @@
       if (!tplContainer) return;
 
       const templates = isWin ? [
+        { label: '🌐 CF Tunnel', lang: 'ps1', code: "# Auto-Download cloudflared & Expose Port 8080 Publicly\r\n$binDir = \"$HOME\\.cybervps\\bin\"\r\nif (!(Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }\r\n$cf = \"$binDir\\cloudflared.exe\"\r\nif (!(Test-Path $cf)) {\r\n    Write-Host '[*] Fetching cloudflared...' -ForegroundColor Cyan\r\n    Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile $cf -UseBasicParsing\r\n}\r\nWrite-Host '[*] Launching Cloudflare Quick Tunnel on port 8080...' -ForegroundColor Green\r\n& \"$cf\" tunnel --protocol http2 --no-autoupdate --url http://127.0.0.1:8080\r\n" },
         { label: 'SysInfo', lang: 'ps1', code: "Get-ComputerInfo | Select-Object WindowsProductName, CsProcessors, OsTotalVisibleMemorySize, WindowsVersion\r\nGet-Volume | Select-Object DriveLetter, FileSystemLabel, SizeRemaining, Size\r\n" },
         { label: 'Top Procs', lang: 'ps1', code: "Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 ProcessName, Id, CPU, WorkingSet64 | Format-Table -AutoSize\r\n" },
         { label: 'Net Listen', lang: 'ps1', code: "Get-NetTCPConnection -State Listen | Select-Object LocalAddress, LocalPort, OwningProcess | Sort-Object LocalPort | Format-Table -AutoSize\r\n" },
         { label: 'Clean Temp', lang: 'bat', code: "@echo off\r\necho Cleaning Temp directory...\r\ndel /q /f /s %TEMP%\\* 2>nul\r\necho Done.\r\n" }
       ] : [
+        { label: '🌐 CF Tunnel', lang: 'sh', code: "#!/bin/bash\r\nmkdir -p ~/.cybervps/bin\r\nif ! command -v cloudflared &> /dev/null; then\r\n    echo '[*] Downloading cloudflared...'\r\n    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o ~/.cybervps/bin/cloudflared\r\n    chmod +x ~/.cybervps/bin/cloudflared\r\n    export PATH=\"$HOME/.cybervps/bin:$PATH\"\r\nfi\r\necho '[*] Starting Cloudflare Quick Tunnel on port 8080...'\r\ncloudflared tunnel --protocol http2 --no-autoupdate --url http://127.0.0.1:8080\r\n" },
         { label: 'SysInfo', lang: 'sh', code: "#!/bin/bash\r\nuname -a\r\ncat /etc/os-release | grep PRETTY_NAME\r\nuptime\r\nfree -h\r\ndf -h\r\n" },
         { label: 'Top Procs', lang: 'sh', code: "#!/bin/bash\r\nps aux --sort=-%cpu | head -n 11\r\n" },
         { label: 'Net Listen', lang: 'sh', code: "#!/bin/bash\r\nss -tuln\r\n" },
@@ -7484,11 +7583,19 @@
 
     async function submitTerminalUploadAndRun() {
       const select = document.getElementById('terminal-machine-select');
-      const machineId = select?.value || appState.currentTerminalMachineId;
+      let machineId = select?.value || appState.currentTerminalMachineId || appState.selectedMachineId;
+      if (!machineId) {
+        const fleetList = appState.fleetData || appState.fleet || appState.machines || [];
+        const onlineM = fleetList.find(m => m.status === 'online');
+        if (onlineM) machineId = onlineM.id;
+        else if (fleetList[0]) machineId = fleetList[0].id;
+      }
       if (!machineId) {
         showToast('Please select a target machine first.', 'warning');
         return;
       }
+      appState.currentTerminalMachineId = machineId;
+      appState.selectedMachineId = machineId;
 
       const isScriptTab = document.getElementById('tab-content-term-script')?.style.display !== 'none';
       const destDir = (document.getElementById('term-upload-dest-dir')?.value || '').trim();
@@ -7576,6 +7683,8 @@
 
         const res = await apiRequest('/api/v1/terminal/upload-run', {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 45000,
           body: JSON.stringify(payload)
         });
 
@@ -7586,6 +7695,10 @@
         const data = res.data;
         setStatus(`✓ ${data.message || 'Script uploaded and execution launched!'}`, 'success');
         showToast(`Uploaded & launched: ${filename}`, 'success');
+
+        if (runInTerminal) {
+          writeToActiveTerminal(`\r\n\x1b[36m[*] Uploaded [${filename}] -> ${data.path || ''}\x1b[0m\r\n\x1b[32m[*] Executing: ${data.command || filename}\x1b[0m\r\n`);
+        }
 
         setTimeout(() => {
           closeTerminalUploadModal();
@@ -7598,6 +7711,190 @@
       } finally {
         if (runBtn) runBtn.disabled = false;
       }
+    }
+
+    // =========================================================================
+    // CLOUDFLARE QUICK TUNNEL ENGINE (UI CONTROLLER)
+    // =========================================================================
+    let _activeCfTunnel = null;
+
+    function openCloudflareTunnelModal() {
+      const select = document.getElementById('terminal-machine-select');
+      let machineId = select?.value || appState.currentTerminalMachineId || appState.selectedMachineId;
+      if (!machineId) {
+        const fleetList = appState.fleetData || appState.fleet || appState.machines || [];
+        const onlineM = fleetList.find(m => m.status === 'online');
+        if (onlineM) machineId = onlineM.id;
+        else if (fleetList[0]) machineId = fleetList[0].id;
+      }
+      if (!machineId) return showToast('Please select a target machine first.', 'warning');
+
+      const targetM = (appState.fleetData || appState.fleet || appState.machines || []).find(m => m.id === machineId);
+      const hostEl = document.getElementById('cf-modal-target-host');
+      if (hostEl) hostEl.innerText = targetM ? `${targetM.hostname || targetM.id} (${targetM.ip || 'Virtual IP'})` : machineId;
+
+      const isWin = isWindowsTarget(targetM);
+      const dirInput = document.getElementById('cf-tunnel-dir');
+      if (dirInput && !dirInput.value) {
+        dirInput.value = isWin ? '%USERPROFILE%\\Desktop' : '/tmp';
+      }
+
+      const chipsCont = document.getElementById('cf-dir-chips');
+      if (chipsCont) {
+        const chips = isWin ? [
+          { label: 'Desktop', path: '%USERPROFILE%\\Desktop' },
+          { label: 'UserProfile', path: '%USERPROFILE%' },
+          { label: 'C:\\', path: 'C:\\' },
+          { label: 'Current Dir', path: '.' }
+        ] : [
+          { label: '/tmp', path: '/tmp' },
+          { label: 'Home', path: '~' },
+          { label: '/var/www', path: '/var/www' },
+          { label: 'Current Dir', path: '.' }
+        ];
+        chipsCont.innerHTML = chips.map(c =>
+          `<button type="button" class="quick-cmd-chip" onclick="document.getElementById('cf-tunnel-dir').value='${c.path}'">${c.label}</button>`
+        ).join('');
+      }
+
+      const modal = document.getElementById('modal-cloudflare-tunnel');
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function closeCloudflareTunnelModal() {
+      const modal = document.getElementById('modal-cloudflare-tunnel');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function toggleCfMode(mode) {
+      const portGroup = document.getElementById('cf-port-group');
+      const dirGroup = document.getElementById('cf-dir-group');
+      if (mode === 'dir') {
+        if (portGroup) portGroup.style.display = 'none';
+        if (dirGroup) dirGroup.style.display = 'block';
+      } else {
+        if (portGroup) portGroup.style.display = 'block';
+        if (dirGroup) dirGroup.style.display = 'none';
+      }
+    }
+
+    async function startCloudflareQuickTunnel() {
+      const select = document.getElementById('terminal-machine-select');
+      let machineId = select?.value || appState.currentTerminalMachineId || appState.selectedMachineId;
+      if (!machineId) {
+        const fleetList = appState.fleetData || appState.fleet || appState.machines || [];
+        const onlineM = fleetList.find(m => m.status === 'online');
+        if (onlineM) machineId = onlineM.id;
+        else if (fleetList[0]) machineId = fleetList[0].id;
+      }
+      if (!machineId) return showToast('Please select a target machine first.', 'warning');
+
+      const isDirMode = document.querySelector('input[name="cf-tunnel-mode"]:checked')?.value === 'dir';
+      const portVal = parseInt(document.getElementById('cf-tunnel-port')?.value || 8080, 10);
+      const dirVal = (document.getElementById('cf-tunnel-dir')?.value || '').trim();
+
+      const btn = document.getElementById('cf-start-tunnel-btn');
+      const statusBox = document.getElementById('cf-tunnel-status-box');
+      const resultCard = document.getElementById('cf-result-card');
+
+      if (btn) btn.disabled = true;
+      if (resultCard) resultCard.style.display = 'none';
+      if (statusBox) {
+        statusBox.style.display = 'block';
+        statusBox.style.background = 'rgba(249,115,22,0.1)';
+        statusBox.style.color = '#fb923c';
+        statusBox.style.border = '1px solid rgba(249,115,22,0.3)';
+        statusBox.innerHTML = 'Connecting to host agent and launching Cloudflare Quick Tunnel... (auto-downloading binary if needed)';
+      }
+
+      try {
+        const payload = {
+          port: isDirMode ? (portVal || 8088) : portVal,
+          serve_dir: isDirMode ? dirVal : null
+        };
+
+        const res = await apiRequest(`/api/v1/machines/${encodeURIComponent(machineId)}/cloudflare-tunnel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 45000,
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          throw new Error(res.error || 'Host agent failed to initialize Cloudflare tunnel');
+        }
+
+        const data = res.data;
+        const publicUrl = data.public_url;
+        _activeCfTunnel = { machineId, ...data };
+
+        if (statusBox) {
+          statusBox.style.background = 'rgba(34,197,94,0.12)';
+          statusBox.style.color = '#4ade80';
+          statusBox.style.border = '1px solid rgba(34,197,94,0.3)';
+          statusBox.innerHTML = `✓ Tunnel established successfully! Host resources are now publicly accessible.`;
+        }
+
+        if (resultCard) {
+          resultCard.style.display = 'block';
+          const input = document.getElementById('cf-result-url-input');
+          const openA = document.getElementById('cf-result-open-link');
+          if (input) input.value = publicUrl;
+          if (openA) openA.href = publicUrl;
+        }
+
+        showToast(`Cloudflare Public Link generated!`, 'success');
+        writeToActiveTerminal(`\r\n\x1b[32m[+] Cloudflare Public Link active: ${publicUrl}\x1b[0m\r\n\x1b[36m[*] Exposing: ${isDirMode ? 'Directory [' + dirVal + ']' : 'Port ' + portVal} via Cloudflare Quick Tunnel\x1b[0m\r\n`);
+      } catch (err) {
+        if (statusBox) {
+          statusBox.style.background = 'rgba(239,68,68,0.12)';
+          statusBox.style.color = '#f87171';
+          statusBox.style.border = '1px solid rgba(239,68,68,0.3)';
+          statusBox.innerHTML = `Tunnel generation error: ${err.message}`;
+        }
+        showToast('Cloudflare error: ' + err.message, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function stopActiveCloudflareTunnel() {
+      if (!_activeCfTunnel || !_activeCfTunnel.machineId) return;
+      const { machineId, tunnel_id } = _activeCfTunnel;
+      showToast('Stopping Cloudflare tunnel...', 'info');
+      try {
+        await apiRequest(`/api/v1/machines/${encodeURIComponent(machineId)}/cloudflare-tunnel`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tunnel_id })
+        });
+        _activeCfTunnel = null;
+        document.getElementById('cf-result-card').style.display = 'none';
+        const statusBox = document.getElementById('cf-tunnel-status-box');
+        if (statusBox) {
+          statusBox.style.display = 'block';
+          statusBox.style.background = 'rgba(148,163,184,0.1)';
+          statusBox.style.color = 'var(--text-secondary)';
+          statusBox.style.border = '1px solid var(--border-subtle)';
+          statusBox.innerHTML = 'Cloudflare Quick Tunnel terminated.';
+        }
+        showToast('Tunnel stopped successfully.', 'info');
+        writeToActiveTerminal(`\r\n\x1b[33m[-] Cloudflare Public Tunnel stopped.\x1b[0m\r\n`);
+      } catch (err) {
+        showToast('Failed to stop tunnel: ' + err.message, 'error');
+      }
+    }
+
+    function copyCfResultUrl() {
+      const input = document.getElementById('cf-result-url-input');
+      if (!input || !input.value) return;
+      navigator.clipboard.writeText(input.value).then(() => {
+        showToast('Public link copied to clipboard!', 'success');
+      }).catch(() => {
+        input.select();
+        document.execCommand('copy');
+        showToast('Public link copied!', 'success');
+      });
     }
 
     // Direct drag-and-drop onto the terminal canvas
@@ -14252,11 +14549,14 @@
     }
 
     async function downloadFile(path, name) {
-      const machineId = document.getElementById('fm-machine-select')?.value ||
-                        document.getElementById('files-machine-select')?.value ||
-                        appState.selectedMachineId ||
-                        (appState.machines && appState.machines[0]?.id);
+      let machineId = document.getElementById('files-machine-select')?.value ||
+                      document.getElementById('fm-machine-select')?.value ||
+                      appState.selectedMachineId ||
+                      (appState.fleetData && appState.fleetData[0]?.id) ||
+                      (appState.fleet && appState.fleet[0]?.id) ||
+                      (appState.machines && appState.machines[0]?.id);
       if (!machineId) return showToast('Please select a target host machine first', 'warning');
+      appState.selectedMachineId = machineId;
       const resolvedName = name || (path ? path.split(/[\\/]/).pop() : 'download');
       const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
 
@@ -14279,16 +14579,17 @@
           return;
         }
 
-        const url = `${base}/api/v1/files/download?ticket=${encodeURIComponent(ticket)}`;
+        const effectivePairKey = (typeof appConfig !== 'undefined' && appConfig.pairingKey) || localStorage.getItem('cvps_pairing_key') || 'cybervps_pair_station_2026';
+        const savedToken = (typeof appState !== 'undefined' && appState.adminAuth?.token) || localStorage.getItem('cvps_admin_token') || '';
+        const url = `${base}/api/v1/files/download?ticket=${encodeURIComponent(ticket)}&pair=${encodeURIComponent(effectivePairKey)}`;
 
         // Smart fetch with progress streaming
         let downloadedDirectly = false;
         try {
-          const dlResp = await fetch(url, {
-            headers: {
-              ...(appConfig.pairingKey ? { 'X-CVPS-Pairing-Key': appConfig.pairingKey } : {})
-            }
-          });
+          const dlHeaders = {};
+          if (effectivePairKey) dlHeaders['X-CVPS-Pairing-Key'] = effectivePairKey;
+          if (savedToken) dlHeaders['Authorization'] = `Bearer ${savedToken}`;
+          const dlResp = await fetch(url, { headers: dlHeaders });
 
           if (dlResp.ok) {
             const contentLength = dlResp.headers.get('content-length');
@@ -14360,7 +14661,14 @@
     let currentRunMsiLogPath = null;
 
     async function openFmRunModal(path, name) {
-      if (!appState.selectedMachineId) return showToast('Select a machine first', 'warning');
+      let machineId = appState.selectedMachineId ||
+                      document.getElementById('files-machine-select')?.value ||
+                      document.getElementById('fm-machine-select')?.value ||
+                      (appState.fleetData && appState.fleetData[0]?.id) ||
+                      (appState.fleet && appState.fleet[0]?.id) ||
+                      (appState.machines && appState.machines[0]?.id);
+      if (!machineId) return showToast('Select a machine first', 'warning');
+      appState.selectedMachineId = machineId;
       const ext = (name.split('.').pop() || '').toLowerCase();
       let runner = 'Native Executable';
       if (ext === 'ps1') runner = 'Windows PowerShell (powershell.exe -ExecutionPolicy Bypass)';
@@ -14480,6 +14788,20 @@
     }
 
     async function submitFmRun() {
+      let machineId = appState.selectedMachineId ||
+                      document.getElementById('files-machine-select')?.value ||
+                      document.getElementById('fm-machine-select')?.value ||
+                      (appState.fleetData && appState.fleetData[0]?.id) ||
+                      (appState.fleet && appState.fleet[0]?.id) ||
+                      (appState.machines && appState.machines[0]?.id);
+      const btn = document.getElementById('btn-submit-run');
+      if (!machineId) {
+        if (btn) btn.disabled = false;
+        showToast('Select a target machine first', 'warning');
+        return;
+      }
+      appState.selectedMachineId = machineId;
+
       const path = document.getElementById('fm-run-target-path').value.trim();
       const argsStr = document.getElementById('fm-run-args').value.trim();
       const cwd = document.getElementById('fm-run-cwd').value.trim();
@@ -14488,7 +14810,6 @@
       const msiMode = document.getElementById('fm-run-msi-mode').value;
       const msiUi = document.getElementById('fm-run-msi-ui').value;
       const msiLog = document.getElementById('fm-run-msi-log-check').checked;
-      const btn = document.getElementById('btn-submit-run');
 
       if (!path) return;
       btn.disabled = true;
@@ -14518,7 +14839,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            machine_id: appState.selectedMachineId,
+            machine_id: machineId,
             path,
             args: argsStr,
             cwd,

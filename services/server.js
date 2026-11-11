@@ -1492,6 +1492,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/apps/stream/token') return true;
   if (pathname.startsWith('/api/v1/remote-desktop/') || pathname === '/api/v1/desktop/session') return true;
   if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/clipboard')) return true;
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/cloudflare-tunnel')) return true;
   if (pathname === '/api/v1/auth/login') return true;
   if (pathname === '/api/v1/auth/logout') return true;
   if (pathname === '/api/v1/auth/status') return true;
@@ -3045,24 +3046,26 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
+        const actualRemotePath = (writeRes && (writeRes.native_path || writeRes.path)) || remoteFilePath;
+
         if (run_in_terminal && targetSessionId && db.terminalSessions.has(targetSessionId)) {
           let execCmd = '';
           const lowerName = safeFilename.toLowerCase();
           if (isWindows) {
             if (lowerName.endsWith('.ps1')) {
-              execCmd = `& "${remoteFilePath}" ${argsStr}`.trim() + '\r\n';
+              execCmd = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${actualRemotePath}" ${argsStr}`.trim() + '\r';
             } else if (lowerName.endsWith('.bat') || lowerName.endsWith('.cmd')) {
-              execCmd = `call "${remoteFilePath}" ${argsStr}`.trim() + '\r\n';
+              execCmd = `cmd.exe /c "${actualRemotePath}" ${argsStr}`.trim() + '\r';
             } else if (lowerName.endsWith('.py')) {
-              execCmd = `python "${remoteFilePath}" ${argsStr}`.trim() + '\r\n';
+              execCmd = `python "${actualRemotePath}" ${argsStr}`.trim() + '\r';
             } else {
-              execCmd = `& "${remoteFilePath}" ${argsStr}`.trim() + '\r\n';
+              execCmd = `& "${actualRemotePath}" ${argsStr}`.trim() + '\r';
             }
           } else {
             if (lowerName.endsWith('.py')) {
-              execCmd = `python3 "${remoteFilePath}" ${argsStr}`.trim() + '\n';
+              execCmd = `python3 "${actualRemotePath}" ${argsStr}`.trim() + '\n';
             } else {
-              execCmd = `"${remoteFilePath}" ${argsStr}`.trim() + '\n';
+              execCmd = `"${actualRemotePath}" ${argsStr}`.trim() + '\n';
             }
           }
 
@@ -3076,18 +3079,18 @@ const server = http.createServer(async (req, res) => {
             success: true,
             mode: 'terminal_stream',
             session_id: targetSessionId,
-            path: remoteFilePath,
+            path: actualRemotePath,
             filename: safeFilename,
             command: execCmd.trim(),
-            message: `Script uploaded to ${remoteFilePath} and launched in active terminal session.`
+            message: `Script uploaded to ${actualRemotePath} and launched in active terminal session.`
           }));
           return;
         }
 
         // Run as managed background process job
         const runRes = await sendAgentRequest(resolvedId, 'FileRun', {
-          path: remoteFilePath,
-          command: remoteFilePath,
+          path: actualRemotePath,
+          command: actualRemotePath,
           args: argsList,
           working_dir: targetDir,
           background: true,
@@ -3098,17 +3101,107 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({
           success: true,
           mode: 'process_engine',
-          path: remoteFilePath,
+          path: actualRemotePath,
           filename: safeFilename,
           pid: runRes.pid,
           job_id: runRes.job_id,
-          message: `Script uploaded to ${remoteFilePath} and executing as background job (PID: ${runRes.pid || 'N/A'}).`
+          message: `Script uploaded to ${actualRemotePath} and executing as background job (PID: ${runRes.pid || 'N/A'}).`
         }));
       } catch (err) {
         sendHttpError(res, err);
       }
     });
     return;
+  }
+
+  // 2A-1B. ON-DEMAND HOST CLOUDFLARE PUBLIC TUNNEL API
+  const cfMatch = pathname.match(/^\/api\/v1\/machines\/([^\/]+)\/cloudflare-tunnel$/);
+  if (cfMatch) {
+    const rawTargetId = decodeURIComponent(cfMatch[1]);
+    const targetM = findMachine(rawTargetId);
+    if (!targetM) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Machine '${rawTargetId}' not found in fleet` }));
+      return;
+    }
+    const resolvedTargetId = targetM.id;
+
+    if (!requireAdminAuth(req, res)) return;
+
+    if (method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const port = parseInt(payload.port || 8080, 10);
+          const serve_dir = payload.serve_dir || payload.directory || null;
+          const tunnel_id = payload.tunnel_id || `cf_${Date.now()}`;
+
+          const result = await sendAgentRequest(resolvedTargetId, 'CloudflareTunnelStart', {
+            port,
+            serve_dir,
+            tunnel_id
+          }, 35000);
+
+          logAudit('cloudflare_tunnel_started', req.adminUser || 'operator', resolvedTargetId, `Started Cloudflare Quick Tunnel: ${result.public_url} (port: ${port})`);
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            machine_id: resolvedTargetId,
+            ...result
+          }));
+        } catch (err) {
+          sendHttpError(res, err);
+        }
+      });
+      return;
+    }
+
+    if (method === 'DELETE') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          let tunnel_id = parsedUrl.searchParams.get('tunnel_id');
+          if (!tunnel_id && body) {
+            try { tunnel_id = JSON.parse(body).tunnel_id; } catch (_) {}
+          }
+
+          const result = await sendAgentRequest(resolvedTargetId, 'CloudflareTunnelStop', {
+            tunnel_id: tunnel_id || null
+          }, 15000);
+
+          logAudit('cloudflare_tunnel_stopped', req.adminUser || 'operator', resolvedTargetId, `Stopped Cloudflare tunnel`);
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            machine_id: resolvedTargetId,
+            ...result
+          }));
+        } catch (err) {
+          sendHttpError(res, err);
+        }
+      });
+      return;
+    }
+
+    if (method === 'GET') {
+      try {
+        const result = await sendAgentRequest(resolvedTargetId, 'CloudflareTunnelStatus', {}, 15000);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          machine_id: resolvedTargetId,
+          ...result
+        }));
+      } catch (err) {
+        sendHttpError(res, err);
+      }
+      return;
+    }
   }
 
   // 2A-2. MINT SHORT-LIVED SINGLE-USE STREAM TOKEN FOR LIVE APP VIEWING

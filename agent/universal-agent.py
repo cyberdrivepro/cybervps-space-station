@@ -35,6 +35,7 @@ import hashlib
 import binascii
 import collections
 import tempfile
+import queue
 
 
 def _iso_now():
@@ -911,6 +912,8 @@ class CyberVPSAgent:
         self.active_terminals = {}
         self.active_tunnel_streams = {}
         self.active_app_streams = {}
+        self.cloudflare_tunnels = {}
+        self.cloudflare_lock = threading.Lock()
         self.pressed_keys = set()
         self._gdiplus_token = None
         self.lock = threading.Lock()
@@ -2525,6 +2528,13 @@ class CyberVPSAgent:
         if "\0" in p:
             raise ValueError("Path contains invalid null byte")
 
+        # Expand environment variables (e.g. %USERPROFILE%, %TEMP%, %APPDATA%, $HOME) and user home
+        try:
+            p = os.path.expandvars(p)
+            p = os.path.expanduser(p)
+        except Exception:
+            pass
+
         # Cross-platform sanity checks:
         # If Linux/macOS agent receives a Windows drive letter path (e.g. "C:/Users/...", "C:\..."):
         if platform.system() != "Windows":
@@ -3596,6 +3606,11 @@ class CyberVPSAgent:
                 else:
                     raise FileNotFoundError(f"File to execute not found: {target_path}")
 
+            if working_dir:
+                try:
+                    working_dir = self._sanitize_path(working_dir)
+                except Exception:
+                    working_dir = None
             if not working_dir or not os.path.isdir(working_dir):
                 working_dir = os.path.dirname(target_path) or os.getcwd()
 
@@ -5641,6 +5656,266 @@ class CyberVPSAgent:
             "test_mode": test_mode,
             "message": f"Application '{cmd}' successfully launched into interactive desktop Session {target_session_id}."
         }
+
+    # =========================================================================
+    # CLOUDFLARE QUICK TUNNEL ENGINE (On-Demand Public Link Exposure)
+    # =========================================================================
+    def _resolve_cloudflared_bin(self):
+        """Locates or downloads the official cloudflared binary matching target platform/arch."""
+        sys_os = platform.system()
+        is_win = (sys_os == "Windows")
+        bin_name = "cloudflared.exe" if is_win else "cloudflared"
+
+        # 1. Check PATH
+        which_path = shutil.which("cloudflared") or shutil.which(bin_name)
+        if which_path and os.path.isfile(which_path):
+            return which_path
+
+        # 2. Check candidate local directories
+        home = os.path.expanduser("~")
+        candidates = [
+            os.path.join(home, ".cybervps", "bin", bin_name),
+            os.path.join(home, "bin", bin_name),
+            os.path.join(os.environ.get("LOCALAPPDATA") or home, "Microsoft", "WinGet", "Links", bin_name) if is_win else "",
+            r"C:\ProgramData\chocolatey\bin\cloudflared.exe" if is_win else "",
+            r"C:\Program Files\cloudflared\cloudflared.exe" if is_win else "",
+            r"C:\Program Files (x86)\cloudflared\cloudflared.exe" if is_win else "",
+            "/usr/local/bin/cloudflared",
+            "/usr/bin/cloudflared",
+            "/tmp/cloudflared"
+        ]
+        for c in candidates:
+            if c and os.path.isfile(c):
+                return c
+
+        # 3. Auto-download official standalone binary from Cloudflare releases
+        target_dir = os.path.join(home, ".cybervps", "bin")
+        os.makedirs(target_dir, exist_ok=True)
+        target_bin = os.path.join(target_dir, bin_name)
+
+        arch = platform.machine().lower()
+        is_arm = ("arm" in arch or "aarch" in arch)
+
+        if is_win:
+            dl_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+        elif sys_os == "Darwin":
+            dl_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz" if is_arm else "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz"
+        else: # Linux
+            if is_arm:
+                dl_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64" if "64" in arch else "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm"
+            else:
+                dl_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+
+        try:
+            req = urllib.request.Request(dl_url, headers={"User-Agent": "CyberVPS-SpaceStation/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp, open(target_bin, "wb") as out_f:
+                shutil.copyfileobj(resp, out_f)
+
+            if not is_win:
+                os.chmod(target_bin, 0o755)
+
+            if os.path.isfile(target_bin) and os.path.getsize(target_bin) > 10000:
+                return target_bin
+        except Exception:
+            pass
+
+        # If direct Python download failed, attempt curl / PowerShell
+        try:
+            if is_win:
+                cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -Uri '{dl_url}' -OutFile '{target_bin}' -UseBasicParsing\""
+            else:
+                cmd = f"curl -fsSL '{dl_url}' -o '{target_bin}' && chmod +x '{target_bin}'"
+            subprocess.run(cmd, shell=True, timeout=35, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.isfile(target_bin) and os.path.getsize(target_bin) > 10000:
+                return target_bin
+        except Exception:
+            pass
+
+        raise FileNotFoundError(f"cloudflared executable not found and auto-download from {dl_url} failed.")
+
+    def handle_cloudflare_tunnel_start(self, payload):
+        req_id = payload.get("request_id")
+        port = int(payload.get("port") or 8080)
+        serve_dir = payload.get("serve_dir") or payload.get("directory")
+        tunnel_id = payload.get("tunnel_id") or f"cf_{int(time.time()*1000)}"
+
+        http_proc = None
+        try:
+            # 1. If serve_dir is requested, launch Python HTTP file server
+            if serve_dir:
+                resolved_serve = self._sanitize_path(serve_dir)
+                if not os.path.exists(resolved_serve) or not os.path.isdir(resolved_serve):
+                    raise FileNotFoundError(f"Directory to expose does not exist: {serve_dir}")
+                serve_cmd = [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", resolved_serve]
+                http_proc = subprocess.Popen(serve_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(0.5)
+
+            # 2. Locate cloudflared
+            cf_bin = self._resolve_cloudflared_bin()
+
+            # 3. Launch cloudflared tunnel
+            cf_cmd = [cf_bin, "tunnel", "--protocol", "http2", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"]
+            cf_proc = subprocess.Popen(
+                cf_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False
+            )
+
+            discovered_url = None
+            url_pattern = re.compile(rb"https://(?!api\.)([a-zA-Z0-9-]+\.trycloudflare\.com)", re.IGNORECASE)
+
+            # Read output with non-blocking stream monitoring
+            deadline = time.time() + 25.0
+            error_buf = collections.deque(maxlen=40)
+            read_lines = queue.Queue()
+
+            def _reader(stream):
+                try:
+                    for line in iter(stream.readline, b""):
+                        read_lines.put(line)
+                except Exception:
+                    pass
+
+            t_out = threading.Thread(target=_reader, args=(cf_proc.stdout,), daemon=True)
+            t_err = threading.Thread(target=_reader, args=(cf_proc.stderr,), daemon=True)
+            t_out.start()
+            t_err.start()
+
+            while time.time() < deadline:
+                if cf_proc.poll() is not None:
+                    break
+                try:
+                    line = read_lines.get(timeout=0.2)
+                    decoded = line.decode("utf-8", errors="replace").strip()
+                    if decoded:
+                        error_buf.append(decoded)
+                    m = url_pattern.search(line)
+                    if m:
+                        discovered_url = m.group(0).decode("ascii")
+                        break
+                except queue.Empty:
+                    pass
+
+            if not discovered_url:
+                try: cf_proc.kill()
+                except Exception: pass
+                if http_proc:
+                    try: http_proc.kill()
+                    except Exception: pass
+                last_err = " | ".join(list(error_buf)[-5:]) if error_buf else "Process exited or timed out"
+                raise RuntimeError(f"Cloudflare Quick Tunnel failed to produce public link: {last_err}")
+
+            with self.cloudflare_lock:
+                self.cloudflare_tunnels[tunnel_id] = {
+                    "tunnel_id": tunnel_id,
+                    "port": port,
+                    "public_url": discovered_url,
+                    "serve_dir": serve_dir or None,
+                    "cf_proc": cf_proc,
+                    "http_proc": http_proc,
+                    "started_at": _iso_now(),
+                    "active": True
+                }
+
+            res = {
+                "tunnel_id": tunnel_id,
+                "public_url": discovered_url,
+                "port": port,
+                "serve_dir": serve_dir or None,
+                "started_at": _iso_now(),
+                "provider": "trycloudflare",
+                "message": f"Cloudflare Quick Tunnel established: {discovered_url} -> local port {port}"
+            }
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": True, "result": res}
+            })
+            self.send_agent_event({
+                "type": "CloudflareTunnelReady",
+                "payload": {
+                    "machine_id": self.machine_id,
+                    "tunnel_id": tunnel_id,
+                    "public_url": discovered_url,
+                    "port": port
+                }
+            })
+        except Exception as e:
+            if http_proc:
+                try: http_proc.kill()
+                except Exception: pass
+            self.send_agent_event({
+                "type": "AgentRpcResponse",
+                "payload": {"request_id": req_id, "success": False, "error": str(e)}
+            })
+
+    def handle_cloudflare_tunnel_stop(self, payload):
+        req_id = payload.get("request_id")
+        tunnel_id = payload.get("tunnel_id")
+
+        stopped_ids = []
+        with self.cloudflare_lock:
+            if tunnel_id:
+                targets = [self.cloudflare_tunnels.get(tunnel_id)] if tunnel_id in self.cloudflare_tunnels else []
+            else:
+                targets = list(self.cloudflare_tunnels.values())
+
+            for tun in targets:
+                if not tun: continue
+                cf_proc = tun.get("cf_proc")
+                http_proc = tun.get("http_proc")
+                if cf_proc:
+                    try: cf_proc.kill()
+                    except Exception: pass
+                if http_proc:
+                    try: http_proc.kill()
+                    except Exception: pass
+                tun["active"] = False
+                t_id = tun.get("tunnel_id")
+                if t_id:
+                    stopped_ids.append(t_id)
+                    self.cloudflare_tunnels.pop(t_id, None)
+
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {
+                "request_id": req_id,
+                "success": True,
+                "result": {"stopped": True, "stopped_tunnels": stopped_ids}
+            }
+        })
+
+    def handle_cloudflare_tunnel_status(self, payload):
+        req_id = payload.get("request_id")
+        tunnels_list = []
+        with self.cloudflare_lock:
+            dead_keys = []
+            for t_id, tun in self.cloudflare_tunnels.items():
+                cf_proc = tun.get("cf_proc")
+                if cf_proc and cf_proc.poll() is not None:
+                    dead_keys.append(t_id)
+                else:
+                    tunnels_list.append({
+                        "tunnel_id": tun["tunnel_id"],
+                        "port": tun["port"],
+                        "public_url": tun["public_url"],
+                        "serve_dir": tun.get("serve_dir"),
+                        "started_at": tun["started_at"],
+                        "active": True
+                    })
+            for dk in dead_keys:
+                self.cloudflare_tunnels.pop(dk, None)
+
+        self.send_agent_event({
+            "type": "AgentRpcResponse",
+            "payload": {
+                "request_id": req_id,
+                "success": True,
+                "result": {"tunnels": tunnels_list, "count": len(tunnels_list)}
+            }
+        })
+
 
     # =========================================================================
     # APPLICATION MANAGER (Remote Application Discovery, Status & Controls)
@@ -9215,6 +9490,12 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_file_chunk_read, args=(payload,), daemon=True).start()
         elif c_type == "FileInspect":
             threading.Thread(target=self.handle_file_inspect, args=(payload,), daemon=True).start()
+        elif c_type in ["CloudflareTunnelStart", "CloudflareTunnelCreate"]:
+            threading.Thread(target=self.handle_cloudflare_tunnel_start, args=(payload,), daemon=True).start()
+        elif c_type in ["CloudflareTunnelStop", "CloudflareTunnelClose"]:
+            threading.Thread(target=self.handle_cloudflare_tunnel_stop, args=(payload,), daemon=True).start()
+        elif c_type in ["CloudflareTunnelStatus", "CloudflareTunnelList"]:
+            threading.Thread(target=self.handle_cloudflare_tunnel_status, args=(payload,), daemon=True).start()
         elif c_type in ["FileRun", "ProcessStart"]:
             threading.Thread(target=self.handle_file_run, args=(payload,), daemon=True).start()
         elif c_type == "ProcessStatus":

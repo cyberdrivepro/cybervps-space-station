@@ -2081,6 +2081,14 @@ async function runTests() {
   assert(fmUpgradeTest.includes('ALL COMPREHENSIVE FILE MANAGER UPGRADE TESTS PASSED'), 'File Manager upgrade tests must pass');
   console.log('  ✅ File Manager Re-usable Download Tickets, Spaces in Filenames, Shortcut Execution & DOM Security verified.');
 
+  // [TEST 55] Testing On-Demand Cloudflare Quick Tunnel API & %USERPROFILE% Path Sanitization...
+  console.log('\n[TEST 55] Testing On-Demand Cloudflare Quick Tunnel API & Path Sanitization...');
+  const cfTest = execSync(`node "${require('path').join(__dirname, 'test-cloudflare-tunnel.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(cfTest.includes('ALL CLOUDFLARE QUICK TUNNEL & PATH SANITIZATION TESTS PASSED'), 'Cloudflare tunnel tests must pass');
+  console.log('  ✅ On-Demand Cloudflare Quick Tunnel (trycloudflare.com), Port & Directory Exposure, and Path Expansion verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2088,7 +2096,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 54 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 55 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }
