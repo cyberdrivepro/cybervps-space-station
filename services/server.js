@@ -1153,8 +1153,13 @@ function findAppStream(streamId, correlationId, machineId) {
 
 function getMachineStatus(m) {
   if (!m) return 'offline';
+  if (m.user_disconnected) return 'disconnected_by_user';
+  if (m.status === 'offline') return 'offline';
+  if (m.status === 'uninstalled') return 'uninstalled';
+  if (m.status === 'revoked') return 'revoked';
   const ws = getAgentSocket(m.id);
   if (ws && ws.readyState === WebSocket.OPEN) return 'online';
+  if (m.status === 'reconnecting') return 'reconnecting';
   if (m.status === 'restarting' || m.status === 'rebooting') {
     const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
     if (Date.now() - lastSeenMs < 120000) return 'restarting';
@@ -1162,18 +1167,18 @@ function getMachineStatus(m) {
   const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
   const diff = Date.now() - lastSeenMs;
   if (diff < 40000) return 'online';
-  if (diff < 90000) return 'reconnecting';
 
   // Check if node is hosted on an auto-suspending container sandbox (Prepare.sh, Replit)
   const isSandbox = m.provider === 'replit' || m.provider === 'prepare.sh' ||
     (m.profile && (m.profile.provider === 'replit' || m.profile.provider === 'prepare.sh' || (m.profile.provider_environment && m.profile.provider_environment.is_container_sandbox))) ||
     (m.capabilities && (m.capabilities.provider_aware || (m.capabilities.provider_environment && m.capabilities.provider_environment.is_container_sandbox)));
 
-  if (isSandbox && diff >= 90000 && diff < 1800000) {
+  if (isSandbox && diff >= 300000 && diff < 1800000) {
     return 'provider_paused';
   }
 
-  return 'offline';
+  // Zero-Drop Invariant: An enrolled node is NEVER marked offline without explicit user authorization!
+  return 'reconnecting';
 }
 
 function broadcastTelemetry(machine) {
@@ -1249,21 +1254,62 @@ function sendAgentRequest(machineId, type, payload = {}, timeoutMs = 15000) {
     const machine = findMachine(machineId) || db.machines.get(machineId);
     if (!machine) return reject(new Error(`Machine '${machineId}' not found in fleet`));
     const targetId = machine.id;
-    const status = getMachineStatus(machine);
-    if (status === 'offline') return reject(new Error(`Machine '${machineId}' is offline`));
+    if (machine.user_disconnected) {
+      return reject(new Error(`Machine '${machineId}' was explicitly disconnected by user authorization`));
+    }
 
-    const requestId = 'req_' + crypto.randomUUID().slice(0, 10);
-    const timer = setTimeout(() => {
-      db.pendingRequests.delete(requestId);
-      reject(new Error(`Host request '${type}' timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    const startWait = Date.now();
+    const maxWaitMs = Math.min(Math.max(timeoutMs - 1000, 1000), 8000);
 
-    db.pendingRequests.set(requestId, { resolve, reject, timer, machineId: targetId, type, createdAt: Date.now() });
+    const checkAndDispatch = () => {
+      const ws = getAgentSocket(targetId);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const requestId = 'req_' + crypto.randomUUID().slice(0, 10);
+        const timer = setTimeout(() => {
+          db.pendingRequests.delete(requestId);
+          reject(new Error(`Host request '${type}' timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
 
-    sendServerCommand(targetId, {
-      type,
-      payload: { ...payload, request_id: requestId }
-    });
+        db.pendingRequests.set(requestId, { resolve, reject, timer, machineId: targetId, type, createdAt: Date.now() });
+
+        sendServerCommand(targetId, {
+          type,
+          payload: { ...payload, request_id: requestId }
+        });
+        return;
+      }
+
+      const status = getMachineStatus(machine);
+      if (status === 'disconnected_by_user') {
+        return reject(new Error(`Machine '${machineId}' was explicitly disconnected by user authorization`));
+      }
+
+      // If machine is momentarily reconnecting, wait up to maxWaitMs for link re-establishment
+      if (Date.now() - startWait < maxWaitMs) {
+        setTimeout(checkAndDispatch, 300);
+        return;
+      }
+
+      if (status === 'offline') {
+        return reject(new Error(`Machine '${machineId}' is offline`));
+      }
+
+      // If within timeout and in reconnecting/standby state, queue command so it executes immediately upon agent reconnect
+      const requestId = 'req_' + crypto.randomUUID().slice(0, 10);
+      const timer = setTimeout(() => {
+        db.pendingRequests.delete(requestId);
+        reject(new Error(`Host request '${type}' timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      db.pendingRequests.set(requestId, { resolve, reject, timer, machineId: targetId, type, createdAt: Date.now() });
+
+      sendServerCommand(targetId, {
+        type,
+        payload: { ...payload, request_id: requestId }
+      });
+    };
+
+    checkAndDispatch();
   });
 }
 
@@ -1465,6 +1511,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/fleet/ota-update/status') return true;
   if (pathname === '/api/v1/topology/graph') return true;
   if (pathname === '/api/v1/machines/name') return true;
+  if (pathname.startsWith('/api/v1/machines/') && (pathname.endsWith('/disconnect') || pathname.endsWith('/reconnect'))) return true;
   if (pathname.startsWith('/api/v1/replit/')) return true;
   if (pathname.startsWith('/api/v1/security/')) return true;
   return false;
@@ -4452,6 +4499,78 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // EXPLICIT USER DISCONNECT & RECONNECT (ZERO-DROP & USER-PERMISSION CONTROLS)
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/disconnect') && method === 'POST') {
+    const parts = pathname.split('/');
+    const mId = parts[4];
+    const m = db.machines.get(mId);
+    if (!m) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Machine ${mId} not found` }));
+      return;
+    }
+    m.user_disconnected = true;
+    m.status = 'disconnected_by_user';
+    logAudit('machine_disconnected_by_user', 'user', mId, `Host ${mId} explicitly disconnected by user authorization`);
+
+    const agentWs = db.connectedAgents.get(mId);
+    if (agentWs) {
+      try {
+        agentWs.send(JSON.stringify({
+          type: 'DisconnectOrder',
+          payload: { reason: 'User requested manual disconnect', machine_id: mId }
+        }));
+      } catch (_) {}
+      try {
+        agentWs.close(1000, 'User requested disconnect');
+      } catch (_) {}
+      db.connectedAgents.delete(mId);
+    }
+
+    // Notify any active terminal sessions
+    for (const [tId, tSess] of db.terminalSessions.entries()) {
+      if (tSess.machine_id === mId) {
+        if (tSess.reconnectTimer) clearTimeout(tSess.reconnectTimer);
+        if (tSess.wsBrowser && tSess.wsBrowser.readyState === WebSocket.OPEN) {
+          tSess.wsBrowser.send(JSON.stringify({
+            type: 'status',
+            status: 'disconnected_by_user',
+            message: 'Host was explicitly disconnected by user.'
+          }));
+        }
+      }
+    }
+
+    broadcastTelemetry(m);
+    savePersistentState();
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, status: 'disconnected_by_user', message: 'Host disconnected by user' }));
+    return;
+  }
+
+  if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/reconnect') && method === 'POST') {
+    const parts = pathname.split('/');
+    const mId = parts[4];
+    const m = db.machines.get(mId);
+    if (!m) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Machine ${mId} not found` }));
+      return;
+    }
+    m.user_disconnected = false;
+    m.status = 'reconnecting';
+    m.last_seen = new Date().toISOString();
+    logAudit('machine_reconnected_by_user', 'user', mId, `Host ${mId} reconnection explicitly authorized by user`);
+
+    broadcastTelemetry(m);
+    savePersistentState();
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, status: 'reconnecting', message: 'Host reconnection authorized by user' }));
+    return;
+  }
+
   if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/action') && method === 'POST') {
     const parts = pathname.split('/');
     const mId = parts[4];
@@ -4537,6 +4656,52 @@ const server = http.createServer(async (req, res) => {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: `Update failed: ${err.message}` }));
           }
+          return;
+        }
+
+        if (normAction === 'disconnect' || normAction === 'disconnect_host') {
+          m.user_disconnected = true;
+          m.status = 'disconnected_by_user';
+          logAudit('machine_disconnected_by_user', 'user', mId, `Host ${mId} explicitly disconnected by user authorization`);
+          const agentWs = db.connectedAgents.get(mId);
+          if (agentWs) {
+            try {
+              agentWs.send(JSON.stringify({
+                type: 'DisconnectOrder',
+                payload: { reason: 'User requested manual disconnect', machine_id: mId }
+              }));
+            } catch (_) {}
+            try { agentWs.close(1000, 'User requested disconnect'); } catch (_) {}
+            db.connectedAgents.delete(mId);
+          }
+          for (const [tId, tSess] of db.terminalSessions.entries()) {
+            if (tSess.machine_id === mId) {
+              if (tSess.reconnectTimer) clearTimeout(tSess.reconnectTimer);
+              if (tSess.wsBrowser && tSess.wsBrowser.readyState === WebSocket.OPEN) {
+                tSess.wsBrowser.send(JSON.stringify({
+                  type: 'status',
+                  status: 'disconnected_by_user',
+                  message: 'Host was explicitly disconnected by user.'
+                }));
+              }
+            }
+          }
+          broadcastTelemetry(m);
+          savePersistentState();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, status: 'disconnected_by_user', message: 'Host disconnected by user' }));
+          return;
+        }
+
+        if (normAction === 'reconnect' || normAction === 'reconnect_host') {
+          m.user_disconnected = false;
+          m.status = 'reconnecting';
+          m.last_seen = new Date().toISOString();
+          logAudit('machine_reconnected_by_user', 'user', mId, `Host ${mId} reconnection explicitly authorized by user`);
+          broadcastTelemetry(m);
+          savePersistentState();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, status: 'reconnecting', message: 'Host reconnection authorized by user' }));
           return;
         }
 
@@ -8384,13 +8549,20 @@ server.on('upgrade', (request, socket, head) => {
 wssRelay.on('connection', (ws, request) => {
   let machineId = null;
   ws.isAlive = true;
-  ws.on('pong', () => { ws.isAlive = true; });
+  ws.missedPings = 0;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+    ws.missedPings = 0;
+  });
   ws.on('ping', () => {
     ws.isAlive = true;
+    ws.missedPings = 0;
     try { ws.pong(); } catch (_) {}
   });
 
   ws.on('message', (data) => {
+    ws.isAlive = true;
+    ws.missedPings = 0;
     try {
       const msg = JSON.parse(data.toString());
       const res = handleAgentMessage(ws, msg);
@@ -8398,6 +8570,56 @@ wssRelay.on('connection', (ws, request) => {
         if (res && res.success && msg.payload && msg.payload.machine_id) {
           machineId = msg.payload.machine_id;
           db.connectedAgents.set(machineId, ws);
+          const m = db.machines.get(machineId);
+          if (m) {
+            m.status = 'online';
+            m.user_disconnected = false;
+            m.last_seen = new Date().toISOString();
+          }
+
+          // Resume any held terminal sessions seamlessly!
+          for (const [tId, tSess] of db.terminalSessions.entries()) {
+            if (tSess.machine_id === machineId) {
+              if (tSess.reconnectTimer) {
+                clearTimeout(tSess.reconnectTimer);
+                tSess.reconnectTimer = null;
+              }
+              if (tSess.wsBrowser && tSess.wsBrowser.readyState === WebSocket.OPEN) {
+                tSess.wsBrowser.send(JSON.stringify({
+                  type: 'status',
+                  status: 'connected',
+                  message: `Host connection restored. Link active.`
+                }));
+              }
+            }
+          }
+
+          // Resume any held app streams seamlessly!
+          for (const [sId, aStream] of db.appStreams.entries()) {
+            if (aStream.machineId === machineId) {
+              if (aStream.reconnectTimer) {
+                clearTimeout(aStream.reconnectTimer);
+                aStream.reconnectTimer = null;
+              }
+              if (aStream.wsBrowser && aStream.wsBrowser.readyState === WebSocket.OPEN) {
+                aStream.wsBrowser.send(JSON.stringify({
+                  type: 'status',
+                  status: 'connected',
+                  message: `Stream link restored.`
+                }));
+              }
+            }
+          }
+
+          // Flush any pending commands queued during reconnect
+          if (db.pendingCommands.has(machineId)) {
+            const queue = db.pendingCommands.get(machineId);
+            db.pendingCommands.delete(machineId);
+            for (const queuedCmd of queue) {
+              try { ws.send(JSON.stringify(queuedCmd)); } catch (_) {}
+            }
+          }
+
           try {
             const backendList = Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }));
             ws.send(JSON.stringify({
@@ -8421,70 +8643,79 @@ wssRelay.on('connection', (ws, request) => {
       db.connectedAgents.delete(machineId);
       const m = db.machines.get(machineId);
       if (m && m.status !== 'restarting' && m.status !== 'rebooting') {
-        const lastSeenMs = m.last_seen ? new Date(m.last_seen).getTime() : 0;
-        if (Date.now() - lastSeenMs < 45000) {
-          m.status = 'reconnecting';
-        } else {
-          m.status = 'offline';
-        }
+        m.status = m.user_disconnected ? 'disconnected_by_user' : 'reconnecting';
       }
-      logAudit('agent_disconnected', 'agent', machineId, `Node ${machineId} disconnected from relay`, 'warning');
-      for (const [reqId, pending] of db.pendingRequests.entries()) {
-        if (pending.machineId === machineId) {
-          clearTimeout(pending.timer);
-          db.pendingRequests.delete(reqId);
-          pending.reject(new Error(`Host '${machineId}' disconnected during operation`));
-        }
-      }
-      for (const [reqId, pending] of db.pendingClipboardRequests.entries()) {
-        if (pending.machineId === machineId) {
-          clearTimeout(pending.timer);
-          db.pendingClipboardRequests.delete(reqId);
-          pending.reject(new Error(`Host '${machineId}' disconnected during clipboard operation`));
-        }
-      }
-      for (const [sId, aStream] of db.appStreams.entries()) {
-        if (aStream.machineId === machineId) {
-          if (aStream.wsBrowser && aStream.wsBrowser.readyState === WebSocket.OPEN) {
-            aStream.wsBrowser.send(JSON.stringify({
-              type: 'status',
-              status: 'disconnected',
-              error: `Host machine '${machineId}' disconnected from Space Station control plane.`
-            }));
-            try { aStream.wsBrowser.close(1001, 'Host disconnected'); } catch (_) {}
-          }
-          db.appStreams.delete(sId);
-        }
-      }
+      logAudit('agent_disconnected', 'agent', machineId, `Node ${machineId} connection link dropped; entering zero-drop grace period buffer`, 'info');
+
+      // Grace period: Hold terminal sessions for 90 seconds instead of immediately killing them
       for (const [tId, tSess] of db.terminalSessions.entries()) {
         if (tSess.machine_id === machineId) {
-          if (tSess.shellStartTimer) {
-            clearTimeout(tSess.shellStartTimer);
-            tSess.shellStartTimer = null;
-          }
+          if (tSess.reconnectTimer) clearTimeout(tSess.reconnectTimer);
           if (tSess.wsBrowser && tSess.wsBrowser.readyState === WebSocket.OPEN) {
             tSess.wsBrowser.send(JSON.stringify({
               type: 'status',
-              status: 'disconnected',
-              error: `Host machine '${machineId}' disconnected from Space Station control plane.`
+              status: 'reconnecting',
+              message: `Host connection is recovering. Holding session seamlessly...`
             }));
-            try { tSess.wsBrowser.close(1001, 'Host disconnected'); } catch (_) {}
           }
-          db.terminalSessions.delete(tId);
+          tSess.reconnectTimer = setTimeout(() => {
+            const currentAgentWs = db.connectedAgents.get(machineId);
+            if (!currentAgentWs || currentAgentWs.readyState !== WebSocket.OPEN) {
+              if (tSess.wsBrowser && tSess.wsBrowser.readyState === WebSocket.OPEN) {
+                tSess.wsBrowser.send(JSON.stringify({
+                  type: 'status',
+                  status: 'disconnected',
+                  error: `Host machine '${machineId}' did not reconnect within grace period.`
+                }));
+                try { tSess.wsBrowser.close(1001, 'Host grace timeout'); } catch (_) {}
+              }
+              db.terminalSessions.delete(tId);
+            }
+          }, 90000);
+          if (tSess.reconnectTimer.unref) tSess.reconnectTimer.unref();
+        }
+      }
+
+      // App streams grace period (60s)
+      for (const [sId, aStream] of db.appStreams.entries()) {
+        if (aStream.machineId === machineId) {
+          if (aStream.reconnectTimer) clearTimeout(aStream.reconnectTimer);
+          if (aStream.wsBrowser && aStream.wsBrowser.readyState === WebSocket.OPEN) {
+            aStream.wsBrowser.send(JSON.stringify({
+              type: 'status',
+              status: 'reconnecting',
+              message: `Stream connection link is recovering...`
+            }));
+          }
+          aStream.reconnectTimer = setTimeout(() => {
+            const currentAgentWs = db.connectedAgents.get(machineId);
+            if (!currentAgentWs || currentAgentWs.readyState !== WebSocket.OPEN) {
+              if (aStream.wsBrowser && aStream.wsBrowser.readyState === WebSocket.OPEN) {
+                try { aStream.wsBrowser.close(1001, 'Host disconnected'); } catch (_) {}
+              }
+              db.appStreams.delete(sId);
+            }
+          }, 60000);
+          if (aStream.reconnectTimer.unref) aStream.reconnectTimer.unref();
         }
       }
     }
   });
 });
 
-// Active 20-second WebSocket ping interval to prevent reverse proxy idle drops (Railway, Cloudflare)
+// Active 20-second WebSocket ping interval with 3-strike tolerance to prevent premature drops
 const relayPingInterval = setInterval(() => {
   for (const [mId, ws] of db.connectedAgents.entries()) {
     if (ws.readyState === WebSocket.OPEN) {
       if (ws.isAlive === false) {
-        console.log(`[!] Node [${mId}] failed WebSocket keepalive check. Terminating dropped connection.`);
-        try { ws.terminate(); } catch (_) {}
-        continue;
+        ws.missedPings = (ws.missedPings || 0) + 1;
+        if (ws.missedPings >= 3) {
+          console.log(`[!] Node [${mId}] missed 3 keepalive pings (60s). Terminating dropped connection.`);
+          try { ws.terminate(); } catch (_) {}
+          continue;
+        }
+      } else {
+        ws.missedPings = 0;
       }
       ws.isAlive = false;
       try { ws.ping(); } catch (_) {}
@@ -8915,6 +9146,20 @@ function handleAgentMessage(ws, msg) {
     if (!machine_id) {
       if (ws) ws.send(JSON.stringify({ type: 'AuthAck', payload: { success: false, error: 'Missing machine_id' } }));
       return { success: false, error: 'Missing machine_id' };
+    }
+
+    const existingM = db.machines.get(machine_id);
+    if (existingM && existingM.user_disconnected) {
+      if (ws) {
+        ws.send(JSON.stringify({
+          type: 'AuthAck',
+          payload: {
+            success: false,
+            error: 'Host was explicitly disconnected by user authorization. Reconnect must be authorized via the Space Station dashboard or API.'
+          }
+        }));
+      }
+      return { success: false, error: 'Host is disconnected by user' };
     }
 
     let nodeToken = null;
@@ -10363,6 +10608,9 @@ process.on('SIGTERM', cleanup);
 module.exports = {
   server,
   db,
+  getMachineStatus,
+  sendAgentRequest,
+  sendServerCommand,
   pathEngine,
   canaryRolloutManager,
   doctorService,

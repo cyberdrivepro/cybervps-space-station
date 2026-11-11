@@ -577,7 +577,7 @@ class RelayWebSocket:
 
     def _heartbeat_loop(self):
         while self.running and self.agent.running:
-            time.sleep(15)
+            time.sleep(10)
             with self._lock:
                 sock = self.sock
                 is_conn = self.connected
@@ -605,7 +605,7 @@ class RelayWebSocket:
                 next_url = self.agent.get_next_backend_url() if hasattr(self.agent, "get_next_backend_url") else self.target_url
                 self.target_url = next_url
                 if "timed out" in err_msg or "Connection refused" in err_msg or "getaddrinfo" in err_msg or "1006" in err_msg:
-                    print(f"[*] Relay transport waiting for control plane ({err_msg}). Trying failover to {next_url} in {int(self._backoff)}s...")
+                    print(f"[*] Relay transport waiting for control plane ({err_msg}). Reconnecting in {int(self._backoff)}s...")
                 else:
                     print(f"[*] Relay transport reconnecting ({err_msg}). Target: {next_url} in {int(self._backoff)}s")
             finally:
@@ -617,9 +617,12 @@ class RelayWebSocket:
                     self.connected = False
                     self.authenticated = False
                     self.agent.ws_connected = False
-            sleep_duration = min(self._backoff + random.uniform(0.1, 0.5), 3.0)
+            if getattr(self.agent, "user_disconnected", False):
+                sleep_duration = 5.0
+            else:
+                sleep_duration = min(self._backoff + random.uniform(0.05, 0.25), 2.0)
             time.sleep(sleep_duration)
-            self._backoff = min(self._backoff * 1.3, 3.0)
+            self._backoff = min(self._backoff * 1.2, 2.0)
 
     def _connect_and_read(self):
         raw = self.target_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -755,6 +758,7 @@ class RelayWebSocket:
                         if p_ack.get("success"):
                             self.authenticated = True
                             self.agent.ws_connected = True
+                            self.agent.user_disconnected = False
                             self.agent._heal_attempts = 0
                             self.agent._last_heal_time = 0
                             self._backoff = 2.0
@@ -777,6 +781,8 @@ class RelayWebSocket:
                             }))
                         else:
                             err_msg = p_ack.get("error", "Authentication rejected by server")
+                            if "disconnected by user" in str(err_msg).lower():
+                                self.agent.user_disconnected = True
                             auth_err_str = f"[!] Authentication rejected by control plane: {err_msg}"
                             print(auth_err_str)
                             if hasattr(self.agent, "log_file") and self.agent.log_file:
@@ -809,7 +815,7 @@ class RelayWebSocket:
             except (socket.timeout, TimeoutError):
                 if not self.running or not self.agent.running:
                     return bytes(buf)
-                if time.time() - getattr(self, "last_activity", time.time()) > 60.0:
+                if time.time() - getattr(self, "last_activity", time.time()) > 90.0:
                     return bytes(buf)
                 continue
             except Exception:
@@ -855,6 +861,7 @@ class RelayWebSocket:
             masked = b""
         with self._send_lock:
             sock.sendall(bytes(header) + masked)
+            self.last_activity = time.time()
 
 
 class ElevationRequiredError(Exception):
@@ -1866,7 +1873,12 @@ class CyberVPSAgent:
                 try:
                     if hasattr(self, "ws_relay") and self.ws_relay:
                         self.ws_relay.authenticated = False
-                        self.ws_relay.running = False
+                        # NEVER kill the relay worker thread! Close current socket so _run_loop reconnects immediately with the updated token.
+                        with getattr(self.ws_relay, "_lock", threading.Lock()):
+                            if getattr(self.ws_relay, "sock", None):
+                                try: self.ws_relay.sock.close()
+                                except Exception: pass
+                                self.ws_relay.sock = None
                     self.ws_connected = False
                 except Exception:
                     pass
@@ -9141,7 +9153,17 @@ class CyberVPSAgent:
         c_type = cmd.get("type")
         payload = cmd.get("payload", {})
 
-        if c_type == "TriggerDiscovery":
+        if c_type == "DisconnectOrder":
+            print(f"[*] Disconnect order received from user: {payload.get('reason')}", flush=True)
+            self.user_disconnected = True
+            if hasattr(self, "ws_relay") and self.ws_relay:
+                with getattr(self.ws_relay, "_lock", threading.Lock()):
+                    if getattr(self.ws_relay, "sock", None):
+                        try: self.ws_relay.sock.close()
+                        except Exception: pass
+                        self.ws_relay.sock = None
+            self.ws_connected = False
+        elif c_type == "TriggerDiscovery":
             self.send_discovery_report()
         elif c_type == "TerminalStart":
             self.start_terminal_session(
@@ -10294,6 +10316,37 @@ class CyberVPSAgent:
             except OSError:
                 return False
 
+    def _start_connection_watchdog(self, ws_url):
+        def _watchdog_loop():
+            while self.running:
+                time.sleep(4)
+                if getattr(self, "user_disconnected", False):
+                    continue
+                try:
+                    now = time.time()
+                    # 1. Resurrect relay worker if stopped or None
+                    if not getattr(self, "ws_relay", None) or not getattr(self.ws_relay, "running", False):
+                        print("[*] Connection Watchdog: Reviving WebSocket relay worker thread...", flush=True)
+                        self.ws_relay = RelayWebSocket(self, ws_url)
+                        self.ws_relay.start()
+                    # 2. Check for stale / dead socket if supposedly connected
+                    elif getattr(self, "ws_connected", False):
+                        last_act = getattr(self.ws_relay, "last_activity", now)
+                        if now - last_act > 45.0:
+                            # Stale socket detected (no activity for 45s); cycle socket for instant recovery
+                            with getattr(self.ws_relay, "_lock", threading.Lock()):
+                                if getattr(self.ws_relay, "sock", None):
+                                    try: self.ws_relay.sock.close()
+                                    except Exception: pass
+                                    self.ws_relay.sock = None
+                            self.ws_connected = False
+                            self.ws_relay.connected = False
+                            self.ws_relay.authenticated = False
+                except Exception:
+                    pass
+        t = threading.Thread(target=_watchdog_loop, daemon=True)
+        t.start()
+
     def run(self):
         if hasattr(signal, "SIGHUP"):
             try:
@@ -10384,7 +10437,8 @@ class CyberVPSAgent:
         print(f"[*] Connecting WebSocket relay transport to {ws_url}...", flush=True)
         self.ws_relay = RelayWebSocket(self, ws_url)
         self.ws_relay.start()
-        print("[*] WebSocket relay thread active.", flush=True)
+        self._start_connection_watchdog(ws_url)
+        print("[*] WebSocket relay thread and unkillable watchdog active.", flush=True)
 
         try:
             self.send_agent_event(auth_payload)

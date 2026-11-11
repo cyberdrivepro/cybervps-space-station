@@ -5856,7 +5856,19 @@
             ${m.capabilities?.pty_supported ? '<span class="badge badge-cyan">PTY</span>' : ''}
             ${isDaytona ? '<span class="badge badge-violet">DAYTONA</span>' : ''}
           </td>
-          <td>${m.status === 'online' ? '<span class="badge badge-success">ONLINE</span>' : (m.status === 'restarting' || m.status === 'rebooting' ? '<span class="badge badge-subtle" style="color:var(--accent-cyan); border:1px solid var(--accent-cyan);">RESTARTING</span>' : '<span class="badge badge-danger">OFFLINE</span>')}</td>
+          <td>${(() => {
+            if (m.status === 'online') {
+              return '<span class="badge badge-success" title="Zero-Drop Protection Active: Persistent Connection">🟢 ONLINE</span>';
+            } else if (m.status === 'reconnecting') {
+              return '<span class="badge" style="background:rgba(234,179,8,0.15); color:var(--status-warning); border:1px solid rgba(234,179,8,0.3);" title="Host connection link is recovering. Session held.">🟡 RECONNECTING</span>';
+            } else if (m.status === 'disconnected_by_user') {
+              return '<span class="badge badge-subtle" style="background:rgba(148,163,184,0.15); color:#94a3b8; border:1px solid rgba(148,163,184,0.3);" title="Disconnected explicitly by user authorization. Click Reconnect to resume.">⏸️ USER PAUSED</span>';
+            } else if (m.status === 'restarting' || m.status === 'rebooting') {
+              return '<span class="badge badge-subtle" style="color:var(--accent-cyan); border:1px solid var(--accent-cyan);">🔄 RESTARTING</span>';
+            } else {
+              return '<span class="badge badge-danger">OFFLINE</span>';
+            }
+          })()}</td>
           <td style="font-size:0.75rem; color:var(--text-muted);">${formatTime(m.last_seen)}</td>
           <td style="white-space:nowrap;">
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem;" onclick="openDeviceDetails('${m.id}')" title="Neofetch & Tailscale Specs">Intel</button>
@@ -5864,6 +5876,10 @@
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="openTerminalForMachine('${m.id}')" title="Browser Web Terminal">Terminal</button>
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="openServicesForMachine('${m.id}')" title="Processes & OS Services">Services</button>
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px;" onclick="promptBridgeCustom('${m.id}')" title="Bridge TCP Port">+ Bridge</button>
+            ${m.status === 'disconnected_by_user'
+              ? `<button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px; color:var(--status-success); border-color:var(--status-success);" onclick="userReconnectMachine('${m.id}')" title="Resume and reconnect host connection">⚡ Reconnect</button>`
+              : `<button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px; color:#94a3b8;" onclick="userDisconnectMachine('${m.id}')" title="Explicitly disconnect host (Only user can disconnect)">🔌 Disconnect</button>`
+            }
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px; color:var(--accent-cyan);" onclick="triggerAgentRestart('${m.id}')" title="Restart agent service on this machine">⚡ Agent</button>
             <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; font-size:0.72rem; margin-left:2px; color:var(--status-danger);" onclick="triggerMachineReboot('${m.id}')" title="Isolated reboot of this host machine">🔄 Reboot</button>
           </td>
@@ -6695,6 +6711,41 @@
                 const infoMsg = `\x1b[90m[*] ${parsed.message}\x1b[0m\r\n`;
                 if (appState.termInstance) appState.termInstance.writeln(infoMsg);
                 else appendTerminalBanner(infoMsg);
+              }
+              return;
+            } else if (parsed && parsed.type === 'status' && parsed.status === 'reconnecting') {
+              badge.className = 'badge badge-warning';
+              badge.innerText = 'Recovering Link...';
+              const recMsg = `\r\n\x1b[33m[*] ${parsed.message || 'Host connection link is recovering. Holding session seamlessly...'}\x1b[0m\r\n`;
+              if (appState.termInstance) {
+                appState.termInstance.writeln(recMsg);
+                appState.termInstance.scrollToBottom();
+              } else {
+                appendTerminalBanner(recMsg);
+              }
+              return;
+            } else if (parsed && parsed.type === 'status' && parsed.status === 'connected') {
+              badge.className = 'badge badge-success';
+              badge.innerText = `Ready (${isWin ? 'PowerShell' : 'PTY'})`;
+              const connMsg = `\r\n\x1b[32m[+] ${parsed.message || 'Host connection restored. Session resumed.'}\x1b[0m\r\n`;
+              if (appState.termInstance) {
+                appState.termInstance.writeln(connMsg);
+                appState.termInstance.scrollToBottom();
+              } else {
+                appendTerminalBanner(connMsg);
+              }
+              return;
+            } else if (parsed && parsed.type === 'status' && parsed.status === 'disconnected_by_user') {
+              appState.isTerminalReady = false;
+              setQuickChipsEnabled(false);
+              badge.className = 'badge badge-subtle';
+              badge.innerText = 'User Disconnected';
+              const userDiscMsg = `\r\n\x1b[33m[-] ${parsed.message || 'Host was explicitly disconnected by user authorization. Click Reconnect to resume.'}\x1b[0m\r\n`;
+              if (appState.termInstance) {
+                appState.termInstance.writeln(userDiscMsg);
+                appState.termInstance.scrollToBottom();
+              } else {
+                appendTerminalBanner(userDiscMsg);
               }
               return;
             } else if (parsed && (parsed.code === 'AGENT_OFFLINE' || (parsed.error && parsed.error.includes('offline or agent is disconnected')))) {
@@ -16597,6 +16648,49 @@
         }
       } catch (err) {
         showToast('Agent restart error: ' + err.message, 'error');
+      }
+    }
+
+    async function userDisconnectMachine(machineId) {
+      if (!confirm(`Are you sure you want to disconnect host [${machineId}]?\n\nZero-Drop Guarantee: Hosts will never disconnect on their own. Once you disconnect this host, it will remain parked until you click Reconnect.`)) {
+        return;
+      }
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      showToast(`Disconnecting host [${machineId}]...`, 'info');
+      try {
+        const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/disconnect`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const result = await res.json();
+        if (res.ok) {
+          showToast(`Host [${machineId}] explicitly disconnected by user.`, 'info');
+          setTimeout(() => syncData(), 500);
+        } else {
+          showToast(result.error || 'Failed to disconnect host', 'error');
+        }
+      } catch (err) {
+        showToast('Disconnect error: ' + err.message, 'error');
+      }
+    }
+
+    async function userReconnectMachine(machineId) {
+      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      showToast(`Authorizing reconnection for [${machineId}]...`, 'info');
+      try {
+        const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/reconnect`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const result = await res.json();
+        if (res.ok) {
+          showToast(`Reconnection authorized for [${machineId}]! Re-establishing link...`, 'success');
+          setTimeout(() => syncData(), 1000);
+        } else {
+          showToast(result.error || 'Failed to authorize reconnection', 'error');
+        }
+      } catch (err) {
+        showToast('Reconnect error: ' + err.message, 'error');
       }
     }
 
