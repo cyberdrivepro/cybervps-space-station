@@ -1488,7 +1488,7 @@ function isPublicApiRoute(pathname) {
   if (pathname.startsWith('/api/v1/relay/')) return true;
   if (pathname === '/api/v1/access/pairing') return true;
   if (pathname === '/api/v1/access/status') return true;
-  if (pathname === '/api/v1/terminal/token' || pathname === '/api/v1/terminal/session') return true;
+  if (pathname === '/api/v1/terminal/token' || pathname === '/api/v1/terminal/session' || pathname === '/api/v1/terminal/upload-run') return true;
   if (pathname === '/api/v1/apps/stream/token') return true;
   if (pathname.startsWith('/api/v1/remote-desktop/') || pathname === '/api/v1/desktop/session') return true;
   if (pathname.startsWith('/api/v1/machines/') && pathname.endsWith('/clipboard')) return true;
@@ -2960,6 +2960,152 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // 2A-1. TERMINAL IN-CONTEXT SCRIPT / FILE UPLOAD AND INSTANT RUN
+  if (pathname === '/api/v1/terminal/upload-run' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const {
+          machine_id,
+          session_id,
+          filename,
+          content_base64,
+          content_text,
+          dest_dir,
+          args,
+          run_in_terminal = true,
+          run_as_admin = false
+        } = payload;
+
+        if (!machine_id) throw new Error('machine_id is required');
+        const targetM = findMachine(machine_id);
+        if (!targetM) throw new Error(`Machine '${machine_id}' not found in fleet`);
+        const resolvedId = targetM.id;
+        const isWindows = (targetM.os || '').toLowerCase().includes('win');
+
+        let targetDir = dest_dir ? dest_dir.trim() : '';
+        if (!targetDir) {
+          targetDir = isWindows ? 'C:\\Windows\\Temp' : '/tmp';
+        }
+
+        let safeFilename = (filename || '').trim();
+        if (!safeFilename) {
+          const ext = isWindows ? '.ps1' : '.sh';
+          safeFilename = `cvps_script_${Date.now()}${ext}`;
+        }
+        safeFilename = path.basename(safeFilename);
+
+        const sep = isWindows ? '\\' : '/';
+        const remoteFilePath = targetDir.endsWith(sep) ? `${targetDir}${safeFilename}` : `${targetDir}${sep}${safeFilename}`;
+
+        let finalBase64 = content_base64;
+        if (!finalBase64 && content_text !== undefined) {
+          finalBase64 = Buffer.from(content_text, 'utf-8').toString('base64');
+        }
+        if (!finalBase64) throw new Error('content_base64 or content_text is required');
+
+        // 1. Upload file to remote host
+        const writeRes = await sendAgentRequest(resolvedId, 'FileWrite', {
+          path: remoteFilePath,
+          content: finalBase64,
+          is_base64: true
+        }, 30000);
+
+        logAudit('terminal_script_uploaded', req.adminUser || 'user', resolvedId, `Uploaded script for execution: ${remoteFilePath}`);
+
+        // If Linux shell script, make it executable
+        if (!isWindows && (safeFilename.endsWith('.sh') || safeFilename.endsWith('.py') || safeFilename.endsWith('.bin'))) {
+          try {
+            await sendAgentRequest(resolvedId, 'FileRun', {
+              command: '/bin/chmod',
+              args: ['+x', remoteFilePath],
+              background: false
+            }, 5000);
+          } catch (_) {}
+        }
+
+        const argsList = Array.isArray(args) ? args : (typeof args === 'string' && args.trim() ? [args.trim()] : []);
+        const argsStr = argsList.join(' ');
+
+        // 2. Execution routing
+        let targetSessionId = session_id;
+        if (!targetSessionId && run_in_terminal) {
+          for (const [sId, sess] of db.terminalSessions.entries()) {
+            if (sess.machine_id === resolvedId) {
+              targetSessionId = sId;
+              break;
+            }
+          }
+        }
+
+        if (run_in_terminal && targetSessionId && db.terminalSessions.has(targetSessionId)) {
+          let execCmd = '';
+          const lowerName = safeFilename.toLowerCase();
+          if (isWindows) {
+            if (lowerName.endsWith('.ps1')) {
+              execCmd = `& "${remoteFilePath}" ${argsStr}`.trim() + '\r\n';
+            } else if (lowerName.endsWith('.bat') || lowerName.endsWith('.cmd')) {
+              execCmd = `call "${remoteFilePath}" ${argsStr}`.trim() + '\r\n';
+            } else if (lowerName.endsWith('.py')) {
+              execCmd = `python "${remoteFilePath}" ${argsStr}`.trim() + '\r\n';
+            } else {
+              execCmd = `& "${remoteFilePath}" ${argsStr}`.trim() + '\r\n';
+            }
+          } else {
+            if (lowerName.endsWith('.py')) {
+              execCmd = `python3 "${remoteFilePath}" ${argsStr}`.trim() + '\n';
+            } else {
+              execCmd = `"${remoteFilePath}" ${argsStr}`.trim() + '\n';
+            }
+          }
+
+          sendServerCommand(resolvedId, {
+            type: 'TerminalInput',
+            payload: { session_id: targetSessionId, data: execCmd }
+          });
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            mode: 'terminal_stream',
+            session_id: targetSessionId,
+            path: remoteFilePath,
+            filename: safeFilename,
+            command: execCmd.trim(),
+            message: `Script uploaded to ${remoteFilePath} and launched in active terminal session.`
+          }));
+          return;
+        }
+
+        // Run as managed background process job
+        const runRes = await sendAgentRequest(resolvedId, 'FileRun', {
+          path: remoteFilePath,
+          command: remoteFilePath,
+          args: argsList,
+          working_dir: targetDir,
+          background: true,
+          run_as_admin: Boolean(run_as_admin)
+        }, 15000);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          mode: 'process_engine',
+          path: remoteFilePath,
+          filename: safeFilename,
+          pid: runRes.pid,
+          job_id: runRes.job_id,
+          message: `Script uploaded to ${remoteFilePath} and executing as background job (PID: ${runRes.pid || 'N/A'}).`
+        }));
+      } catch (err) {
+        sendHttpError(res, err);
       }
     });
     return;
@@ -8591,6 +8737,18 @@ wssRelay.on('connection', (ws, request) => {
                   message: `Host connection restored. Link active.`
                 }));
               }
+              // Re-issue TerminalStart so agent re-establishes the process if needed
+              sendServerCommand(machineId, {
+                type: 'TerminalStart',
+                payload: {
+                  session_id: tId,
+                  cols: tSess.cols || 80,
+                  rows: tSess.rows || 24,
+                  shell: tSess.shellPref || null,
+                  shell_preference: tSess.shellPref || null,
+                  profile: tSess.profilePref || 'auto'
+                }
+              });
             }
           }
 
@@ -8762,17 +8920,21 @@ wssTerminal.on('connection', (ws, request) => {
         sess.wsBrowser.send(JSON.stringify({
           type: 'status',
           status: 'timeout',
-          error: `Timed out waiting for terminal shell initialization on host '${resolvedMachineId}' (10s).`
+          error: `Timed out waiting for terminal shell initialization on host '${resolvedMachineId}' (25s).`
         }));
       }
-    }, 10000);
+    }, 25000);
 
     db.terminalSessions.set(sessionId, {
       machine_id: resolvedMachineId,
       wsBrowser: ws,
       auth,
       ready: false,
-      shellStartTimer
+      shellStartTimer,
+      cols,
+      rows,
+      shellPref,
+      profilePref
     });
 
     logAudit('terminal_opened', auth.user || 'user', resolvedMachineId, `Terminal session ${sessionId} opened (profile: ${profilePref || 'default'})`);

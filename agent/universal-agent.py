@@ -8827,6 +8827,15 @@ class CyberVPSAgent:
         with self.lock:
             term = self.active_terminals.get(session_id)
         if not term:
+            print(f"[*] Resurrecting shell process for active terminal session {session_id}...", flush=True)
+            try:
+                self.start_terminal_session(session_id=session_id)
+                time.sleep(0.15)
+                with self.lock:
+                    term = self.active_terminals.get(session_id)
+            except Exception as r_err:
+                print(f"[!] Shell resurrection failed: {r_err}", flush=True)
+        if not term:
             return
 
         if platform.system() == "Windows" and text:
@@ -8854,10 +8863,14 @@ class CyberVPSAgent:
             elif ttype == "pty":
                 os.write(term["master"], text.encode("utf-8"))
             elif ttype == "pipe":
-                term["proc"].stdin.write(text.encode("utf-8"))
+                if platform.system() == "Windows":
+                    pipe_text = text.replace("\r\n", "\n").replace("\r", "\r\n")
+                else:
+                    pipe_text = text.replace("\r", "\n")
+                term["proc"].stdin.write(pipe_text.encode("utf-8"))
                 term["proc"].stdin.flush()
-        except Exception:
-            pass
+        except Exception as write_err:
+            print(f"[!] Terminal input write error: {write_err}", flush=True)
 
     def _check_session0_gui_command(self, session_id, term, cmd_line):
         if platform.system() != "Windows":

@@ -2065,6 +2065,14 @@ async function runTests() {
   assert(unbreakableTest.includes('ALL UNBREAKABLE CONNECTION & USER DISCONNECT TESTS PASSED'), 'Unbreakable connection tests must pass');
   console.log('  ✅ Unbreakable Zero-Drop Connection, Session Grace Period & User-Only Disconnect verified.');
 
+  // [TEST 53] Testing Terminal In-Context File/Script Upload & Execution and Shell Session Resilience...
+  console.log('\n[TEST 53] Testing Terminal In-Context File/Script Upload & Execution and Shell Session Resilience...');
+  const termUploadTest = execSync(`node "${require('path').join(__dirname, 'test-terminal-upload-and-run.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(termUploadTest.includes('ALL 5 TERMINAL UPLOAD & RUN AND SESSION RESILIENCE TESTS PASSED'), 'Terminal upload & run tests must pass');
+  console.log('  ✅ Terminal Script/Binary Upload & Run, Keystroke Normalization, and Shell Session Resurrection verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2072,7 +2080,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 52 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 53 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }
