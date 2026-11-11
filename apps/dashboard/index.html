@@ -1980,7 +1980,7 @@
             </div>
           </div>
           <div class="card-body" style="padding:0;">
-            <div class="terminal-container">
+            <div class="terminal-container" onclick="focusTerminalInput()">
               <!-- Window top-bar with Mac dots and metadata -->
               <div class="terminal-header">
                 <div style="display:flex; align-items:center; gap:0.65rem;">
@@ -2028,8 +2028,8 @@
               </div>
 
               <!-- Streamed Terminal Screen -->
-              <div id="terminal-screen-wrapper" style="position:relative;">
-                <div id="terminal-xterm"></div>
+              <div id="terminal-screen-wrapper" style="position:relative;" onclick="focusTerminalInput()">
+                <div id="terminal-xterm" onclick="focusTerminalInput()"></div>
                 <div id="terminal-output" class="terminal-body" style="display:none;" onclick="focusTerminalInput()">
                   <div style="color:var(--text-muted); padding:2rem; text-align:center;">
                     Select a machine or wait for auto-connect...
@@ -6257,6 +6257,14 @@
           if (!appState.selectedMachineId) appState.selectedMachineId = firstOnline.id;
         }
       });
+
+      // Auto-connect terminal if currently on terminal view and idle
+      const termView = document.getElementById('view-terminal');
+      if (termView && termView.style.display !== 'none' && selectTerm && selectTerm.value) {
+        if (!appState.isTerminalConnecting && (!appState.activeTerminalWs || (appState.activeTerminalWs.readyState !== WebSocket.OPEN && appState.activeTerminalWs.readyState !== WebSocket.CONNECTING))) {
+          initTerminalSession(false);
+        }
+      }
     }
 
     // 6. MUTATIONS (CREATE BRIDGE & REVOKE)
@@ -6461,8 +6469,8 @@
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-ChildItem -Force')">Get-ChildItem</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-PSDrive -PSProvider FileSystem')">Disks</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Process | Sort-Object CPU -Descending | Select-Object -First 20')">Processes</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Service | Where-Object Status -eq \\'Running\\' | Select-Object -First 20')">Services</button>
-          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-NetIPAddress | Where-Object AddressFamily -eq \\'IPv4\\' | Select-Object IPAddress, InterfaceAlias')">Network</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-Service | Where-Object Status -eq Running | Select-Object -First 20')">Services</button>
+          <button class="quick-cmd-chip" onclick="sendTerminalCommand('Get-NetIPAddress | Where-Object AddressFamily -eq IPv4 | Select-Object IPAddress, InterfaceAlias')">Network</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('(Get-CimInstance Win32_OperatingSystem).LastBootUpTime')">Uptime</button>
           <button class="quick-cmd-chip" onclick="sendTerminalCommand('clear')">Clear</button>
         `;
@@ -6697,16 +6705,17 @@
 
       let singleUseToken = '';
       try {
+        const pairKey = appConfig.pairingKey || localStorage.getItem('cvps_pairing_key') || 'cybervps_pair_station_2026';
         const tokenRes = await fetch(`${base.replace(/\/$/, '')}/api/v1/terminal/token`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(appConfig.pairingKey ? { 'X-CVPS-Pairing-Key': appConfig.pairingKey } : {})
+            'X-CVPS-Pairing-Key': pairKey
           },
           body: JSON.stringify({
             machine_id: machineId,
             profile: profilePref,
-            pairing_key: appConfig.pairingKey || undefined
+            pairing_key: pairKey
           })
         });
         if (!tokenRes.ok) {
@@ -6727,7 +6736,7 @@
         if (userPromptKey && userPromptKey.trim()) {
           appConfig.pairingKey = userPromptKey.trim();
           localStorage.setItem('cvps_pairing_key', appConfig.pairingKey);
-          initTerminalSession(machineId);
+          initTerminalSession(true);
           return;
         }
         const errMsg = `\x1b[31m[!] Terminal Authentication Error: ${authErr.message}\x1b[0m\r\n\x1b[90mEnsure your Pairing Key is configured in Space Station Settings (gear icon at top).\x1b[0m\r\n`;
@@ -7053,7 +7062,8 @@
       }
       historyIndex = terminalHistory.length;
 
-      const formatted = (cmd.endsWith('\r') || cmd.endsWith('\n')) ? cmd : cmd + '\r\n';
+      // Native PTY / ConPTY expects carriage return ('\r') for command submission, not '\r\n'
+      const formatted = (cmd.endsWith('\r') || cmd.endsWith('\n')) ? cmd.replace(/\r?\n$/, '\r') : cmd + '\r';
       const payload = JSON.stringify({ type: 'input', data: formatted });
       appState.activeTerminalWs.send(payload);
 

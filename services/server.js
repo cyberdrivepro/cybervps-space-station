@@ -8570,10 +8570,14 @@ function verifyTerminalAuthorization(request, parsedUrl) {
       const originHost = originUrl.host.toLowerCase();
       const originHostname = originUrl.hostname.toLowerCase();
 
-      // Explicit trusted origins: exact deployed dashboard, exact deployed backend, and local dev
+      // Explicit trusted origins: exact deployed dashboard, exact deployed backend, Netlify, Render, and local dev
       const explicitTrustedOrigins = new Set([
         'cyberdrivepro.github.io',
         'cybervps-space-station.up.railway.app',
+        'cybervps-render-control.onrender.com',
+        'cybervps-space-station.netlify.app',
+        'localhost',
+        '127.0.0.1',
         hostHeader,
         hostHeader.split(':')[0]
       ]);
@@ -8581,11 +8585,21 @@ function verifyTerminalAuthorization(request, parsedUrl) {
       if (process.env.ALLOWED_ORIGINS) {
         process.env.ALLOWED_ORIGINS.split(',').forEach(o => explicitTrustedOrigins.add(o.trim().toLowerCase()));
       }
+      if (tunnelManager && tunnelManager.publicUrl) {
+        try { explicitTrustedOrigins.add(new URL(tunnelManager.publicUrl).hostname.toLowerCase()); } catch (_) {}
+      }
+      if (db.backends) {
+        for (const b of db.backends.values()) {
+          try { if (b.url) explicitTrustedOrigins.add(new URL(b.url).hostname.toLowerCase()); } catch (_) {}
+        }
+      }
 
-      const isExplicitMatch = explicitTrustedOrigins.has(originHost) || explicitTrustedOrigins.has(originHostname);
-      const isLocalhost = (originHostname === 'localhost' || originHostname === '127.0.0.1');
+      const isHostMatch = (originHost === hostHeader) || (originHostname === hostHeader.split(':')[0]);
+      const isTrustedStatic = explicitTrustedOrigins.has(originHost) || explicitTrustedOrigins.has(originHostname);
+      const isLoopback = (originHostname === '127.0.0.1' || originHostname === 'localhost');
+      const isCustomDomain = db.domains && db.domains.has(originHostname);
 
-      if (!isExplicitMatch && !isLocalhost) {
+      if (!isHostMatch && !isTrustedStatic && !isLoopback && !isCustomDomain) {
         return { authorized: false, error: 'Forbidden: Untrusted WebSocket Origin. Terminal access restricted to authorized Space Station dashboard.', status: 403 };
       }
     } catch (_) {
@@ -9013,7 +9027,7 @@ wssTerminal.on('connection', (ws, request) => {
     if (sess && sess.shellStartTimer) {
       clearTimeout(sess.shellStartTimer);
     }
-    sendServerCommand(machineId, {
+    sendServerCommand(resolvedMachineId, {
       type: 'TerminalKill',
       payload: { session_id: sessionId }
     });
