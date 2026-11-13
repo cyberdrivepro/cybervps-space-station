@@ -522,8 +522,17 @@ function executeAtomicSave() {
       } catch (_) {}
     }
 
-    // Atomic rename into place
-    fs.renameSync(tmpFile, STATE_FILE);
+    // Atomic rename into place with Windows EPERM copy fallback
+    try {
+      fs.renameSync(tmpFile, STATE_FILE);
+    } catch (renameErr) {
+      try {
+        fs.copyFileSync(tmpFile, STATE_FILE);
+        try { fs.unlinkSync(tmpFile); } catch (_) {}
+      } catch (_) {
+        throw renameErr;
+      }
+    }
   } catch (err) {
     console.warn(`[WARN] Could not save persistent state: ${err.message}`);
   }
@@ -5806,7 +5815,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/v1/cluster/nodes/') && pathname.endsWith('/promote') && method === 'POST') {
     const parts = pathname.split('/');
     const nodeId = parts[4];
-    const electRes = clusterState.electLeader(nodeId, clusterState.epoch);
+    const electRes = clusterState.electLeader(nodeId, clusterState.epoch, true);
     if (electRes.success) {
       broadcastBackendPoolToAgents();
       clusterTransport.broadcastStateToPeers();
@@ -6020,8 +6029,8 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', () => {
       try {
-        const { target_backend_id } = JSON.parse(body || '{}');
-        const electRes = clusterState.electLeader(target_backend_id, clusterState.epoch);
+        const { target_backend_id, force } = JSON.parse(body || '{}');
+        const electRes = clusterState.electLeader(target_backend_id, clusterState.epoch, force !== undefined ? Boolean(force) : true);
         if (!electRes.success) throw new Error(electRes.reason);
 
         const bcastCount = broadcastBackendPoolToAgents();

@@ -239,17 +239,17 @@ class ClusterState {
     return true;
   }
 
-  // Quorum Leader Election
-  electLeader(candidateId, candidateTerm) {
+  // Quorum Leader Election (Supports administrative force override to prevent unrecoverable quorum deadlocks)
+  electLeader(candidateId, candidateTerm, force = false) {
     if (!candidateId || !this.nodes.has(candidateId)) return { success: false, reason: 'Invalid candidate' };
     if (this.tombstones.has(candidateId)) return { success: false, reason: 'Candidate tombstoned' };
 
     const quorum = this.getQuorumStatus();
-    if (!quorum.has_quorum) {
+    if (!quorum.has_quorum && !force) {
       return { success: false, reason: 'Quorum lost. Cannot elect leader without majority.' };
     }
 
-    if (candidateTerm && candidateTerm < this.epoch) {
+    if (!force && candidateTerm && candidateTerm < this.epoch) {
       return { success: false, reason: 'Candidate term is stale' };
     }
 

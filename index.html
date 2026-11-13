@@ -372,6 +372,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-wrap: wrap;
       gap: 1rem;
       background: var(--bg-surface);
     }
@@ -458,7 +459,7 @@
       inset: 0;
       background: rgba(0,0,0,0.7);
       backdrop-filter: blur(4px);
-      z-index: 100;
+      z-index: 10000;
       align-items: center;
       justify-content: center;
       padding: 1.5rem;
@@ -492,6 +493,8 @@
       display: flex;
       flex-direction: column;
       height: 560px;
+      max-height: calc(100vh - 180px);
+      min-height: 400px;
       box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
       transition: height 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       position: relative;
@@ -503,7 +506,7 @@
       left: 0 !important;
       right: 0 !important;
       bottom: 0 !important;
-      z-index: 99999 !important;
+      z-index: 1050 !important;
       width: 100vw !important;
       height: 100vh !important;
       max-height: 100vh !important;
@@ -695,12 +698,14 @@
       position: fixed;
       bottom: 1.5rem;
       right: 1.5rem;
-      z-index: 200;
+      z-index: 20000;
       display: flex;
       flex-direction: column;
       gap: 0.5rem;
+      pointer-events: none;
     }
     .toast {
+      pointer-events: auto;
       padding: 0.75rem 1.15rem;
       border-radius: var(--radius-sm);
       font-size: 0.82rem;
@@ -880,11 +885,54 @@
         top: 0;
         bottom: 0;
         box-shadow: var(--shadow-lg);
+        z-index: 9999;
       }
       aside.open { left: 0; }
-      #sidebar-overlay.active { display: block; }
+      #sidebar-overlay.active { display: block; z-index: 9998; }
       .mobile-menu-btn { display: block; }
       .content-body { padding: 1.25rem; }
+    }
+    @media (max-width: 768px) {
+      header {
+        padding: 0.5rem 1rem;
+        height: auto;
+        min-height: var(--header-height);
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .header-left {
+        flex: 1;
+        min-width: 0;
+      }
+      .breadcrumbs {
+        font-size: 0.78rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .header-right {
+        gap: 0.4rem;
+        flex-wrap: wrap;
+      }
+      .header-right .btn span {
+        display: none;
+      }
+      .header-right .btn {
+        padding: 0.4rem 0.6rem;
+      }
+      .card-header {
+        padding: 0.85rem 1rem;
+        gap: 0.75rem;
+      }
+      .modal-backdrop {
+        padding: 0.5rem;
+      }
+      .modal {
+        max-height: 94vh;
+      }
+      .terminal-container {
+        height: 480px;
+      }
     }
   </style>
 </head>
@@ -1465,7 +1513,7 @@
                 <option value="cluster">All Cluster Backends</option>
               </select>
               <input type="text" id="backend-inventory-search" class="form-control" placeholder="Search path, backend, service..." style="font-size:0.8rem; padding:0.35rem 0.6rem; max-width:220px;" oninput="filterBackendInventory()">
-              <button class="btn btn-primary" onclick="openAddBackendModal()" style="font-size:0.8rem; padding:0.35rem 0.75rem;" title="Register a new backend or custom installation">➕ Add Backend</button>
+              <button class="btn btn-primary" onclick="openAddCustomBackendModal()" style="font-size:0.8rem; padding:0.35rem 0.75rem;" title="Register a new backend or custom installation">➕ Add Backend</button>
               <button class="btn btn-secondary" onclick="scanSelectedMachineInventory()" style="font-size:0.8rem; padding:0.35rem 0.75rem;" title="Ask running agent or cluster to inspect local paths">🔍 Scan Machine</button>
               <button class="btn btn-secondary" onclick="refreshBackendInventory()" style="font-size:0.8rem; padding:0.35rem 0.65rem;">🔄 Refresh</button>
               <button class="btn btn-secondary" onclick="exportBackendInventoryJson()" style="font-size:0.8rem; padding:0.35rem 0.65rem;">📥 Export JSON</button>
@@ -1988,17 +2036,27 @@
               <div class="terminal-header">
                 <div style="display:flex; align-items:center; gap:0.65rem;">
                   <span style="display:inline-flex; gap:5px;">
-                    <span style="width:10px; height:10px; border-radius:50%; background:#ef4444; display:inline-block;"></span>
-                    <span style="width:10px; height:10px; border-radius:50%; background:#eab308; display:inline-block;"></span>
-                    <span style="width:10px; height:10px; border-radius:50%; background:#22c55e; display:inline-block;"></span>
+                    <span style="width:10px; height:10px; border-radius:50%; background:#ef4444; display:inline-block; cursor:pointer;" onclick="clearTerminalScreen()" title="Clear terminal screen"></span>
+                    <span style="width:10px; height:10px; border-radius:50%; background:#eab308; display:inline-block; cursor:pointer;" onclick="reconnectTerminalSession()" title="Reconnect session"></span>
+                    <span style="width:10px; height:10px; border-radius:50%; background:#22c55e; display:inline-block; cursor:pointer;" onclick="toggleTerminalFullscreen()" title="Maximize / Collapse full screen"></span>
                   </span>
                   <span id="terminal-session-label" style="font-weight:600; color:var(--text-main);">Session: Idle</span>
                   <span id="terminal-machine-meta" style="color:var(--text-muted); font-size:0.72rem; padding: 0.15rem 0.5rem; background:rgba(255,255,255,0.05); border-radius:4px; font-family:var(--font-mono);">No Target</span>
                 </div>
-                <div style="display:flex; align-items:center; gap:0.5rem;">
+                <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
                   <span id="terminal-target-badge" class="badge badge-subtle" title="Windows Session 0 Isolation: Background Shell vs Interactive Desktop" style="font-size:0.68rem; font-weight:600; background:rgba(56,189,248,0.1); color:#38bdf8; border:1px solid rgba(56,189,248,0.25);">Target: Session 0 (Headless)</span>
                   <span id="terminal-profile-badge" class="badge" style="display:none; font-size:0.7rem; font-weight:700;"></span>
                   <span id="terminal-status-badge" class="badge badge-subtle">Disconnected</span>
+                  <!-- Dedicated In-Terminal Actions (Always accessible, even when maximized) -->
+                  <button id="terminal-header-upload-btn" class="btn btn-secondary" onclick="openTerminalUploadModal()" title="Upload & Run Script on Host" style="font-size:0.72rem; padding:0.2rem 0.5rem; background:rgba(0,240,255,0.1); border-color:rgba(0,240,255,0.3); color:var(--accent-cyan);">
+                    ⬆️ Run
+                  </button>
+                  <button id="terminal-header-cf-btn" class="btn btn-secondary" onclick="openCloudflareTunnelModal()" title="Cloudflare Quick Tunnel" style="font-size:0.72rem; padding:0.2rem 0.5rem; border-color:rgba(249,115,22,0.4); color:#fb923c; background:rgba(249,115,22,0.08);">
+                    🌐 Tunnel
+                  </button>
+                  <button id="terminal-header-collapse-btn" class="btn btn-secondary" onclick="toggleTerminalFullscreen()" title="Toggle Fullscreen Terminal" style="font-size:0.72rem; padding:0.2rem 0.5rem;">
+                    ⛶ Maximize
+                  </button>
                 </div>
               </div>
 
@@ -2572,9 +2630,9 @@
                   </div>
                   <div class="protocol-status-box" id="rustdesk-status-box">
                     <div>Installed: <span id="rustdesk-installed-label" style="color:var(--text-primary);">--</span></div>
-                    <div>RustDesk ID: <span id="rustdesk-id-label" style="color:var(--text-primary);">--</span></div>
+                    <div>RustDesk ID: <span id="rustdesk-protocol-id-label" style="color:var(--text-primary);">--</span></div>
                     <div>Service: <span id="rustdesk-service-label" style="color:var(--text-primary);">--</span></div>
-                    <div>Direct VIP: <span id="rustdesk-vip-label" style="color:var(--text-primary);">10.77.0.x</span></div>
+                    <div>Direct VIP: <span id="rustdesk-protocol-vip-label" style="color:var(--text-primary);">10.77.0.x</span></div>
                   </div>
                 </div>
 
@@ -4433,11 +4491,11 @@
   </div>
 
   <!-- MODAL: ADD CUSTOM BACKEND -->
-  <div id="modal-add-backend" class="modal-backdrop">
+  <div id="modal-add-custom-backend" class="modal-backdrop">
     <div class="modal" style="max-width:540px;">
       <div class="modal-header">
         <strong style="color:var(--text-primary); font-size:1rem;">➕ Register New Backend Service</strong>
-        <button class="btn-icon" onclick="closeAddBackendModal()">&times;</button>
+        <button class="btn-icon" onclick="closeAddCustomBackendModal()">&times;</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
@@ -4483,8 +4541,8 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeAddBackendModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitAddBackend()">➕ Register Backend</button>
+        <button class="btn btn-secondary" onclick="closeAddCustomBackendModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddCustomBackend()">➕ Register Backend</button>
       </div>
     </div>
   </div>
@@ -5278,6 +5336,9 @@
         <button class="btn btn-secondary" onclick="closeCreateSandboxModal()">Cancel</button>
         <button class="btn btn-primary" onclick="submitCreateSandbox()">Create Sandbox</button>
       </div>
+    </div>
+  </div>
+
   <!-- MODAL: REMOTE DESKTOP CONNECTION GUIDE -->
   <div id="modal-rdp-connect" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeRdpConnectModal();">
     <div class="modal" style="max-width:580px;">
@@ -7325,12 +7386,16 @@
     function toggleTerminalFullscreen() {
       const container = document.querySelector('#view-terminal .terminal-container') || document.querySelector('.terminal-container');
       const btn = document.getElementById('btn-terminal-fullscreen');
+      const headerBtn = document.getElementById('terminal-header-collapse-btn');
       if (!container) return;
       const isExpanded = container.classList.toggle('expanded');
       if (btn) {
         btn.innerHTML = isExpanded 
           ? '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M4 14h6v6m10-10h-6V4m0 6 7-7M3 21l7-7"/></svg>Collapse' 
           : '<svg viewBox="0 0 24 24" style="width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; vertical-align:middle; margin-right:4px;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>Maximize';
+      }
+      if (headerBtn) {
+        headerBtn.innerHTML = isExpanded ? '⛶ Collapse' : '⛶ Maximize';
       }
       setTimeout(fitTerminalSafely, 80);
       setTimeout(fitTerminalSafely, 200);
@@ -8481,9 +8546,9 @@
       // 3. RustDesk Card
       const rustdeskBadge = document.getElementById('badge-rustdesk-status');
       const rustdeskInstalled = document.getElementById('rustdesk-installed-label');
-      const rustdeskId = document.getElementById('rustdesk-id-label');
+      const rustdeskId = document.getElementById('rustdesk-protocol-id-label') || document.getElementById('rustdesk-id-label');
       const rustdeskSvc = document.getElementById('rustdesk-service-label');
-      const rustdeskVip = document.getElementById('rustdesk-vip-label');
+      const rustdeskVip = document.getElementById('rustdesk-protocol-vip-label') || document.getElementById('rustdesk-vip-label');
       const btnConnectRustdesk = document.getElementById('btn-connect-rustdesk');
 
       const rd = data.rustdesk || {};
@@ -13184,7 +13249,7 @@
           <div style="text-align:center; padding:2rem; color:var(--text-muted); background:var(--bg-card); border-radius:6px; border:1px dashed var(--border-color);">
             No backend installations found matching your criteria.<br/>
             <div style="margin-top:0.75rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap;">
-              <button class="btn btn-primary btn-sm" onclick="openAddBackendModal()">➕ Register Custom Backend</button>
+              <button class="btn btn-primary btn-sm" onclick="openAddCustomBackendModal()">➕ Register Custom Backend</button>
               <button class="btn btn-secondary btn-sm" onclick="document.getElementById('backend-inventory-scope').value='cluster'; onBackendScopeChanged();">🌐 View All Cluster Backends</button>
               <button class="btn btn-secondary btn-sm" onclick="scanSelectedMachineInventory()">🔍 Scan Backends</button>
             </div>
@@ -13565,7 +13630,7 @@
       }
     }
 
-    function openAddBackendModal() {
+    function openAddCustomBackendModal() {
       const select = document.getElementById('add-backend-machine-select');
       if (select) {
         const options = [
@@ -13583,14 +13648,22 @@
       document.getElementById('add-backend-config-path').value = '';
       document.getElementById('add-backend-log-path').value = '';
       document.getElementById('add-backend-data-path').value = '';
-      document.getElementById('modal-add-backend').classList.add('active');
+      const m = document.getElementById('modal-add-custom-backend') || document.getElementById('modal-add-backend');
+      if (m) {
+        m.classList.add('active');
+        m.style.display = 'flex';
+      }
     }
 
-    function closeAddBackendModal() {
-      document.getElementById('modal-add-backend').classList.remove('active');
+    function closeAddCustomBackendModal() {
+      const m = document.getElementById('modal-add-custom-backend') || document.getElementById('modal-add-backend');
+      if (m) {
+        m.classList.remove('active');
+        m.style.display = 'none';
+      }
     }
 
-    async function submitAddBackend() {
+    async function submitAddCustomBackend() {
       const machineId = document.getElementById('add-backend-machine-select').value;
       const name = document.getElementById('add-backend-name').value.trim();
       const category = document.getElementById('add-backend-category').value;
@@ -13624,7 +13697,7 @@
 
       if (res.ok) {
         showToast('Custom backend registered successfully', 'success');
-        closeAddBackendModal();
+        closeAddCustomBackendModal();
         await refreshBackendInventory();
       } else {
         showToast('Registration error: ' + res.error, 'error');
@@ -20380,7 +20453,7 @@ class InfrastructureView {
       <div class="card attributes-card">
         <div class="card-header">
           <h3>Discovered Node Attributes & Filterable Telemetry</h3>
-          <input type="text" id="attr-filter-input" placeholder="Filter attribute key or value..." onkeyup="InfrastructureView.filterAttributes()" />
+          <input type="text" id="infra-attr-filter-input" placeholder="Filter attribute key or value..." onkeyup="InfrastructureView.filterAttributes()" />
         </div>
 
         <table class="data-table">
@@ -20433,7 +20506,8 @@ class InfrastructureView {
   }
 
   static filterAttributes() {
-    const q = (document.getElementById('attr-filter-input').value || '').toLowerCase();
+    const input = document.getElementById('infra-attr-filter-input') || document.getElementById('attr-filter-input');
+    const q = (input?.value || '').toLowerCase();
     const rows = document.querySelectorAll('.attr-row');
     rows.forEach(r => {
       const text = r.innerText.toLowerCase();
@@ -20909,7 +20983,9 @@ class PathRegistryView {
   }
 
   static openAddBackend(machineId) {
-    if (typeof window !== 'undefined' && typeof window.openAddBackendModal === 'function') {
+    if (typeof window !== 'undefined' && typeof window.openAddCustomBackendModal === 'function') {
+      window.openAddCustomBackendModal();
+    } else if (typeof window !== 'undefined' && typeof window.openAddBackendModal === 'function') {
       window.openAddBackendModal();
     } else {
       const name = prompt('Enter backend name:');
@@ -21038,7 +21114,7 @@ class ConnectionGraphView {
           <span><span class="dot dot-machine"></span> Fleet Machine</span>
           <span><span class="dot dot-backend"></span> Authoritative Backend</span>
         </div>
-        <svg id="topology-svg" width="100%" height="520" viewBox="0 0 900 520">
+        <svg id="mesh-graph-topology-svg" width="100%" height="520" viewBox="0 0 900 520">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#00ffcc" />
