@@ -5673,6 +5673,33 @@
        JAVASCRIPT APPLICATION ENGINE (ZERO FAKE DATA / PURE API DRIVEN)
        ========================================================================== -->
   <script>
+    // Global Inviolable Shield: Prevents any unhandled exception or promise rejection from halting the UI
+    window.addEventListener('error', function(event) {
+      if (!event.error && !event.message) return;
+      console.warn('[CyberVPS Inviolable Shield] Handled runtime error:', event.message || event.error);
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+    });
+
+    window.addEventListener('unhandledrejection', function(event) {
+      console.warn('[CyberVPS Inviolable Shield] Handled promise rejection:', event.reason);
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+    });
+
+    // Safe Storage Wrapper (Prevents DOMException/SecurityError in private browsing)
+    const safeStorage = {
+      _mem: {},
+      getItem(k) {
+        try { return window.localStorage.getItem(k); } catch (_) { return this._mem[k] || null; }
+      },
+      setItem(k, v) {
+        try { window.localStorage.setItem(k, v); } catch (_) { this._mem[k] = String(v); }
+      },
+      removeItem(k) {
+        try { window.localStorage.removeItem(k); } catch (_) { delete this._mem[k]; }
+      }
+    };
+    window.safeStorage = safeStorage;
+
     // Global Safe String Escaping Helpers for HTML & JS inline event handlers
     function escapeHtml(str) {
       if (str === null || str === undefined) return '';

@@ -68,6 +68,24 @@ except Exception:
     ctypes = None
     wintypes = None
 
+# Global Inviolability & Resilience Hooks (Never crash on background worker exceptions)
+def _global_agent_excepthook(args_or_type, val=None, tb=None):
+    try:
+        if hasattr(args_or_type, "exc_type"):  # threading.ExceptHookArgs
+            exc_t = args_or_type.exc_type.__name__ if args_or_type.exc_type else "Exception"
+            exc_v = str(args_or_type.exc_value)
+            t_name = args_or_type.thread.name if getattr(args_or_type, "thread", None) else "WorkerThread"
+            print(f"[!] [Agent Inviolability Guard] Uncaught in {t_name}: {exc_t}: {exc_v}", flush=True)
+        else:
+            exc_t = args_or_type.__name__ if hasattr(args_or_type, "__name__") else "Exception"
+            print(f"[!] [Agent Inviolability Guard] Uncaught: {exc_t}: {val}", flush=True)
+    except Exception:
+        pass
+
+if hasattr(threading, "excepthook"):
+    threading.excepthook = _global_agent_excepthook
+sys.excepthook = _global_agent_excepthook
+
 try:
     import winreg
 except ImportError:
