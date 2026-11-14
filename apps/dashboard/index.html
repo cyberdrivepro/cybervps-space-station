@@ -1137,7 +1137,7 @@
               </div>
             </div>
             <div class="copy-block">
-              <code id="cmd-win">& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1')))</code>
+              <code id="cmd-win">& ([scriptblock]::Create(((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1').TrimStart([char]65279))))</code>
               <button class="btn btn-secondary" onclick="copyText('cmd-win')">Copy</button>
             </div>
             <div style="margin-top:1rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
@@ -1290,7 +1290,11 @@
               <div class="card-title">Enrolled Instances Fleet</div>
               <div class="card-desc">Remote systems, cloud VPS, and development sandboxes linked to this station</div>
             </div>
-            <button class="btn btn-primary" onclick="openBridgeModal()">Bridge Port</button>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <button class="btn btn-secondary" onclick="pruneStaleMachines()" style="font-size:0.78rem; padding:0.35rem 0.85rem;" title="Purge leftover mock/test nodes and deduplicate ghost records">🧹 Clean Fleet</button>
+              <button class="btn btn-secondary" onclick="loadState(true)" style="font-size:0.78rem; padding:0.35rem 0.85rem;">🔄 Refresh</button>
+              <button class="btn btn-primary" onclick="openBridgeModal()">+ Bridge Port</button>
+            </div>
           </div>
           <div class="table-container">
             <table>
@@ -6207,7 +6211,27 @@
           appState.authRequired = false;
         }
 
-        if (mRes.ok) appState.machines = mRes.data || [];
+        if (mRes.ok) {
+          const rawMachines = mRes.data || [];
+          const deduplicated = [];
+          const seenHuid = new Set();
+          const seenHost = new Set();
+          for (const m of rawMachines) {
+            if (m.is_bridge_client || (m.id && m.id.startsWith('win_bridge_'))) continue;
+            const hUuid = m.hardware_uuid ? String(m.hardware_uuid).toLowerCase().trim() : null;
+            const hName = m.hostname ? String(m.hostname).toLowerCase().trim() : null;
+            if (hUuid && hUuid.length >= 16) {
+              if (seenHuid.has(hUuid)) continue;
+              seenHuid.add(hUuid);
+            }
+            if (hName && (hName.startsWith('desktop-') || hName.startsWith('win-') || hName.startsWith('laptop-'))) {
+              if (seenHost.has(hName)) continue;
+              seenHost.add(hName);
+            }
+            deduplicated.push(m);
+          }
+          appState.machines = deduplicated;
+        }
         if (bRes.ok) appState.bridges = bRes.data || [];
         if (vRes.ok) {
           if (Array.isArray(vRes.data)) {
@@ -6397,6 +6421,23 @@
         </tr>
       `;
       }).join('');
+    }
+
+    async function pruneStaleMachines() {
+      if (!confirm('Clean Fleet: Purge stale mock test nodes and deduplicate ghost records?')) return;
+      showToast('Pruning stale instances and ghost duplicates...', 'info');
+      try {
+        const res = await apiRequest('/api/v1/machines/prune', { method: 'POST' });
+        if (res && res.ok !== false) {
+          const data = res.data || res;
+          showToast(`Fleet Cleaned! Pruned ${data.pruned_count || 0} stale records.`, 'success');
+          await loadState(true);
+        } else {
+          showToast('Failed to prune stale machines: ' + ((res && res.error) || 'Unknown error'), 'error');
+        }
+      } catch (err) {
+        showToast('Error pruning fleet: ' + err.message, 'error');
+      }
     }
 
     function renderBridgeTable() {
@@ -16524,7 +16565,7 @@
         const res = await apiRequest('/api/v1/enrollment/bootstrap', { method: 'POST' });
         const data = (res && res.data) ? res.data : res;
         if (res && res.ok !== false && data && data.success && data.ticket) {
-          winCmdEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${baseCmdUrl}/install.ps1?ticket=${data.ticket}')))`;
+          winCmdEl.innerText = `& ([scriptblock]::Create(((Invoke-RestMethod '${baseCmdUrl}/install.ps1?ticket=${data.ticket}').TrimStart([char]65279))))`;
           if (badge) {
             badge.innerText = `● Ticket Active (${data.ticket.slice(0, 14)}...)`;
             badge.style.color = 'var(--status-success)';
@@ -16573,7 +16614,7 @@
           showToast('Generating secure 1-click Windows installer ticket...', 'info');
           const data = await mintOneClickWindowsInstaller();
           if (data && data.ticket) {
-            text = `& ([scriptblock]::Create((Invoke-RestMethod '${getActiveBaseUrl()}/install.ps1?ticket=${data.ticket}')))`;
+            text = `& ([scriptblock]::Create(((Invoke-RestMethod '${getActiveBaseUrl()}/install.ps1?ticket=${data.ticket}').TrimStart([char]65279))))`;
             el.innerText = text;
           } else {
             showToast('1-Click Provisioning Error: Control Plane rejected ticket request. Please check pairing key.', 'error');
@@ -19779,7 +19820,7 @@ class FleetView {
               <tr>
                 <td colspan="6" class="text-center empty-state">
                   <p>No instances enrolled yet.</p>
-                  <code>& ([scriptblock]::Create((Invoke-RestMethod '${backendUrl}/install.ps1')))</code>
+                  <code>& ([scriptblock]::Create(((Invoke-RestMethod '${backendUrl}/install.ps1').TrimStart([char]65279))))</code>
                 </td>
               </tr>
             ` : fleet.map(node => `

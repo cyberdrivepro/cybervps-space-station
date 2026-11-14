@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # CyberVPS SPACE STATION - Ultra-Fast Zero-Prompt Windows Host Agent Installer
 # Cross-Platform Host Agent Installation & 24/7 Background Service Setup
 # Official Repository: https://github.com/cyberdrivepro/cybervps-space-station

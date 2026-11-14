@@ -54,7 +54,7 @@ class FleetView {
               <tr>
                 <td colspan="6" class="text-center empty-state">
                   <p>No instances enrolled yet.</p>
-                  <code>& ([scriptblock]::Create((Invoke-RestMethod '${backendUrl}/install.ps1')))</code>
+                  <code>& ([scriptblock]::Create(((Invoke-RestMethod '${backendUrl}/install.ps1').TrimStart([char]65279))))</code>
                 </td>
               </tr>
             ` : fleet.map(node => `

@@ -34,7 +34,8 @@ class WindowsPortBridgeClient {
   constructor(options = {}) {
     this.serverUrl = options.serverUrl || 'http://localhost:8080';
     this.wsUrl = this.serverUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-    this.machineId = options.machineId || ('win_bridge_' + crypto.randomBytes(4).toString('hex'));
+    const hostHash = crypto.createHash('sha256').update(require('os').hostname() + '-' + (process.env.USERNAME || '')).digest('hex').slice(0, 8);
+    this.machineId = options.machineId || ('win_bridge_' + hostHash);
     this.token = options.token || process.env.CYBERVPS_AGENT_TOKEN || process.env.ENROLLMENT_TOKEN || '';
     this.activeMappings = new Map(); // id -> { machineId, remotePort, localPort, server, activeSockets }
     this.relayWs = null;
@@ -64,6 +65,12 @@ class WindowsPortBridgeClient {
 
       this.relayWs.on('open', () => {
         console.log('✅ Connected to Space Station Relay.');
+        let hwUuid = null;
+        try {
+          const cp = require('child_process');
+          hwUuid = cp.execSync('powershell.exe -NoProfile -Command "(Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue).UUID"', { encoding: 'utf8', timeout: 3000 }).trim();
+        } catch (_) {}
+
         this.relayWs.send(JSON.stringify({
           type: 'Auth',
           payload: {
@@ -74,7 +81,11 @@ class WindowsPortBridgeClient {
             os: 'Windows',
             os_version: '11/Server',
             arch: process.arch,
-            capabilities: { is_root: false, pty_supported: true }
+            hardware_uuid: hwUuid,
+            client_type: 'bridge_client',
+            role: 'bridge_client',
+            is_bridge_client: true,
+            capabilities: { is_root: false, pty_supported: true, bridge_client: true }
           }
         }));
 

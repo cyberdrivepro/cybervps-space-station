@@ -801,7 +801,7 @@
           <span class="code-title">Verified PowerShell 1-Liner (Single Round-Trip Provisioning)</span>
           <span id="win-copy-status" style="font-size:0.75rem; color:var(--accent-cyan); display:none;">✓ Copied to clipboard!</span>
         </div>
-        <div class="code-box" id="win-cmd-text">&amp; ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1'))) -Profile both</div>
+        <div class="code-box" id="win-cmd-text">&amp; ([scriptblock]::Create(((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1').TrimStart([char]65279)))) -Profile both</div>
       </div>
 
       <div class="steps-grid">
@@ -1193,7 +1193,7 @@
       const profParam = selectedProfile ? ` -Profile ${selectedProfile}` : '';
       
       if (winEl) {
-        winEl.innerText = `& ([scriptblock]::Create((Invoke-RestMethod '${base}/install.ps1${ticketParam}')))${profParam}`;
+        winEl.innerText = `& ([scriptblock]::Create(((Invoke-RestMethod '${base}/install.ps1${ticketParam}').TrimStart([char]65279))))${profParam}`;
       }
       if (linuxEl) {
         linuxEl.innerText = `curl -sSL "${base}/install.sh${ticketParam}" | bash`;
@@ -1243,7 +1243,7 @@
       // Fallback blob generation if remote download is blocked by sandbox
       const filename = prof === 'admin' ? 'CyberVPS-Install-Admin.cmd' : (prof === 'user' ? 'CyberVPS-Install-User.cmd' : 'CyberVPS-Install.cmd');
       const ps1Url = `${base}/install.ps1?ticket=${ticket}`;
-      const cmdText = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${base}\r\necho [*] Bootstrap Ticket:     ${ticket}\r\necho [*] Execution Profile:    ${prof}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod '${ps1Url}'))) -Profile '${prof}' -RegisterProtocolHandler"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
+      const cmdText = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${base}\r\necho [*] Bootstrap Ticket:     ${ticket}\r\necho [*] Execution Profile:    ${prof}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create(((Invoke-RestMethod '${ps1Url}').TrimStart([char]65279)))) -Profile '${prof}' -RegisterProtocolHandler"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
 
       const blob = new Blob([cmdText], { type: 'application/x-bat' });
       const link = document.createElement('a');

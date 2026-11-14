@@ -131,7 +131,9 @@ const db = {
   blackoutStates: new Map(), // machine_id -> { active, incident }
   pillarProtectedFiles: new Map(), // machine_id -> [ProtectedFile]
   pillarIncidents: new Map(), // machine_id -> [Incident]
-  downloadTickets: new Map() // ticket -> { ticket, machine_id, path, filename, created_at, expires_at, user }
+  downloadTickets: new Map(), // ticket -> { ticket, machine_id, path, filename, created_at, expires_at, user }
+  machineAliases: new Map(), // alias_id / transient_id -> canonical_machine_id
+  bridgeClients: new Map() // bridge_id -> { canonical_id, ws, connected_at }
 };
 
 const canaryRolloutManager = new CanaryRolloutManager({ db });
@@ -395,7 +397,42 @@ function loadPersistentState() {
 
     if (data) {
       if (Array.isArray(data.machines)) {
+        const seenHuid = new Map();
+        const seenHost = new Map();
         for (const m of data.machines) {
+          if (!m || !m.id) continue;
+          // Filter out transient port bridge connections from persistent fleet state
+          if (m.is_bridge_client || (m.id && m.id.startsWith('win_bridge_'))) {
+            continue;
+          }
+          // Deduplicate by hardware UUID (HUID)
+          const cleanHw = m.hardware_uuid ? String(m.hardware_uuid).trim().toLowerCase() : null;
+          if (cleanHw && cleanHw.length >= 16) {
+            if (seenHuid.has(cleanHw)) {
+              const existing = seenHuid.get(cleanHw);
+              if (!existing.id.startsWith('cvps_') && m.id.startsWith('cvps_')) {
+                db.machines.delete(existing.id);
+                seenHuid.set(cleanHw, m);
+                db.machines.set(m.id, m);
+              }
+              continue;
+            }
+            seenHuid.set(cleanHw, m);
+          }
+          // Deduplicate by Hostname for physical systems
+          const cleanHost = m.hostname ? String(m.hostname).trim().toLowerCase() : null;
+          if (cleanHost && (cleanHost.startsWith('desktop-') || cleanHost.startsWith('win-') || cleanHost.startsWith('laptop-'))) {
+            if (seenHost.has(cleanHost)) {
+              const existing = seenHost.get(cleanHost);
+              if (!existing.id.startsWith('cvps_') && m.id.startsWith('cvps_')) {
+                db.machines.delete(existing.id);
+                seenHost.set(cleanHost, m);
+                db.machines.set(m.id, m);
+              }
+              continue;
+            }
+            seenHost.set(cleanHost, m);
+          }
           db.machines.set(m.id, m);
           if (m.virtual_ip) {
             vpnPool.allocated.set(m.id, m.virtual_ip);
@@ -486,7 +523,7 @@ function executeAtomicSave() {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     const data = {
-      machines: Array.from(db.machines.values()),
+      machines: Array.from(db.machines.values()).filter(m => !m.is_bridge_client && !(m.id && m.id.startsWith('win_bridge_'))),
       ports: Array.from(db.ports.entries()).map(([mid, pts]) => ({ machine_id: mid, ports: pts })),
       bridgeMappings: Array.from(db.bridgeMappings.values()),
       tunnels: Array.from(db.tunnels.values()),
@@ -1078,9 +1115,67 @@ function getAllClusterBackends() {
   return list;
 }
 
+function findCanonicalMachine({ machine_id, hardware_uuid, hardware_serial, hostname, os }) {
+  if (!db.machines) return null;
+  // 1. Direct machine_id match
+  if (machine_id && db.machines.has(machine_id)) {
+    return db.machines.get(machine_id);
+  }
+  // 2. Machine alias match
+  if (machine_id && db.machineAliases && db.machineAliases.has(machine_id)) {
+    const canonicalId = db.machineAliases.get(machine_id);
+    if (canonicalId && db.machines.has(canonicalId)) {
+      return db.machines.get(canonicalId);
+    }
+  }
+  // 3. Hardware UUID match (Double match: system HUID)
+  const cleanHwUuid = hardware_uuid ? String(hardware_uuid).trim().toLowerCase() : null;
+  if (cleanHwUuid && cleanHwUuid !== 'none' && cleanHwUuid !== 'unknown' && cleanHwUuid.length >= 16) {
+    for (const m of db.machines.values()) {
+      if (m.hardware_uuid && String(m.hardware_uuid).trim().toLowerCase() === cleanHwUuid) {
+        return m;
+      }
+    }
+  }
+  // 4. Hardware Serial match
+  const cleanSerial = hardware_serial ? String(hardware_serial).trim().toLowerCase() : null;
+  const isGenericSerial = !cleanSerial || cleanSerial === 'none' || cleanSerial === '0' || cleanSerial === 'default string' || cleanSerial === 'to be filled by o.e.m.' || cleanSerial === 'system serial number';
+  if (cleanSerial && !isGenericSerial && cleanSerial.length >= 6) {
+    for (const m of db.machines.values()) {
+      if (m.hardware_serial && String(m.hardware_serial).trim().toLowerCase() === cleanSerial) {
+        return m;
+      }
+    }
+  }
+  // 5. Hostname + OS match (for win_bridge_* or reconnect on same host)
+  if (hostname) {
+    const cleanHost = String(hostname).trim().toLowerCase();
+    const cleanOs = os ? String(os).trim().toLowerCase() : '';
+    const isGenericHost = cleanHost === 'localhost' || cleanHost === 'root' || cleanHost === 'ubuntu' || cleanHost === 'vps' || cleanHost === 'debian' || cleanHost === 'test';
+    if (!isGenericHost) {
+      for (const m of db.machines.values()) {
+        const mHost = m.hostname ? String(m.hostname).trim().toLowerCase() : '';
+        const mOs = m.os ? String(m.os).trim().toLowerCase() : '';
+        if (mHost === cleanHost) {
+          if (!cleanOs || !mOs || mOs === cleanOs || mOs.includes(cleanOs) || cleanOs.includes(mOs)) {
+            if (machine_id && (machine_id.startsWith('win_bridge_') || machine_id.toLowerCase().includes(cleanHost.replace(/[^a-z0-9]/g, '')) || m.id.toLowerCase().includes(cleanHost.replace(/[^a-z0-9]/g, '')))) {
+              return m;
+            }
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function findMachine(idOrHost) {
   if (!idOrHost) return null;
   if (db.machines.has(idOrHost)) return db.machines.get(idOrHost);
+  if (db.machineAliases && db.machineAliases.has(idOrHost)) {
+    const cId = db.machineAliases.get(idOrHost);
+    if (cId && db.machines.has(cId)) return db.machines.get(cId);
+  }
   const targetLower = String(idOrHost).toLowerCase().trim();
   for (const [id, m] of db.machines.entries()) {
     if (String(id).toLowerCase().trim() === targetLower) return m;
@@ -1106,7 +1201,7 @@ function getAgentSocket(machineId) {
 
   const targetLower = String(machineId).toLowerCase().trim();
   for (const [id, ws] of db.connectedAgents.entries()) {
-    if (String(id).toLowerCase().trim() === targetLower && ws.readyState === WebSocket.OPEN) {
+    if (ws && String(id).toLowerCase().trim() === targetLower && ws.readyState === WebSocket.OPEN) {
       return ws;
     }
   }
@@ -1117,7 +1212,7 @@ function getAgentSocket(machineId) {
     if (wsFromId && wsFromId.readyState === WebSocket.OPEN) return wsFromId;
 
     for (const [id, ws] of db.connectedAgents.entries()) {
-      if (ws.readyState !== WebSocket.OPEN) continue;
+      if (!ws || ws.readyState !== WebSocket.OPEN) continue;
       const agentM = db.machines.get(id);
       if (agentM) {
         if (agentM.id === m.id) return ws;
@@ -1131,7 +1226,7 @@ function getAgentSocket(machineId) {
   const normTarget = String(machineId).toLowerCase().replace(/^cvps_/, '').replace(/[^a-z0-9]/g, '');
   if (normTarget) {
     for (const [id, ws] of db.connectedAgents.entries()) {
-      if (ws.readyState !== WebSocket.OPEN) continue;
+      if (!ws || ws.readyState !== WebSocket.OPEN) continue;
       const normId = String(id).toLowerCase().replace(/^cvps_/, '').replace(/[^a-z0-9]/g, '');
       if (normId === normTarget || (normId.length >= 8 && normTarget.length >= 8 && (normId.startsWith(normTarget) || normTarget.startsWith(normId)))) {
         return ws;
@@ -2773,7 +2868,7 @@ const server = http.createServer(async (req, res) => {
 
     const ps1Url = `${targetHost}/install.ps1?ticket=${capability}`;
     const filename = profile === 'admin' ? 'CyberVPS-Install-Admin.cmd' : (profile === 'user' ? 'CyberVPS-Install-User.cmd' : 'CyberVPS-Install.cmd');
-    const cmdContent = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${targetHost}\r\necho [*] Bootstrap Ticket:     ${capability}\r\necho [*] Execution Profile:    ${profile}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod '${ps1Url}'))) -Profile '${profile}' -RegisterProtocolHandler"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
+    const cmdContent = `@echo off\r\nsetlocal\r\ntitle CyberVPS Space Station - Host Agent Setup\r\necho ================================================================\r\necho    CYBERVPS SPACE STATION - 1-CLICK HOST AGENT ENROLLMENT\r\necho ================================================================\r\necho [*] Target Control Plane: ${targetHost}\r\necho [*] Bootstrap Ticket:     ${capability}\r\necho [*] Execution Profile:    ${profile}\r\necho [*] Launching cryptographically verified PowerShell installer...\r\necho.\r\n\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create(((Invoke-RestMethod '${ps1Url}').TrimStart([char]65279)))) -Profile '${profile}' -RegisterProtocolHandler"\r\n\r\nif %ERRORLEVEL% NEQ 0 (\r\n    echo.\r\n    echo [X] Installation reported exit code %ERRORLEVEL%.\r\n    pause\r\n    exit /b %ERRORLEVEL%\r\n)\r\n\r\necho.\r\necho [+] Installation completed successfully! Agent running in background.\r\ntimeout /t 5\r\nexit /b 0\r\n`;
 
     res.writeHead(200, {
       'Content-Type': 'application/x-bat; charset=utf-8',
@@ -2905,6 +3000,10 @@ const server = http.createServer(async (req, res) => {
       const targetHost = resolveTargetHost(req, parsedUrl);
       
       let customized = (data || '');
+      // Strip UTF-8 Byte Order Mark (BOM) if present so PowerShell [scriptblock]::Create succeeds
+      if (customized.charCodeAt(0) === 0xFEFF) {
+        customized = customized.slice(1);
+      }
       customized = customized.replace(
         /\[string\]\$Server\s*=\s*\$\(if \(\$env:CYBERVPS_SERVER\) \{ \$env:CYBERVPS_SERVER \} else \{ "[^"]*" \}\)/,
         `[string]$Server = $(if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "${targetHost}" })`
@@ -4960,14 +5059,120 @@ const server = http.createServer(async (req, res) => {
 
   // 3. MACHINES & PORTS API
   if (pathname === '/api/v1/machines' && method === 'GET') {
-    const list = Array.from(db.machines.values()).map(m => {
+    const includeBridges = parsedUrl.searchParams.get('include_bridges') === 'true';
+    const showAll = parsedUrl.searchParams.get('all') === 'true';
+
+    const rawList = Array.from(db.machines.values());
+    const canonicalMap = new Map();
+    const seenHuid = new Map();
+    const seenHost = new Map();
+
+    for (const m of rawList) {
+      if (!includeBridges && !showAll) {
+        if (m.is_bridge_client || (m.id && m.id.startsWith('win_bridge_'))) {
+          continue;
+        }
+      }
+
       const status = getMachineStatus(m);
-      const virtualIp = vpnPool.allocated.get(m.id) || null;
+      const virtualIp = vpnPool.allocated.get(m.id) || m.virtual_ip || null;
       const username = m.username || m.capabilities?.username || m.capabilities?.user || m.profile?.username || (m.capabilities?.is_root ? 'root' : (m.os === 'Windows' ? 'expert' : 'user'));
-      return { ...m, username, status, virtual_ip: virtualIp };
-    });
+      const enriched = { ...m, username, status, virtual_ip: virtualIp };
+
+      const cleanHw = m.hardware_uuid ? String(m.hardware_uuid).trim().toLowerCase() : null;
+      const cleanHost = m.hostname ? String(m.hostname).trim().toLowerCase() : null;
+
+      let matchedKey = null;
+      if (cleanHw && cleanHw.length >= 16) {
+        if (seenHuid.has(cleanHw)) matchedKey = seenHuid.get(cleanHw);
+      }
+      if (!matchedKey && cleanHost && (cleanHost.startsWith('desktop-') || cleanHost.startsWith('win-') || cleanHost.startsWith('laptop-'))) {
+        if (seenHost.has(cleanHost)) matchedKey = seenHost.get(cleanHost);
+      }
+
+      if (matchedKey && canonicalMap.has(matchedKey)) {
+        const existing = canonicalMap.get(matchedKey);
+        const existingScore = (existing.status === 'online' ? 10 : 0) + (existing.id.startsWith('cvps_') ? 5 : 0);
+        const newScore = (enriched.status === 'online' ? 10 : 0) + (enriched.id.startsWith('cvps_') ? 5 : 0);
+        if (newScore > existingScore) {
+          canonicalMap.set(matchedKey, enriched);
+        }
+      } else {
+        const key = m.id;
+        if (cleanHw && cleanHw.length >= 16) seenHuid.set(cleanHw, key);
+        if (cleanHost) seenHost.set(cleanHost, key);
+        canonicalMap.set(key, enriched);
+      }
+    }
+
+    const list = Array.from(canonicalMap.values());
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(list));
+    return;
+  }
+
+  // 3A-1. PRUNE STALE MOCK NODES & DEDUPLICATE GHOSTS
+  if (pathname === '/api/v1/machines/prune' && method === 'POST') {
+    const auth = authenticateRequest(req, parsedUrl);
+    if (!auth.authenticated && !isLocalRequest(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+
+    const prunedIds = [];
+    const activeWsIds = new Set();
+    for (const [id, ws] of db.connectedAgents.entries()) {
+      if (ws.readyState === WebSocket.OPEN) activeWsIds.add(id);
+    }
+
+    const seenHuid = new Map();
+    const seenHost = new Map();
+
+    for (const [id, m] of Array.from(db.machines.entries())) {
+      const isOnline = activeWsIds.has(id);
+      const isMockOrTest = m.is_test ||
+        id.startsWith('node_') ||
+        id.startsWith('vps_') ||
+        id.startsWith('cvps_win_bootstrap_') ||
+        id.startsWith('race_') ||
+        id.includes('-w0') || id.includes('-w1') || id.includes('-w2') ||
+        id.startsWith('win_bridge_');
+
+      const cleanHw = m.hardware_uuid ? String(m.hardware_uuid).trim().toLowerCase() : null;
+      const cleanHost = m.hostname ? String(m.hostname).trim().toLowerCase() : null;
+
+      let isDuplicate = false;
+      if (cleanHw && cleanHw.length >= 16) {
+        if (seenHuid.has(cleanHw)) isDuplicate = true;
+        else if (isOnline || id.startsWith('cvps_')) seenHuid.set(cleanHw, id);
+      }
+      if (!isDuplicate && cleanHost && (cleanHost.startsWith('desktop-') || cleanHost.startsWith('win-') || cleanHost.startsWith('laptop-'))) {
+        if (seenHost.has(cleanHost)) isDuplicate = true;
+        else if (isOnline || id.startsWith('cvps_')) seenHost.set(cleanHost, id);
+      }
+
+      if ((!isOnline && isMockOrTest) || (isDuplicate && !isOnline)) {
+        db.machines.delete(id);
+        db.ports.delete(id);
+        vpnPool.release(id);
+        if (db.recoveryProfiles.has(id) && isMockOrTest) {
+          db.recoveryProfiles.delete(id);
+        }
+        prunedIds.push(id);
+      }
+    }
+
+    savePersistentState();
+    logAudit('machines_pruned', auth.user || 'admin', null, `Pruned ${prunedIds.length} stale/mock nodes and duplicates from fleet.`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      pruned_count: prunedIds.length,
+      remaining_count: db.machines.size,
+      pruned_ids: prunedIds
+    }));
     return;
   }
 
@@ -8111,7 +8316,7 @@ while True:
       ? tunnelManager.publicUrl
       : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
 
-    const oneLiner = `& ([scriptblock]::Create((Invoke-RestMethod '${targetHost}/install.ps1?ticket=${ticket}')))`;
+    const oneLiner = `& ([scriptblock]::Create(((Invoke-RestMethod '${targetHost}/install.ps1?ticket=${ticket}').TrimStart([char]65279))))`;
     logAudit('bootstrap_ticket_issued', auth.user || 'dashboard', null, `Issued 1-click bootstrap ticket (Expires in ${ttlSeconds}s)`);
 
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -9394,7 +9599,7 @@ wssRelay.on('connection', (ws, request) => {
 // Active 20-second WebSocket ping interval with 3-strike tolerance to prevent premature drops
 const relayPingInterval = setInterval(() => {
   for (const [mId, ws] of db.connectedAgents.entries()) {
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
       if (ws.isAlive === false) {
         ws.missedPings = (ws.missedPings || 0) + 1;
         if (ws.missedPings >= 3) {
@@ -9912,12 +10117,75 @@ function handleAgentMessage(ws, msg) {
       savePersistentState();
     }
 
-    // Auto-allocate Virtual IP for Mode B
-    const virtualIp = vpnPool.allocate(machine_id);
+    const isBridgeClient = Boolean(payload.is_bridge_client || payload.role === 'bridge_client' || payload.client_type === 'bridge_client' || machine_id.startsWith('win_bridge_'));
     const normOs = normalizePlatformOs(os || payload.os || payload.profile?.os || payload.profile?.platform || payload.platform);
     const detectedUsername = username || capabilities?.username || capabilities?.user || payload.profile?.username || (capabilities?.is_root ? 'root' : (normOs === 'Windows' ? 'expert' : 'user'));
     const hwUuid = hardware_uuid || payload.smbios_uuid || payload.profile?.hardware_uuid || null;
     const hwSerial = hardware_serial || payload.serial_number || payload.profile?.hardware_serial || null;
+
+    // Double Match: Hardware UUID (HUID) and Machine Identity / Hostname
+    let canonical = findCanonicalMachine({
+      machine_id,
+      hardware_uuid: hwUuid,
+      hardware_serial: hwSerial,
+      hostname: hostname || payload.hostname,
+      os: normOs
+    });
+
+    if (canonical) {
+      db.machineAliases.set(machine_id, canonical.id);
+      canonical.status = 'online';
+      canonical.last_seen = new Date().toISOString();
+      if (hwUuid && !canonical.hardware_uuid) canonical.hardware_uuid = hwUuid;
+      if (hwSerial && !canonical.hardware_serial) canonical.hardware_serial = hwSerial;
+      if (agent_version) canonical.agent_version = agent_version;
+      if (capabilities && typeof capabilities === 'object') {
+        canonical.capabilities = Object.assign(canonical.capabilities || {}, capabilities);
+      }
+      if (payload.cloudflare_tunnel_url || payload.public_url) {
+        canonical.cloudflare_tunnel_url = payload.cloudflare_tunnel_url || payload.public_url;
+      }
+      if (isBridgeClient) {
+        canonical.is_bridge_connected = true;
+        db.bridgeClients.set(machine_id, { canonical_id: canonical.id, ws, connected_at: Date.now() });
+      }
+      const virtualIp = canonical.virtual_ip || vpnPool.allocated.get(canonical.id) || vpnPool.allocate(canonical.id);
+      canonical.virtual_ip = virtualIp;
+
+      db.connectedAgents.set(canonical.id, ws);
+      db.connectedAgents.set(machine_id, ws);
+      savePersistentState();
+      broadcastTelemetry(canonical);
+
+      if (ws) {
+        ws.send(JSON.stringify({
+          type: 'AuthAck',
+          payload: {
+            machine_id: canonical.id,
+            original_machine_id: machine_id,
+            success: true,
+            virtual_ip: virtualIp,
+            node_token: nodeToken || token,
+            revocation_code: canonical.revocation_code,
+            heartbeat_interval_secs: 2,
+            backends: Array.from(db.backends.values()).map(b => ({ id: b.id, url: b.url, role: b.role, state: b.state }))
+          }
+        }));
+
+        const pendingCmds = db.pendingCommands.get(canonical.id) || db.pendingCommands.get(machine_id) || [];
+        if (pendingCmds.length > 0) {
+          db.pendingCommands.delete(canonical.id);
+          db.pendingCommands.delete(machine_id);
+          for (const cmd of pendingCmds) {
+            try { ws.send(JSON.stringify(cmd)); } catch (_) {}
+          }
+        }
+      }
+      return { success: true, machine_id: canonical.id, virtual_ip: virtualIp };
+    }
+
+    // Auto-allocate Virtual IP for Mode B
+    const virtualIp = vpnPool.allocate(machine_id);
 
     const machineInfo = {
       id: machine_id,
@@ -9930,6 +10198,7 @@ function handleAgentMessage(ws, msg) {
       agent_version: agent_version || '1.0.0',
       hardware_uuid: hwUuid,
       hardware_serial: hwSerial,
+      is_bridge_client: isBridgeClient,
       status: 'online',
       virtual_ip: virtualIp,
       created_at: new Date().toISOString(),
