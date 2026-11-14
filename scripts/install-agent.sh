@@ -6,7 +6,7 @@
 
 set -e
 
-SERVER_URL="${1:-${CYBERVPS_SERVER:-https://cybervps-space-station.up.railway.app}}"
+SERVER_URL="${1:-${CYBERVPS_SERVER:-http://127.0.0.1:8080}}"
 TOKEN="${CYBERVPS_TOKEN:-cvps_enroll_master_token}"
 MACHINE_ID=""
 
@@ -105,7 +105,7 @@ chmod +x "$CVPS_DIR/doctor.sh" 2>/dev/null || true
 cat <<EOF > "$CVPS_DIR/config.json"
 {
   "server_url": "$SERVER_URL",
-  "server_urls": ["$SERVER_URL", "https://cybervps-space-station.up.railway.app"],
+  "server_urls": ["$SERVER_URL", "http://127.0.0.1:8080"],
   "token": "$TOKEN",
   "machine_id": "$MACHINE_ID",
   "updated_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

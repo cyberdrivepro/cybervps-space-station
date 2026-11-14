@@ -11,7 +11,7 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const targetBase = process.env.CONTROL_PLANE_URL || 'https://cybervps-space-station.up.railway.app';
+  const targetBase = process.env.CONTROL_PLANE_URL || 'http://127.0.0.1:8080';
   const targetUrl = new URL(req.url, targetBase);
 
   const client = targetUrl.protocol === 'https:' ? https : http;

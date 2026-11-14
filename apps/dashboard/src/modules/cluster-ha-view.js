@@ -53,11 +53,11 @@ class ClusterHAView {
     if (!grid) return;
 
     const backends = [
-      { name: 'Railway Primary Control Plane', url: 'https://cybervps-space-station.up.railway.app', role: 'Leader' },
+      { name: 'Space Station Decentralized Control Plane', url: 'http://localhost:8080', role: 'Leader' },
       { name: 'Obsidian Pillar Alpha (Voroa Node)', url: 'https://cybervpsbackend4.getvoroa.com', role: 'Follower' },
       { name: 'Obsidian Pillar Beta (Render Cloud)', url: 'https://cybervps-render-control.onrender.com', role: 'Follower' },
-      { name: 'Obsidian Pillar Gamma (Local Station)', url: 'http://localhost:8080', role: 'Candidate' },
-      { name: 'Obsidian Pillar Delta (Plexo Relay)', url: 'https://cybervps-space-station.up.railway.app/relay', role: 'Witness' }
+      { name: 'Obsidian Pillar Gamma (Local Station)', url: 'http://127.0.0.1:8080', role: 'Candidate' },
+      { name: 'Obsidian Pillar Delta (Cloudflare Tunnel)', url: 'http://localhost:8080/api/v1/tunnel/public-url', role: 'Witness' }
     ];
 
     grid.innerHTML = backends.map(b => `

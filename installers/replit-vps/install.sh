@@ -9,7 +9,7 @@
 
 set -e
 
-SERVER_URL="${CYBERVPS_SERVER_URL:-https://cybervps-space-station.up.railway.app}"
+SERVER_URL="${CYBERVPS_SERVER_URL:-http://127.0.0.1:8080}"
 INSTALL_BASE="${HOME}/.cybervps"
 LAB_DIR="${INSTALL_BASE}/replit"
 LOG_DIR="${INSTALL_BASE}/logs"

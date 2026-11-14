@@ -34,27 +34,28 @@ class StationState {
     const isHostedDomain = window.location.hostname && 
       (window.location.hostname.endsWith('github.io') || window.location.hostname.endsWith('netlify.app'));
 
-    // If hosted on GitHub Pages or Netlify and stored target is loopback without explicit query param, auto-recover to Railway public endpoint
-    const isLoopback = saved && (saved.includes('localhost') || saved.includes('127.0.0.1'));
-    if (isHostedDomain && isLoopback) {
-      console.warn('[CyberVPS] Hosted environment detected with stale loopback target. Auto-recovering to Railway public relay');
-      const defaultCloud = 'https://cybervps-space-station.up.railway.app';
+    let sClean = saved;
+    if (sClean && sClean.includes('railway.app')) {
+      sClean = null;
       try {
-        localStorage.setItem('cvps_control_plane_url', defaultCloud);
-        localStorage.setItem('cvps_server_url', defaultCloud);
+        localStorage.removeItem('cvps_control_plane_url');
+        localStorage.removeItem('cvps_server_url');
       } catch (_) {}
-      return defaultCloud;
     }
 
-    if (saved) return saved.replace(/\/$/, '');
+    const cachedCf = localStorage.getItem('cvps_active_cf_link');
+    if (cachedCf && (cachedCf.includes('trycloudflare.com') || cachedCf.startsWith('https://'))) {
+      return cachedCf.replace(/\/+$/, '');
+    }
 
-    // Default to Railway production if on GitHub Pages/Netlify, or origin if self-hosted
+    if (sClean) return sClean.replace(/\/$/, '');
+
     if (isHostedDomain) {
-      return 'https://cybervps-space-station.up.railway.app';
+      return '';
     }
     return (window.location.origin && window.location.origin.startsWith('http')) 
       ? window.location.origin 
-      : 'https://cybervps-space-station.up.railway.app';
+      : 'http://localhost:8080';
   }
 
   get(key) {

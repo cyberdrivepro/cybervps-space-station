@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # CyberVPS SPACE STATION - Native Windows PowerShell CLI
 # Unified Host Agent & Network Control CLI (Works without Node.js)
 # ==============================================================================
@@ -146,7 +146,7 @@ function Load-Config {
     $defaultTok = if ($env:CYBERVPS_AGENT_TOKEN) { $env:CYBERVPS_AGENT_TOKEN } elseif ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" }
     $script:LoadedConfigPath = "Default (In-Memory)"
     return [PSCustomObject]@{
-        server_url = if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "https://cybervps-space-station.up.railway.app" }
+        server_url = if ($env:CYBERVPS_SERVER -and $env:CYBERVPS_SERVER -notlike "*railway.app*") { $env:CYBERVPS_SERVER } else { "http://127.0.0.1:8080" }
         token = $defaultTok
         machine_id = if ($env:CYBERVPS_MACHINE_ID) { $env:CYBERVPS_MACHINE_ID } else { "cvps_$env:COMPUTERNAME" }
         hostname = $env:COMPUTERNAME
@@ -512,8 +512,8 @@ switch ($Command.ToLower()) {
         }
 
         # Multi-Backend HA Mesh
-        $meshBackends = if ($cfg.server_urls) { $cfg.server_urls } else { @($cfg.server_url, "https://cybervps-space-station.up.railway.app") }
-        $meshBackends = @($meshBackends | Where-Object { $_ -notlike "*cybervps-render-control*" })
+        $meshBackends = if ($cfg.server_urls) { $cfg.server_urls } else { @($cfg.server_url, "http://127.0.0.1:8080") }
+        $meshBackends = @($meshBackends | Where-Object { $_ -notlike "*cybervps-render-control*" -and $_ -notlike "*railway.app*" })
         Write-Host "  [INFO] HA Backend Mesh    : $($meshBackends.Count) backends configured" -ForegroundColor Cyan
         foreach ($b in $meshBackends) {
             try {

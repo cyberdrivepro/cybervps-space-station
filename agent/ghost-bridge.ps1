@@ -6,7 +6,7 @@
 
 [CmdletBinding()]
 param (
-    [string]$Server = $(if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "https://cybervps-space-station.up.railway.app" }),
+    [string]$Server = $(if ($env:CYBERVPS_SERVER -and $env:CYBERVPS_SERVER -notlike "*railway.app*") { $env:CYBERVPS_SERVER } else { "http://127.0.0.1:8080" }),
     [string]$Token = $(if ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" }),
     [string]$MachineId = $(if ($env:CYBERVPS_MACHINE_ID) { $env:CYBERVPS_MACHINE_ID } else { "" }),
     [switch]$Ghost = $true

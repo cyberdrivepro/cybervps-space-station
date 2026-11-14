@@ -801,7 +801,7 @@
           <span class="code-title">Verified PowerShell 1-Liner (Single Round-Trip Provisioning)</span>
           <span id="win-copy-status" style="font-size:0.75rem; color:var(--accent-cyan); display:none;">✓ Copied to clipboard!</span>
         </div>
-        <div class="code-box" id="win-cmd-text">&amp; ([scriptblock]::Create((Invoke-RestMethod 'https://cybervps-space-station.up.railway.app/install.ps1'))) -Profile both</div>
+        <div class="code-box" id="win-cmd-text">&amp; ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1'))) -Profile both</div>
       </div>
 
       <div class="steps-grid">
@@ -845,7 +845,7 @@
           <span class="code-title">Terminal One-Liner</span>
           <span id="linux-copy-status" style="font-size:0.75rem; color:var(--accent-cyan); display:none;">✓ Copied to clipboard!</span>
         </div>
-        <div class="code-box" id="linux-cmd-text">curl -sSL "https://cybervps-space-station.up.railway.app/install.sh" | bash</div>
+        <div class="code-box" id="linux-cmd-text">curl -sSL "https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.sh" | bash</div>
       </div>
 
       <div class="steps-grid">
@@ -1078,7 +1078,7 @@
       if (window.location.protocol.startsWith('http') && !window.location.hostname.includes('github.io')) {
         return window.location.origin;
       }
-      return 'https://cybervps-space-station.up.railway.app';
+      return localStorage.getItem('cvps_active_cf_link') || 'http://127.0.0.1:8080';
     }
 
     function getPairingKey() {

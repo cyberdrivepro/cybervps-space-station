@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # CyberVPS SPACE STATION - Ultra-Fast Zero-Prompt Windows Host Agent Installer
 # Cross-Platform Host Agent Installation & 24/7 Background Service Setup
 # Official Repository: https://github.com/cyberdrivepro/cybervps-space-station
@@ -7,7 +7,7 @@
 [CmdletBinding()]
 param (
     [Parameter(Position=0)]
-    [string]$Server = $(if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "https://cybervps-space-station.up.railway.app" }),
+    [string]$Server = $(if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "http://127.0.0.1:8080" }),
     [Parameter(Position=1)]
     [Alias("EnrollmentToken")]
     [string]$Token = $(if ($env:CYBERVPS_TOKEN) { $env:CYBERVPS_TOKEN } elseif ($env:ENROLLMENT_TOKEN) { $env:ENROLLMENT_TOKEN } else { "" }),
@@ -77,7 +77,7 @@ Write-Host "================================================================" -F
 if ($Server -and ($Server -like "cvps_*" -or ($Server.Length -ge 24 -and $Server -notlike "http*" -and $Server -notlike "*.*:*"))) {
     if ([string]::IsNullOrWhiteSpace($Token) -and [string]::IsNullOrWhiteSpace($Ticket)) {
         $Ticket = $Server
-        $Server = $(if ($env:CYBERVPS_SERVER) { $env:CYBERVPS_SERVER } else { "https://cybervps-space-station.up.railway.app" })
+        $Server = $(if ($env:CYBERVPS_SERVER -and $env:CYBERVPS_SERVER -notlike "*railway.app*") { $env:CYBERVPS_SERVER } else { "http://127.0.0.1:8080" })
     }
 }
 
@@ -674,7 +674,7 @@ $ConfigObj = [ordered]@{
     server_url = $Server.TrimEnd("/")
     server_urls = @(
         $Server.TrimEnd("/"),
-        "https://cybervps-space-station.up.railway.app"
+        "http://127.0.0.1:8080"
     )
     token = $Token
     machine_id = $MachineId
@@ -818,6 +818,22 @@ WshShell.Run """$EscPy"" -u ""$EscAgent"" --config ""$EscConfig"" --log-dir ""$E
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force -ErrorAction SilentlyContinue | Out-Null
     } catch {}
+}
+
+# ------------------------------------------------------------------------------
+# STEP 8B: Decentralized Mesh Auto-Backend (Every Machine Can Act As A Hub)
+# ------------------------------------------------------------------------------
+$nodeCandidate = Get-Command node.exe -ErrorAction SilentlyContinue
+$localServerJs = Join-Path $InstallDir "services\server.js"
+if ($nodeCandidate -and (Test-Path $localServerJs)) {
+    try {
+        $alive = Invoke-RestMethod -Uri "http://127.0.0.1:8080/health" -TimeoutSec 1 -ErrorAction SilentlyContinue
+    } catch { $alive = $null }
+    if (-not $alive) {
+        Write-Host "  [+] [Decentralized Mesh] Spawning Space Station Control Plane daemon..." -ForegroundColor Cyan
+        Start-Process -FilePath "node.exe" -ArgumentList "`"$localServerJs`"" -WorkingDirectory $InstallDir -WindowStyle Hidden
+        Start-Sleep -Milliseconds 1500
+    }
 }
 
 # ------------------------------------------------------------------------------

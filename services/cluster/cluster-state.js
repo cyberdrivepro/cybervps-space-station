@@ -448,15 +448,15 @@ class ClusterState {
       latency_ms: 1
     });
 
-    // 2. Railway Cloud Pillar
+    // 2. Mesh Node Pillar
     this.registerNode({
-      backend_id: 'be_railway_cloud',
-      display_name: 'Obsidian Pillar (Railway Cloud)',
-      deployment_provider: 'railway',
-      deployment_resource_id: 'railway_cvps_station',
-      deployment_region: 'us-west-railway',
-      deployment_url: 'https://cybervps-space-station.up.railway.app',
-      machine_id: 'railway_cloud_host_1',
+      backend_id: 'be_local_mesh_cloud',
+      display_name: 'Obsidian Pillar (Mesh Cloud)',
+      deployment_provider: 'local_mesh',
+      deployment_resource_id: 'local_cvps_station',
+      deployment_region: 'local-mesh',
+      deployment_url: 'http://localhost:8080',
+      machine_id: 'local_cloud_host_1',
       installation_path: '/app',
       data_path: '/app/data',
       role: 'secondary',

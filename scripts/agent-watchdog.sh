@@ -4,7 +4,7 @@
 # Ensures 24/7 continuous operation, crash recovery, and multi-backend failover
 # ==============================================================================
 
-SERVER_URL="${1:-${CYBERVPS_SERVER:-https://cybervps-space-station.up.railway.app}}"
+SERVER_URL="${1:-${CYBERVPS_SERVER:-http://127.0.0.1:8080}}"
 TOKEN="${2:-cvps_enroll_master_token}"
 MACHINE_ID="${3:-}"
 
@@ -72,7 +72,7 @@ while true; do
         # Curl timeout check across registered control plane backends
         if command -v curl >/dev/null 2>&1; then
             CHECKED=0
-            for TARGET in "$SERVER_URL" "https://cybervps-space-station.up.railway.app"; do
+            for TARGET in "$SERVER_URL" "http://127.0.0.1:8080"; do
                 HTTP_TARGET=$(echo "$TARGET" | sed 's/ws:\/\//http:\/\//' | sed 's/wss:\/\//https:\/\//')
                 HEALTH_URL="$HTTP_TARGET/health"
                 if curl -s -m 4 "$HEALTH_URL" >/dev/null 2>&1; then

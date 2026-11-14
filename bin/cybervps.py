@@ -108,7 +108,7 @@ def assert_is_admin(action):
 
 def load_config():
     default_cfg = {
-        "server_url": os.environ.get("CYBERVPS_SERVER", "https://cybervps-space-station.up.railway.app"),
+        "server_url": (os.environ.get("CYBERVPS_SERVER") if (os.environ.get("CYBERVPS_SERVER") and "railway.app" not in os.environ.get("CYBERVPS_SERVER")) else "http://127.0.0.1:8080"),
         "token": os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or os.environ.get("ENROLLMENT_TOKEN") or "",
         "machine_id": f"cvps_{socket.gethostname()}",
         "hostname": socket.gethostname()
@@ -592,7 +592,9 @@ def cmd_doctor(args=None):
     print(f"  Operating System : {platform.system()} {platform.release()} ({platform.machine()})")
     print(f"  Host Architecture: {platform.architecture()[0]}")
     cfg = load_config()
-    server_url = cfg.get("server_url", "https://cybervps-space-station.up.railway.app")
+    server_url = cfg.get("server_url") or "http://127.0.0.1:8080"
+    if "railway.app" in server_url:
+        server_url = "http://127.0.0.1:8080"
     print(f"  Config Server    : {server_url}")
     print(f"  Config Machine   : {cfg.get('machine_id')}")
     token = cfg.get("token", "")
@@ -621,7 +623,7 @@ def cmd_doctor(args=None):
     print("\n  [Network Connectivity & Egress Diagnostics]")
     try:
         from urllib.parse import urlparse
-        host = urlparse(server_url).hostname or "cybervps-space-station.up.railway.app"
+        host = urlparse(server_url).hostname or "127.0.0.1"
         t_dns = time.time()
         resolved_ip = socket.gethostbyname(host)
         dns_ms = int((time.time() - t_dns) * 1000)
@@ -638,7 +640,7 @@ def cmd_doctor(args=None):
     except Exception as e:
         print(f"  * Control Plane  : UNREACHABLE ({e}) ❌")
 
-    backends = [b for b in (cfg.get("server_urls") or [server_url, "https://cybervps-space-station.up.railway.app"]) if "cybervps-render-control" not in b]
+    backends = [b for b in (cfg.get("server_urls") or [server_url, "http://127.0.0.1:8080"]) if "cybervps-render-control" not in b and "railway.app" not in b]
     print(f"\n  * Backend HA Mesh ({len(backends)} configured):")
     for b_url in backends:
         try:
@@ -914,7 +916,10 @@ def record_pillar_incident(incident):
 
 def notify_server_security(endpoint, payload):
     cfg = load_config()
-    server_url = cfg.get("server_url", "https://cybervps-space-station.up.railway.app").rstrip("/")
+    server_url = cfg.get("server_url") or "http://127.0.0.1:8080"
+    if "railway.app" in server_url:
+        server_url = "http://127.0.0.1:8080"
+    server_url = server_url.rstrip("/")
     url = f"{server_url}{endpoint}"
     token = cfg.get("token", "")
     headers = {

@@ -17,11 +17,11 @@ class InfrastructureIntelService {
 
     // Known Obsidian Pillars Cluster Registry
     this.obsidianPillars = [
-      { id: 'pillar_railway_lead', name: 'Railway Primary Control Plane', url: 'https://cybervps-space-station.up.railway.app', role: 'Leader' },
+      { id: 'pillar_local_lead', name: 'Space Station Mesh Control Plane', url: 'http://localhost:8080', role: 'Leader' },
       { id: 'pillar_voroa_alpha', name: 'Obsidian Pillar Alpha (Voroa Node)', url: 'https://cybervpsbackend4.getvoroa.com', role: 'Follower' },
       { id: 'pillar_render_beta', name: 'Obsidian Pillar Beta (Render Cloud)', url: 'https://cybervps-render-control.onrender.com', role: 'Follower' },
-      { id: 'pillar_local_gamma', name: 'Obsidian Pillar Gamma (Local Station)', url: 'http://localhost:8080', role: 'Candidate' },
-      { id: 'pillar_plexo_delta', name: 'Obsidian Pillar Delta (Plexo Relay)', url: 'https://cybervps-space-station.up.railway.app/relay', role: 'Witness' }
+      { id: 'pillar_local_gamma', name: 'Obsidian Pillar Gamma (Local Station)', url: 'http://127.0.0.1:8080', role: 'Candidate' },
+      { id: 'pillar_cf_delta', name: 'Obsidian Pillar Delta (Cloudflare Tunnel)', url: 'http://localhost:8080/api/v1/tunnel/public-url', role: 'Witness' }
     ];
   }
 
@@ -233,7 +233,7 @@ class InfrastructureIntelService {
       id: 'node_control_plane',
       type: 'control_plane',
       name: 'CyberVPS Space Station',
-      endpoint: 'https://cybervps-space-station.up.railway.app',
+      endpoint: 'http://localhost:8080',
       status: 'VERIFIED',
       role: 'primary_hub'
     });

@@ -578,13 +578,13 @@ function initDefaultPlatformState() {
       last_check: new Date().toISOString(),
       failures_count: 0
     });
-    db.backends.set('be_railway_cloud', {
-      id: 'be_railway_cloud',
-      name: 'Primary Gateway (Railway Cloud)',
-      url: 'https://cybervps-space-station.up.railway.app',
+    db.backends.set('be_local_mesh', {
+      id: 'be_local_mesh',
+      name: 'Space Station Decentralized Control Plane',
+      url: `http://127.0.0.1:${PORT}`,
       role: 'primary',
       state: 'healthy',
-      latency_ms: 8,
+      latency_ms: 1,
       last_check: new Date().toISOString(),
       failures_count: 0
     });
@@ -2645,7 +2645,7 @@ const server = http.createServer(async (req, res) => {
     if (reqHost) {
       return `${hostProto}://${reqHost}`;
     }
-    return 'https://cybervps-space-station.up.railway.app';
+    return (tunnelManager && tunnelManager.publicUrl) ? tunnelManager.publicUrl : `http://127.0.0.1:${PORT}`;
   }
 
   if (pathname === '/install.sh') {
@@ -7593,7 +7593,7 @@ const server = http.createServer(async (req, res) => {
     const targetPort = protocol === 'vnc' ? 5900 : 3389;
 
     const hostProto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
-    const hostHeader = req.headers['host'] || 'cybervps-space-station.up.railway.app';
+    const hostHeader = req.headers['host'] || `127.0.0.1:${PORT}`;
     const serverUrl = `${hostProto}://${hostHeader}`;
 
     const m = db.machines.get(machineId);
@@ -7682,7 +7682,7 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 
-const serverUrl = process.argv[2] || 'https://cybervps-space-station.up.railway.app';
+const serverUrl = process.argv[2] || 'http://127.0.0.1:8080';
 const machineId = process.argv[3];
 const remotePort = parseInt(process.argv[4] || '3389', 10);
 const localPort = parseInt(process.argv[5] || '33890', 10);
@@ -7783,7 +7783,7 @@ import base64
 import urllib.parse
 import ssl
 
-server_url = sys.argv[1] if len(sys.argv) > 1 else "https://cybervps-space-station.up.railway.app"
+server_url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8080"
 machine_id = sys.argv[2] if len(sys.argv) > 2 else ""
 remote_port = int(sys.argv[3]) if len(sys.argv) > 3 else 3389
 local_port = int(sys.argv[4]) if len(sys.argv) > 4 else 33890

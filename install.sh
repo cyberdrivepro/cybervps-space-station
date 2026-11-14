@@ -25,7 +25,7 @@ if [ -z "${SERVER_URL}" ]; then
     SERVER_URL="${LOCAL_SERVER_URL}"
     echo "[+] Detected active local Control Plane at ${LOCAL_SERVER_URL} (Ultra-Fast Local Mode)"
   else
-    SERVER_URL="https://cybervps-space-station.up.railway.app"
+    SERVER_URL="${LOCAL_SERVER_URL:-http://127.0.0.1:8080}"
   fi
 fi
 
@@ -126,7 +126,7 @@ if [ -z "${INSTALL_BASE}" ]; then
   echo "  Detected Home: ${HOME:-<unset>}" >&2
   echo "  Please provide a writable directory via CYBERVPS_HOME:" >&2
   echo "    export CYBERVPS_HOME=\"/path/to/writable/folder\"" >&2
-  echo "    curl -fsSL https://cybervps-space-station.up.railway.app/install.sh | bash" >&2
+  echo "    curl -fsSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.sh | bash" >&2
   echo "================================================================" >&2
   exit 1
 fi
@@ -359,8 +359,7 @@ cat <<EOF > "${CONFIG_FILE}"
   "server_url": "${SERVER_URL}",
   "server_urls": [
     "${SERVER_URL}",
-    "${LOCAL_SERVER_URL}",
-    "https://cybervps-space-station.up.railway.app"
+    "${LOCAL_SERVER_URL}"
   ],
   "token": "${TOKEN}",
   "machine_id": "${MACHINE_ID}",
@@ -376,8 +375,7 @@ cat <<EOF > "${CONFIG_FILE}"
   "server_url": "${SERVER_URL}",
   "server_urls": [
     "${SERVER_URL}",
-    "${LOCAL_SERVER_URL}",
-    "https://cybervps-space-station.up.railway.app"
+    "${LOCAL_SERVER_URL}"
   ],
   "token": "${TOKEN}",
   "machine_id": "${MACHINE_ID}",

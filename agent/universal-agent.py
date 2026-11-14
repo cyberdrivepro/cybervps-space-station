@@ -907,9 +907,11 @@ class ElevationNotAvailableError(Exception):
 class CyberVPSAgent:
     def __init__(self, server_url, token=None, machine_id=None, pid_file=None, ghost_mode=False,
                  is_swarm_worker=False, swarm_index=1, swarm_total=1, swarm_cluster=None):
-        raw = (server_url or "https://cybervps-space-station.up.railway.app").strip().rstrip("/")
+        raw = (server_url or os.environ.get("CYBERVPS_SERVER") or "http://127.0.0.1:8080").strip().rstrip("/")
+        if "railway.app" in raw:
+            raw = "http://127.0.0.1:8080"
         if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("ws://") or raw.startswith("wss://")):
-            raw = "https://" + raw
+            raw = ("http://" if ("127.0.0.1" in raw or "localhost" in raw) else "https://") + raw
         self.server_url = raw
         self.http_base = self.server_url.replace("ws://", "http://").replace("wss://", "https://")
         self.token = token or os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
@@ -952,11 +954,14 @@ class CyberVPSAgent:
         self._cached_apps_list = None
         self._cached_apps_time = 0
         self.backend_pool = []
-        if self.server_url:
+        if self.server_url and "railway.app" not in self.server_url:
             self.backend_pool.append(self.server_url)
-        for def_b in ["http://127.0.0.1:8080", "https://cybervps-space-station.up.railway.app"]:
+        for def_b in ["http://127.0.0.1:8080", "http://localhost:8080"]:
             if def_b not in self.backend_pool:
                 self.backend_pool.append(def_b)
+        cached_cf = self._load_cached_cloudflare_link()
+        if cached_cf and cached_cf not in self.backend_pool:
+            self.backend_pool.insert(0, cached_cf)
         self.backend_index = 0
         self._load_backends_from_disk()
 
@@ -979,6 +984,67 @@ class CyberVPSAgent:
             threading.Thread(target=self._self_healing_shadow_loop, daemon=True).start()
         except Exception:
             pass
+
+    def _load_cached_cloudflare_link(self):
+        candidates = [
+            os.path.join(os.path.expanduser("~"), ".cybervps", "public-tunnel-url.json"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "public-tunnel-url.json")
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                try:
+                    with open(c, "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                        u = d.get("public_url")
+                        if u and ("trycloudflare.com" in u or u.startswith("https://")):
+                            return u.rstrip("/")
+                except Exception:
+                    pass
+        return None
+
+    def ensure_local_space_station_backend(self):
+        """
+        Self-Hosting Decentralized Backend Engine:
+        If local Space Station backend is not responding on 8080, automatically starts
+        services/server.js using node so this host becomes an active Space Station backend!
+        """
+        try:
+            import urllib.request
+            req = urllib.request.Request("http://127.0.0.1:8080/health")
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            pass
+
+        candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "services", "server.js"),
+            os.path.join(os.path.expanduser("~"), ".cybervps", "space-station", "services", "server.js"),
+            os.path.join(os.path.expanduser("~"), "cybervps-space-station", "services", "server.js"),
+            "C:\\Users\\Suraj\\.cybervps\\space-station\\services\\server.js"
+        ]
+        server_js = None
+        for c in candidates:
+            if os.path.exists(c):
+                server_js = os.path.abspath(c)
+                break
+
+        if server_js:
+            try:
+                flags = 0x00000008 if sys.platform == "win32" else 0  # DETACHED_PROCESS
+                proc = subprocess.Popen(
+                    ["node", server_js],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=flags,
+                    cwd=os.path.dirname(os.path.dirname(server_js))
+                )
+                print(f"[+] [Self-Hosting Mesh] Launched Space Station backend daemon (PID: {proc.pid}) from {server_js}", flush=True)
+                time.sleep(1.8)
+                return True
+            except Exception as e:
+                print(f"[!] [Self-Hosting Mesh] Could not spawn node server: {e}", flush=True)
+        return False
 
     def get_active_backend_url(self):
         with self.lock:
@@ -10762,6 +10828,10 @@ class CyberVPSAgent:
         print(f"[*] Machine ID: {self.machine_id}", flush=True)
         print(f"[*] Server Target: {self.server_url}", flush=True)
 
+        if not getattr(self, "is_swarm_worker", False):
+            if "127.0.0.1" in self.server_url or "localhost" in self.server_url:
+                self.ensure_local_space_station_backend()
+
         profile = self.discover_device_profile()
         caps = self.get_capabilities()
         hw = self.get_hardware_identity()
@@ -11008,7 +11078,9 @@ def handle_cli_subcommands(args):
             except Exception:
                 pass
 
-    server_url = cfg.get("server_url") or "https://cybervps-space-station.up.railway.app"
+    server_url = cfg.get("server_url") or os.environ.get("CYBERVPS_SERVER") or "http://127.0.0.1:8080"
+    if "railway.app" in server_url:
+        server_url = "http://127.0.0.1:8080"
     token = cfg.get("token") or os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
     mid = cfg.get("machine_id") or ""
     if not mid and os.path.exists(os.path.join(cvps_dir, "machine_id")):
@@ -11141,7 +11213,7 @@ def handle_cli_subcommands(args):
             except Exception:
                 print("  * Autostart Run:    NOT CONFIGURED")
 
-        backends = [b for b in (cfg.get("server_urls") or [server_url, "https://cybervps-space-station.up.railway.app"]) if "cybervps-render-control" not in b]
+        backends = [b for b in (cfg.get("server_urls") or [server_url, "http://127.0.0.1:8080"]) if "cybervps-render-control" not in b and "railway.app" not in b]
         print(f"\n  * Backend HA Mesh ({len(backends)} backends configured):")
         for b_url in backends:
             health_url = b_url.rstrip("/") + "/health"
@@ -11184,7 +11256,7 @@ def handle_cli_subcommands(args):
                 with open(os.path.join(dest, "config.json"), "w", encoding="utf-8") as cf:
                     json.dump({
                         "server_url": server_url,
-                        "server_urls": list(dict.fromkeys([server_url, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app"])),
+                        "server_urls": list(dict.fromkeys([server_url, "http://127.0.0.1:8080"])),
                         "token": token,
                         "machine_id": mid,
                         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -11385,7 +11457,7 @@ def handle_cli_subcommands(args):
         # 1. DNS Resolution
         try:
             parsed = urllib.parse.urlparse(server_url)
-            host = parsed.hostname or "cybervps-space-station.up.railway.app"
+            host = parsed.hostname or "127.0.0.1"
             t_dns_start = time.time()
             resolved_ip = socket.gethostbyname(host)
             dns_ms = int((time.time() - t_dns_start) * 1000)
@@ -11418,7 +11490,7 @@ def handle_cli_subcommands(args):
             pass
 
         # 4. Multi-Backend HA Mesh Probes
-        backends = [b for b in (cfg.get("server_urls") or [server_url, "https://cybervps-space-station.up.railway.app"]) if "cybervps-render-control" not in b]
+        backends = [b for b in (cfg.get("server_urls") or [server_url, "http://127.0.0.1:8080"]) if "cybervps-render-control" not in b and "railway.app" not in b]
         print(f"\n  * Backend HA Mesh ({len(backends)} configured):")
         for b_url in backends:
             try:
@@ -11506,8 +11578,8 @@ def handle_cli_subcommands(args):
                 print(f"  [!] Remote restore failed: {e}")
 
         # Reconcile Multi-Backend policy
-        b_list = [b for b in (cfg.get("server_urls") or []) if "cybervps-render-control" not in b]
-        for def_b in ["https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app"]:
+        b_list = [b for b in (cfg.get("server_urls") or []) if "cybervps-render-control" not in b and "railway.app" not in b]
+        for def_b in ["http://127.0.0.1:8080", "http://localhost:8080"]:
             if def_b not in b_list:
                 b_list.append(def_b)
         cfg["server_urls"] = b_list
@@ -11519,7 +11591,7 @@ def handle_cli_subcommands(args):
                     json.dump(b_list, bf, indent=2)
             except Exception:
                 pass
-        print(f"  * Reconciled 3-Backend Mesh: {len(b_list)} backends configured.")
+        print(f"  * Reconciled Mesh Backends: {len(b_list)} backends configured.")
 
         # Autostart persistence
         if platform.system() == "Windows":
@@ -11669,9 +11741,11 @@ class CyberVPSSwarmSupervisor:
     instant < 1s auto-revival watchdog, and zero external dependency.
     """
     def __init__(self, server_url, token=None, machine_id=None, num_workers=20, ghost_mode=False):
-        raw = (server_url or "http://127.0.0.1:8080").strip().rstrip("/")
+        raw = (server_url or os.environ.get("CYBERVPS_SERVER") or "http://127.0.0.1:8080").strip().rstrip("/")
+        if "railway.app" in raw:
+            raw = "http://127.0.0.1:8080"
         if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("ws://") or raw.startswith("wss://")):
-            raw = "http://" + raw
+            raw = ("http://" if ("127.0.0.1" in raw or "localhost" in raw) else "https://") + raw
         self.server_url = raw
         self.token = token or os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
         self.base_machine_id = machine_id or CyberVPSAgent.generate_machine_id()
@@ -11767,6 +11841,9 @@ class CyberVPSSwarmSupervisor:
         print(f"[*] Redundancy Factor: {self.num_workers}x (Zero-Drop Self-Healing)", flush=True)
         print(f"================================================================", flush=True)
 
+        if "127.0.0.1" in self.server_url or "localhost" in self.server_url:
+            CyberVPSAgent.ensure_local_space_station_backend(None)
+
         for i in range(1, self.num_workers + 1):
             self._spawn_worker(i)
             time.sleep(0.04)
@@ -11813,7 +11890,9 @@ if __name__ == "__main__":
         except Exception:
             pass
 
-    target = os.environ.get("CYBERVPS_SERVER", "https://cybervps-space-station.up.railway.app")
+    target = os.environ.get("CYBERVPS_SERVER") or "http://127.0.0.1:8080"
+    if "railway.app" in target:
+        target = "http://127.0.0.1:8080"
     token = os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
     mid = os.environ.get("CYBERVPS_MACHINE_ID", None)
 
@@ -11830,6 +11909,8 @@ if __name__ == "__main__":
                 cfg = json.load(f)
                 if cfg.get("server_url"):
                     target = cfg["server_url"]
+                    if "railway.app" in target:
+                        target = "http://127.0.0.1:8080"
                 if cfg.get("token"):
                     token = cfg["token"]
                 if cfg.get("machine_id"):
@@ -12009,7 +12090,7 @@ if __name__ == "__main__":
                 with open(os.path.join(cvps_dir, "config.json"), "w") as f:
                     json.dump({
                         "server_url": target,
-                        "server_urls": list(dict.fromkeys([target, "https://cybervpsbackend4.getvoroa.com", "https://cybervps-space-station.up.railway.app"])),
+                        "server_urls": list(dict.fromkeys([target, "http://127.0.0.1:8080"])),
                         "token": agent.token,
                         "machine_id": agent.machine_id,
                         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

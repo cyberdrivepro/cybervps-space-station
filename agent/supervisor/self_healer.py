@@ -27,8 +27,8 @@ GITHUB_AGENT_RAW_URL = "https://raw.githubusercontent.com/cyberdrivepro/cybervps
 
 # Default multi-backend cloud mesh endpoints
 DEFAULT_BACKEND_CLUSTER = [
-    "https://cybervps-space-station.up.railway.app",
-    "http://127.0.0.1:8080"
+    "http://127.0.0.1:8080",
+    "http://localhost:8080"
 ]
 
 FORBIDDEN_USER_FOLDERS = ["desktop", "downloads", "videos", "music", "pictures", "documents"]

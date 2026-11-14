@@ -5,7 +5,7 @@
 # Runs on POSIX /bin/sh (fallback to curl, wget, python3, or raw /dev/tcp).
 # ==============================================================================
 
-SERVER="${1:-${CYBERVPS_SERVER:-https://cybervps-space-station.up.railway.app}}"
+SERVER="${1:-${CYBERVPS_SERVER:-http://127.0.0.1:8080}}"
 TOKEN="${2:-${CYBERVPS_TOKEN:-${ENROLLMENT_TOKEN:-}}}"
 MACHINE_ID="${3:-${CYBERVPS_MACHINE_ID:-}}"
 

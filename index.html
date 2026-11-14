@@ -1137,7 +1137,7 @@
               </div>
             </div>
             <div class="copy-block">
-              <code id="cmd-win">& ([scriptblock]::Create((Invoke-RestMethod 'https://cybervps-space-station.up.railway.app/install.ps1')))</code>
+              <code id="cmd-win">& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.ps1')))</code>
               <button class="btn btn-secondary" onclick="copyText('cmd-win')">Copy</button>
             </div>
             <div style="margin-top:1rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
@@ -3773,7 +3773,7 @@
               <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.6rem; margin-top:0.4rem;">
                 <button type="button" class="btn btn-secondary" id="mode-btn-public" onclick="setConnectionMode('public')" style="text-align:left; padding:0.75rem 0.9rem; border-color:var(--accent-cyan); display:flex; flex-direction:column; gap:0.25rem; transition:all 0.15s ease;">
                   <strong style="color:var(--accent-cyan); font-size:0.84rem;">☁️ Public Cloud Relay</strong>
-                  <span style="font-size:0.7rem; color:var(--text-muted);">Railway Managed (Zero-Config Global)</span>
+                  <span style="font-size:0.7rem; color:var(--text-muted);">Cloudflare Quick Tunnel (Zero-Config Global Mesh)</span>
                 </button>
                 <button type="button" class="btn btn-secondary" id="mode-btn-local" onclick="setConnectionMode('local')" style="text-align:left; padding:0.75rem 0.9rem; display:flex; flex-direction:column; gap:0.25rem; transition:all 0.15s ease;">
                   <strong style="color:var(--text-primary); font-size:0.84rem;">💻 Local Development</strong>
@@ -3788,8 +3788,8 @@
 
             <div class="form-group">
               <label class="form-label">Control Plane Server URL</label>
-              <input type="text" id="setting-server-url" class="form-control" placeholder="https://cybervps-space-station.up.railway.app">
-              <span style="font-size:0.75rem; color:var(--text-muted);">Enter your self-hosted Space Station endpoint (e.g. <code>https://cybervps-space-station.up.railway.app</code> or <code>http://localhost:8080</code>). Automatically formats and secures URLs.</span>
+              <input type="text" id="setting-server-url" class="form-control" placeholder="https://your-tunnel.trycloudflare.com or http://localhost:8080">
+              <span style="font-size:0.75rem; color:var(--text-muted);">Enter your Space Station Control Plane endpoint (e.g. <code>https://your-subdomain.trycloudflare.com</code> or <code>http://localhost:8080</code>). Automatically formats and secures URLs.</span>
             </div>
 
             <div class="form-group">
@@ -3812,7 +3812,7 @@
               <button class="btn btn-primary" onclick="saveSettings()">Save & Connect</button>
               <button class="btn btn-secondary" onclick="fixLocalhostConnection()" style="background:rgba(2,132,199,0.18); border-color:#0284c7; color:#38bdf8;">⚡ Fix Localhost Connection</button>
               <button class="btn btn-secondary" onclick="testBackendDirect()">Test Reachability</button>
-              <button class="btn btn-secondary" onclick="useRailwayDefault()">Railway Cloud</button>
+              <button class="btn btn-secondary" onclick="useCloudflareMeshDefault()">Cloudflare Mesh</button>
               <button class="btn btn-secondary" onclick="useNetlifyDefault()">Netlify Edge</button>
               <button class="btn btn-secondary" onclick="useRenderDefault()">Render Backend</button>
               <button class="btn btn-danger" onclick="resetSettings()">Reset Defaults</button>
@@ -3854,7 +3854,7 @@
               </div>
             </div>
             <div id="meta-server-diag" style="font-size:0.75rem; color:var(--text-muted); padding:0.6rem 0.8rem; background:rgba(0,0,0,0.2); border-radius:var(--radius-sm); font-family:var(--font-mono);">
-              Connected Control Plane: <span id="meta-diag-url" style="color:var(--text-primary);">https://cybervps-space-station.up.railway.app</span> | Status: <span style="color:var(--status-online);">HEALTHY</span>
+              Connected Control Plane: <span id="meta-diag-url" style="color:var(--text-primary);">http://localhost:8080</span> | Status: <span style="color:var(--status-online);">HEALTHY</span>
             </div>
           </div>
         </div>
@@ -5931,11 +5931,26 @@
       return url;
     }
 
-    const defaultRailway = 'https://cybervps-space-station.up.railway.app';
+    const defaultMeshFallback = 'http://127.0.0.1:8080';
     const defaultRender = 'https://cybervps-render-control.onrender.com';
     const defaultNetlify = 'https://cybervps-space-station.netlify.app';
     const isStaticHost = window.location.hostname.endsWith('github.io') || window.location.hostname.endsWith('netlify.app');
-    const defaultOrigin = isStaticHost ? defaultRailway : (window.location.origin.startsWith('http') ? window.location.origin : defaultRailway);
+    const defaultOrigin = isStaticHost ? (localStorage.getItem('cvps_active_cf_link') || '') : (window.location.origin.startsWith('http') ? window.location.origin : defaultMeshFallback);
+
+    function getActiveBaseUrl() {
+      const norm = normalizeServerUrl(appConfig && appConfig.serverUrl);
+      if (norm && !norm.includes('railway.app')) {
+        return norm;
+      }
+      const cachedCf = localStorage.getItem('cvps_active_cf_link');
+      if (cachedCf && (cachedCf.includes('trycloudflare.com') || cachedCf.startsWith('https://'))) {
+        return cachedCf.replace(/\/+$/, '');
+      }
+      if (!isStaticHost && window.location.origin.startsWith('http')) {
+        return window.location.origin;
+      }
+      return defaultMeshFallback;
+    }
 
     if (paramBackend) {
       const normalizedParam = normalizeServerUrl(paramBackend);
@@ -5951,19 +5966,21 @@
     if (savedUrl) {
       savedUrl = normalizeServerUrl(savedUrl);
     }
-    // Auto-recovery for hosted dashboards (e.g. GitHub Pages):
-    // If running on a public remote host and stored URL is loopback without explicit query param override,
-    // automatically recover to defaultRailway to prevent Mixed Content / Private Network CORS lockup.
+    if (savedUrl && savedUrl.includes('railway.app')) {
+      savedUrl = null;
+      try {
+        localStorage.removeItem('cvps_server_url');
+        localStorage.removeItem('cvps_control_plane_url');
+      } catch (_) {}
+    }
     const isLoopbackTarget = savedUrl && (savedUrl.includes('localhost') || savedUrl.includes('127.0.0.1'));
     if (isStaticHost && isLoopbackTarget && !paramBackend) {
-      console.warn('[CyberVPS] Hosted environment detected with stale loopback target. Auto-recovering to Railway public relay:', defaultRailway);
-      savedUrl = defaultRailway;
-      try { localStorage.setItem('cvps_server_url', defaultRailway); localStorage.setItem('cvps_control_plane_url', defaultRailway); } catch (_) {}
+      const cachedCf = localStorage.getItem('cvps_active_cf_link');
+      if (cachedCf && (cachedCf.includes('trycloudflare.com') || cachedCf.startsWith('https://'))) {
+        savedUrl = cachedCf;
+      }
     }
     if (window.location.protocol === 'https:' && savedUrl && savedUrl.startsWith('http://') && !savedUrl.includes('localhost') && !savedUrl.includes('127.0.0.1')) {
-      savedUrl = null;
-    }
-    if (savedUrl && savedUrl.includes('trycloudflare.com')) {
       savedUrl = null;
     }
     if (savedUrl && !savedUrl.startsWith('http://') && !savedUrl.startsWith('https://')) {
@@ -6025,7 +6042,7 @@
 
     // 3. API CLIENT WITH TIMEOUT & ERROR NORMALIZATION
     async function apiRequest(endpoint, options = {}) {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
       const url = `${base}${cleanEndpoint}`;
 
@@ -6268,7 +6285,7 @@
       document.getElementById('kpi-ports').innerText = appState.ports.length;
 
       // Update Onboarding Commands dynamically with current server URL
-      const baseCmdUrl = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const baseCmdUrl = getActiveBaseUrl();
       const linuxCmdEl = document.getElementById('cmd-linux');
       if (linuxCmdEl) {
         linuxCmdEl.innerText = `curl -fsSL ${baseCmdUrl}/install.sh | bash`;
@@ -6520,7 +6537,7 @@
           <td><strong>${escapeHtml(t.machine_id)}</strong></td>
           <td><code>:${t.target_port}</code></td>
           <td>
-            <a href="${normalizeServerUrl(appConfig.serverUrl) || defaultRailway}/tunnel/${t.id}/" target="_blank" style="color:var(--accent-cyan); text-decoration:none;">
+            <a href="${getActiveBaseUrl()}/tunnel/${t.id}/" target="_blank" style="color:var(--accent-cyan); text-decoration:none;">
               /tunnel/${t.id}/ ↗
             </a>
           </td>
@@ -7032,7 +7049,7 @@
       badge.className = 'badge badge-warning';
       badge.innerText = 'Authenticating...';
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       const wsProtocol = base.startsWith('https') ? 'wss:' : 'ws:';
       const wsHost = base.replace(/^https?:\/\//, '');
       const profilePref = document.getElementById('terminal-profile-select')?.value || 'auto';
@@ -8742,12 +8759,12 @@
       const urlInput = document.getElementById('setting-server-url');
       const keyInput = document.getElementById('setting-pairing-key');
       const intervalInput = document.getElementById('setting-refresh-interval');
-      if (urlInput) urlInput.value = appConfig.serverUrl || defaultRailway;
+      if (urlInput) urlInput.value = appConfig.serverUrl || getActiveBaseUrl();
       if (keyInput) keyInput.value = appConfig.pairingKey || '';
       if (intervalInput) intervalInput.value = String(appConfig.refreshInterval || 4000);
       const fb = document.getElementById('settings-feedback');
       if (fb) {
-        fb.innerHTML = `<span style="color:var(--text-muted);">Current Active Target: <code>${escapeHtml(appConfig.serverUrl || defaultRailway)}</code></span>`;
+        fb.innerHTML = `<span style="color:var(--text-muted);">Current Active Target: <code>${escapeHtml(appConfig.serverUrl || getActiveBaseUrl())}</code></span>`;
       }
       updateConnectionModeUI();
       fetchBuildInfo();
@@ -8777,25 +8794,29 @@
     }
 
     function fixLocalhostConnection() {
-      const target = defaultRailway;
-      localStorage.setItem('cvps_server_url', target);
-      appConfig.serverUrl = target;
-      const inputEl = document.getElementById('setting-server-url');
-      if (inputEl) inputEl.value = target;
-      sessionStorage.removeItem('cvps_dismiss_loopback');
-      const banner = document.getElementById('loopback-warning-banner');
-      if (banner) banner.style.display = 'none';
-      updateConnectionModeUI('public');
-      showToast('Switched Control Plane to Public Railway Cloud Relay. Reconnecting...', 'success');
-      setupSyncInterval();
-      initTelemetryStream();
-      syncData(true);
+      const cached = localStorage.getItem('cvps_active_cf_link');
+      if (cached && (cached.includes('trycloudflare.com') || cached.startsWith('https://'))) {
+        appConfig.serverUrl = cached;
+        localStorage.setItem('cvps_server_url', cached);
+        const inputEl = document.getElementById('setting-server-url');
+        if (inputEl) inputEl.value = cached;
+        sessionStorage.removeItem('cvps_dismiss_loopback');
+        const banner = document.getElementById('loopback-warning-banner');
+        if (banner) banner.style.display = 'none';
+        updateConnectionModeUI('public');
+        showToast('Connected via Cloudflare Mesh Tunnel: ' + cached, 'success');
+        setupSyncInterval();
+        initTelemetryStream();
+        syncData(true);
+        return;
+      }
+      openCloudflareMeshModal();
     }
 
     function setConnectionMode(mode) {
       const inputEl = document.getElementById('setting-server-url');
       if (mode === 'public') {
-        if (inputEl) inputEl.value = defaultRailway;
+        if (inputEl) inputEl.value = (localStorage.getItem('cvps_active_cf_link') || defaultMeshFallback);
         updateConnectionModeUI('public');
         saveSettings();
       } else if (mode === 'local') {
@@ -8832,7 +8853,7 @@
     }
 
     async function fetchBuildInfo(forceToast = false) {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/system/info`);
         if (res.ok) {
@@ -8871,7 +8892,7 @@
     }
 
     function useRailwayDefault() {
-      document.getElementById('setting-server-url').value = defaultRailway;
+      document.getElementById('setting-server-url').value = (localStorage.getItem('cvps_active_cf_link') || defaultMeshFallback);
       updateConnectionModeUI('public');
       saveSettings();
     }
@@ -8957,13 +8978,13 @@
       localStorage.removeItem('cvps_server_url');
       localStorage.removeItem('cvps_pairing_key');
       localStorage.removeItem('cvps_refresh_interval');
-      appConfig.serverUrl = defaultRailway;
+      appConfig.serverUrl = (localStorage.getItem('cvps_active_cf_link') || defaultMeshFallback);
       appConfig.pairingKey = '';
       appConfig.refreshInterval = 4000;
-      document.getElementById('setting-server-url').value = defaultRailway;
+      document.getElementById('setting-server-url').value = (localStorage.getItem('cvps_active_cf_link') || defaultMeshFallback);
       document.getElementById('setting-pairing-key').value = '';
       document.getElementById('setting-refresh-interval').value = '4000';
-      localStorage.setItem('cvps_server_url', defaultRailway);
+      localStorage.setItem('cvps_server_url', (localStorage.getItem('cvps_active_cf_link') || defaultMeshFallback));
       updateConnectionModeUI('public');
       checkLoopbackBanner();
       setupSyncInterval();
@@ -9015,7 +9036,7 @@
       webDesktopState.machineId = machineId;
       const m = appState.machines.find(x => x.id === machineId);
       const hostLabel = m ? (m.friendly_name || m.hostname || m.id) : machineId;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
 
       try {
         const res = await fetch(`${base}/api/v1/desktop/status?machine_id=${encodeURIComponent(machineId)}`);
@@ -9279,7 +9300,7 @@
         btn.innerText = 'Enabling RDP...';
       }
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/desktop/action`, {
           method: 'POST',
@@ -9304,7 +9325,7 @@
       const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
       if (!machineId) return showToast('No machine selected', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/desktop/tunnel`, {
           method: 'POST',
@@ -9328,7 +9349,7 @@
       const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
       if (!machineId) return showToast('No machine selected', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       let port = protocol === 'vnc' ? 59000 : 33890;
       if (protocol === 'rdp' && currentDesktopState.data?.rdp_bridge?.local_port) {
         port = currentDesktopState.data.rdp_bridge.local_port;
@@ -9408,7 +9429,7 @@
       const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
       if (!machineId) return showToast('No machine selected', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       let port = 33890;
       if (currentDesktopState.data?.rdp_bridge?.local_port) {
         port = currentDesktopState.data.rdp_bridge.local_port;
@@ -9447,7 +9468,7 @@
       if (!machineId) return showToast('No machine selected', 'error');
 
       const current = currentDesktopState.data?.unattended_access !== false;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/desktop/action`, {
           method: 'POST',
@@ -9471,7 +9492,7 @@
       const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
       if (!machineId) return showToast('No machine selected', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/desktop/action`, {
           method: 'POST',
@@ -9499,7 +9520,7 @@
       const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
       if (!machineId) return showToast('No machine selected', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/desktop/action`, {
           method: 'POST',
@@ -9543,7 +9564,7 @@
       if (!machineId) return showToast('No target machine selected. Please select a machine first.', 'error');
 
       const app = appToLaunch || document.getElementById('interactive-app-input')?.value || 'notepad.exe';
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       const resBox = document.getElementById('desktop-launch-result');
 
       showToast(`Launching ${app} on physical interactive desktop...`, 'info');
@@ -9705,7 +9726,7 @@
         const gatewayPath = tokenPayload.gateway_url || '/api/v1/remote-desktop/stream';
 
         // Establish WebSocket connection
-        const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+        const base = getActiveBaseUrl();
         const wsUrl = new URL(base);
         wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
         wsUrl.pathname = gatewayPath;
@@ -10586,7 +10607,7 @@
 
     function copyMeshCentralInstallCommand() {
       const machineId = currentDesktopState.machineId || document.getElementById('desktop-machine-select')?.value;
-      const cmd = `curl -fsSL https://cybervps-space-station.up.railway.app/install.sh | bash -s -- --enable-meshcentral`;
+      const cmd = `curl -fsSL https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/install.sh | bash -s -- --enable-meshcentral`;
       navigator.clipboard.writeText(cmd).then(() => {
         showToast(`Copied MeshCentral command: ${cmd}`, 'success');
       }).catch(() => {
@@ -10703,7 +10724,7 @@
       populateReplitMachines();
       const select = document.getElementById('replit-machine-select');
       const machineId = select ? select.value : null;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
 
       try {
         const queryParam = machineId ? `?machine_id=${encodeURIComponent(machineId)}` : '';
@@ -10748,7 +10769,7 @@
     async function runReplitDoctor() {
       const select = document.getElementById('replit-machine-select');
       const machineId = select ? select.value : null;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       showToast('Running capability diagnostics...', 'info');
 
       try {
@@ -10794,7 +10815,7 @@
     async function replitDesktopAction(action) {
       const select = document.getElementById('replit-machine-select');
       const machineId = select ? select.value : null;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
 
       try {
         showToast(`Executing desktop ${action}...`, 'info');
@@ -10818,7 +10839,7 @@
     async function replitSshxAction(action) {
       const select = document.getElementById('replit-machine-select');
       const machineId = select ? select.value : null;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
 
       try {
         showToast(`sshx ${action} initiated...`, 'info');
@@ -13531,7 +13552,7 @@
         try { appState.telemetrySource.close(); } catch (_) {}
       }
       try {
-        const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+        const base = getActiveBaseUrl();
         const streamUrl = `${base}/api/v1/telemetry/stream`;
         const es = new EventSource(streamUrl);
         appState.telemetrySource = es;
@@ -15271,7 +15292,7 @@
       if (!machineId) return showToast('Please select a target host machine first', 'warning');
       appState.selectedMachineId = machineId;
       const resolvedName = name || (path ? path.split(/[\\/]/).pop() : 'download');
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
 
       showToast(`Requesting secure download ticket for "${resolvedName}"...`, 'info');
       try {
@@ -16498,7 +16519,7 @@
       const badge = document.getElementById('win-ticket-badge');
       if (badge) badge.innerText = 'Minting Ticket...';
 
-      const baseCmdUrl = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const baseCmdUrl = getActiveBaseUrl();
       try {
         const res = await apiRequest('/api/v1/enrollment/bootstrap', { method: 'POST' });
         const data = (res && res.data) ? res.data : res;
@@ -16552,7 +16573,7 @@
           showToast('Generating secure 1-click Windows installer ticket...', 'info');
           const data = await mintOneClickWindowsInstaller();
           if (data && data.ticket) {
-            text = `& ([scriptblock]::Create((Invoke-RestMethod '${normalizeServerUrl(appConfig.serverUrl) || defaultRailway}/install.ps1?ticket=${data.ticket}')))`;
+            text = `& ([scriptblock]::Create((Invoke-RestMethod '${getActiveBaseUrl()}/install.ps1?ticket=${data.ticket}')))`;
             el.innerText = text;
           } else {
             showToast('1-Click Provisioning Error: Control Plane rejected ticket request. Please check pairing key.', 'error');
@@ -16653,7 +16674,7 @@
         grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--text-muted);"><span class="pulse-dot" style="background:var(--accent-cyan); display:inline-block; margin-right:8px;"></span> Scanning application inventory & live processes...</div>';
       }
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const appRes = await apiRequest(`/api/v1/apps/list?machine_id=${encodeURIComponent(machineId)}&refresh=${forceRefresh ? '1' : '0'}`);
         if (!appRes.ok) throw new Error(appRes.error || 'Failed to fetch application inventory');
@@ -16785,7 +16806,7 @@
       const mid = machineId || document.getElementById('apps-machine-select')?.value || appState.selectedMachineId || (appState.machines[0]?.id);
       if (!mid) return showToast('No target machine selected for OTA update', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       showToast(`Dispatching silent Over-the-Air (OTA) update to node ${mid}...`, 'info');
       try {
         const res = await fetch(`${base}/api/v1/fleet/ota-update`, {
@@ -16805,7 +16826,7 @@
     }
 
     async function triggerFleetOtaUpdate() {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       showToast('Dispatching fleet-wide silent OTA update to all enrolled nodes...', 'info');
       try {
         const res = await fetch(`${base}/api/v1/fleet/ota-update`, {
@@ -17287,7 +17308,7 @@
         const streamToken = tokenPayload.token;
 
         // Establish WebSocket stream connection
-        const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+        const base = getActiveBaseUrl();
         const wsUrl = new URL(base);
         wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
         wsUrl.pathname = '/api/v1/apps/stream';
@@ -17716,7 +17737,7 @@
     let endCoreStars = [];
 
     async function syncBackends() {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         let clusterData = null;
         try {
@@ -17766,7 +17787,7 @@
     // Connect to real-time SSE stream for healing convergence beams
     function initEndCoreEvents() {
       if (window.endCoreEventSource) return;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const sse = new EventSource(`${base}/api/v1/cluster/events`);
         window.endCoreEventSource = sse;
@@ -18172,7 +18193,7 @@
     async function triggerPillarRecoveryDirect(backendId) {
       showToast(`Initiating 15-step End-Core reconstitution on ${backendId}...`, 'info');
       addEndCoreLiveLog(`[Trigger] Administrator initiated reconstitution on pillar ${backendId}.`);
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/cluster/nodes/${backendId}/recover`, {
           method: 'POST',
@@ -18195,7 +18216,7 @@
 
     async function verifySelectedPillarBackup() {
       if (!currentSelectedPillarId) return;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/cluster/nodes/${currentSelectedPillarId}/backup/verify`, {
           method: 'POST',
@@ -18212,7 +18233,7 @@
 
     async function testSelectedPillarRestore() {
       if (!currentSelectedPillarId) return;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/cluster/nodes/${currentSelectedPillarId}/backup/test-restore`, {
           method: 'POST',
@@ -18249,7 +18270,7 @@
       const role = document.getElementById('add-be-role').value;
       if (!url) return showToast('Backend URL is required', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/cluster/nodes`, {
           method: 'POST',
@@ -18268,7 +18289,7 @@
     }
 
     async function removeBackend(id) {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/cluster/nodes/${id}`, {
           method: 'DELETE',
@@ -18286,7 +18307,7 @@
 
     async function testAllBackends() {
       showToast('Auditing End-Core cluster health across all obsidian pillars...', 'info');
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/cluster/health-check`, {
           method: 'POST',
@@ -18302,7 +18323,7 @@
     }
 
     async function promoteBackendToPrimary(id) {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/cluster/nodes/${id}/promote`, {
           method: 'POST',
@@ -18319,7 +18340,7 @@
     }
 
     async function broadcastBackendsToFleet() {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/cluster/sync-peers`, {
           method: 'POST',
@@ -18337,7 +18358,7 @@
 
     async function triggerMachineReboot(machineId) {
       if (!confirm(`Are you sure you want to reboot machine ${machineId}?\n\nThis will initiate a graceful, isolated restart of ONLY this machine. The CyberVPS agent will reconnect automatically upon boot.`)) return;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       showToast(`Initiating isolated reboot sequence on ${machineId}...`, 'info');
       try {
         const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/action`, {
@@ -18358,7 +18379,7 @@
     }
 
     async function triggerAgentRestart(machineId) {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       showToast(`Restarting CyberVPS agent on ${machineId}...`, 'info');
       try {
         const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/action`, {
@@ -18382,7 +18403,7 @@
       if (!confirm(`Are you sure you want to disconnect host [${machineId}]?\n\nZero-Drop Guarantee: Hosts will never disconnect on their own. Once you disconnect this host, it will remain parked until you click Reconnect.`)) {
         return;
       }
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       showToast(`Disconnecting host [${machineId}]...`, 'info');
       try {
         const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/disconnect`, {
@@ -18402,7 +18423,7 @@
     }
 
     async function userReconnectMachine(machineId) {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       showToast(`Authorizing reconnection for [${machineId}]...`, 'info');
       try {
         const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/reconnect`, {
@@ -18423,7 +18444,7 @@
 
     async function triggerAgentRebuild(machineId) {
       if (!confirm(`Rebuild CyberVPS agent from GitHub on ${machineId}?\n\nThis pulls the latest universal-agent from GitHub main, verifies syntax, replaces the binary, and restarts.`)) return;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       showToast(`Rebuilding agent from GitHub on ${machineId}...`, 'info');
       try {
         const res = await fetch(`${base}/api/v1/machines/${encodeURIComponent(machineId)}/action`, {
@@ -18447,7 +18468,7 @@
     // 17. CUSTOM HOSTING & DOMAINS CONTROLLER (VERCEL/RAILWAY STYLE)
     // =========================================================================
     async function syncHosting() {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const [projRes, domRes] = await Promise.all([
           fetch(`${base}/api/v1/hosting/projects`),
@@ -18554,7 +18575,7 @@
       const build_cmd = document.getElementById('proj-build-cmd').value.trim();
       if (!name) return showToast('Project name is required', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/hosting/projects`, {
           method: 'POST',
@@ -18573,7 +18594,7 @@
 
     async function deployHostingProject(projectId) {
       showToast(`Building & deploying project ${projectId}...`, 'info');
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/hosting/deploy`, {
           method: 'POST',
@@ -18614,7 +18635,7 @@
       const project_id = document.getElementById('custom-domain-project').value;
       if (!domain) return showToast('Domain name is required', 'error');
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/domains`, {
           method: 'POST',
@@ -18633,7 +18654,7 @@
 
     async function verifyCustomDomain(domain) {
       showToast(`Verifying DNS records & issuing SSL for ${domain}...`, 'info');
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/domains/verify`, {
           method: 'POST',
@@ -18705,7 +18726,7 @@
 // 18. INFRASTRUCTURE: WIREGUARD, DOCKER, SANDBOXES & CYBERROOT CONTROLLER
     // =========================================================================
     async function syncInfra() {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const [wgRes, docRes, sbxRes, crRes, plRes] = await Promise.all([
           fetch(`${base}/api/v1/wireguard/peers`),
@@ -18760,7 +18781,7 @@
     async function submitAddWireguardPeer() {
       const name = document.getElementById('wg-peer-name').value.trim();
       const allowed_ips = document.getElementById('wg-peer-ips').value.trim();
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/wireguard/peers`, {
           method: 'POST',
@@ -18800,7 +18821,7 @@
     }
 
     async function dockerContainerAction(id, action) {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/docker/action`, {
           method: 'POST',
@@ -18847,7 +18868,7 @@
       const name = document.getElementById('sbx-name').value.trim();
       const cpu_limit = document.getElementById('sbx-cpu').value;
       const mem_limit = document.getElementById('sbx-mem').value;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/sandboxes`, {
           method: 'POST',
@@ -18864,7 +18885,7 @@
 
     async function destroySandbox(id) {
       if (!confirm(`Destroy sandbox ${id}?`)) return;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         await fetch(`${base}/api/v1/sandboxes/${id}`, { method: 'DELETE' });
         showToast(`Sandbox ${id} destroyed.`, 'success');
@@ -18898,7 +18919,7 @@
     }
 
     async function togglePlugin(id, enabled) {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         await fetch(`${base}/api/v1/plugins/toggle`, {
           method: 'POST',
@@ -18938,7 +18959,7 @@
     async function submitAdminLogin() {
       const user = document.getElementById('admin-login-username').value.trim();
       const pass = document.getElementById('admin-login-password').value;
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
 
       try {
         const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -18966,7 +18987,7 @@
     }
 
     async function submitAdminLogout() {
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       const token = appState.adminAuth?.token;
       try {
         await fetch(`${base}/api/v1/auth/logout`, {
@@ -18984,7 +19005,7 @@
 
     async function runFleetActiveCheck() {
       showToast('Executing fleet-wide active health check...', 'info');
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/fleet/active-check`, {
           method: 'POST',
@@ -19027,7 +19048,7 @@
         return;
       }
 
-      const base = normalizeServerUrl(appConfig.serverUrl) || defaultRailway;
+      const base = getActiveBaseUrl();
       try {
         const res = await fetch(`${base}/api/v1/fleet/device/revoke`, {
           method: 'POST',
@@ -19133,27 +19154,28 @@ class StationState {
     const isHostedDomain = window.location.hostname && 
       (window.location.hostname.endsWith('github.io') || window.location.hostname.endsWith('netlify.app'));
 
-    // If hosted on GitHub Pages or Netlify and stored target is loopback without explicit query param, auto-recover to Railway public endpoint
-    const isLoopback = saved && (saved.includes('localhost') || saved.includes('127.0.0.1'));
-    if (isHostedDomain && isLoopback) {
-      console.warn('[CyberVPS] Hosted environment detected with stale loopback target. Auto-recovering to Railway public relay');
-      const defaultCloud = 'https://cybervps-space-station.up.railway.app';
+    let sClean = saved;
+    if (sClean && sClean.includes('railway.app')) {
+      sClean = null;
       try {
-        localStorage.setItem('cvps_control_plane_url', defaultCloud);
-        localStorage.setItem('cvps_server_url', defaultCloud);
+        localStorage.removeItem('cvps_control_plane_url');
+        localStorage.removeItem('cvps_server_url');
       } catch (_) {}
-      return defaultCloud;
     }
 
-    if (saved) return saved.replace(/\/$/, '');
+    const cachedCf = localStorage.getItem('cvps_active_cf_link');
+    if (cachedCf && (cachedCf.includes('trycloudflare.com') || cachedCf.startsWith('https://'))) {
+      return cachedCf.replace(/\/+$/, '');
+    }
 
-    // Default to Railway production if on GitHub Pages/Netlify, or origin if self-hosted
+    if (sClean) return sClean.replace(/\/$/, '');
+
     if (isHostedDomain) {
-      return 'https://cybervps-space-station.up.railway.app';
+      return '';
     }
     return (window.location.origin && window.location.origin.startsWith('http')) 
       ? window.location.origin 
-      : 'https://cybervps-space-station.up.railway.app';
+      : 'http://localhost:8080';
   }
 
   get(key) {
@@ -19239,10 +19261,13 @@ class StationApiClient {
     this.store = stateStore;
     const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
     this.candidateBackends = [
-      'https://cybervps-space-station.up.railway.app',
       'https://cybervpsbackend4.getvoroa.com',
       'https://cybervps-render-control.onrender.com'
     ];
+    const cachedCf = typeof localStorage !== 'undefined' ? localStorage.getItem('cvps_active_cf_link') : null;
+    if (cachedCf) {
+      this.candidateBackends.unshift(cachedCf);
+    }
     if (!isHttps) {
       this.candidateBackends.push('http://localhost:8080');
     }
@@ -19250,7 +19275,7 @@ class StationApiClient {
 
   getBaseUrl() {
     const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-    const fallbackDefault = isHttps ? 'https://cybervps-space-station.up.railway.app' : 'http://localhost:8080';
+    const fallbackDefault = isHttps ? (localStorage.getItem('cvps_active_cf_link') || '') : 'http://localhost:8080';
     return this.store.get('backendUrl') || fallbackDefault;
   }
 
@@ -20899,11 +20924,11 @@ class ClusterHAView {
     if (!grid) return;
 
     const backends = [
-      { name: 'Railway Primary Control Plane', url: 'https://cybervps-space-station.up.railway.app', role: 'Leader' },
+      { name: 'Space Station Decentralized Control Plane', url: 'http://localhost:8080', role: 'Leader' },
       { name: 'Obsidian Pillar Alpha (Voroa Node)', url: 'https://cybervpsbackend4.getvoroa.com', role: 'Follower' },
       { name: 'Obsidian Pillar Beta (Render Cloud)', url: 'https://cybervps-render-control.onrender.com', role: 'Follower' },
-      { name: 'Obsidian Pillar Gamma (Local Station)', url: 'http://localhost:8080', role: 'Candidate' },
-      { name: 'Obsidian Pillar Delta (Plexo Relay)', url: 'https://cybervps-space-station.up.railway.app/relay', role: 'Witness' }
+      { name: 'Obsidian Pillar Gamma (Local Station)', url: 'http://127.0.0.1:8080', role: 'Candidate' },
+      { name: 'Obsidian Pillar Delta (Cloudflare Tunnel)', url: 'http://localhost:8080/api/v1/tunnel/public-url', role: 'Witness' }
     ];
 
     grid.innerHTML = backends.map(b => `
