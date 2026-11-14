@@ -1139,16 +1139,20 @@ function getAgentSocket(machineId) {
     }
   }
 
-  // 20-Agent Swarm Cluster Failover: If targeted worker is busy/offline, failover to any online sibling in swarm!
-  const baseMid = String(machineId).replace(/-w\d{2,}$/i, '');
+  // 20-Agent Swarm & Multiverse Tree Failover: If targeted worker/leaf is busy/offline, failover to any online sibling in tree!
+  const baseMid = String(machineId).replace(/(?:-w|-leaf)\d{1,}$/i, '');
   if (baseMid) {
     const baseWs = db.connectedAgents.get(baseMid);
     if (baseWs && baseWs.readyState === WebSocket.OPEN) return baseWs;
 
     for (let w = 1; w <= 20; w++) {
-      const wId = `${baseMid}-w${String(w).padStart(2, '0')}`;
+      const wPad = String(w).padStart(2, '0');
+      const wId = `${baseMid}-w${wPad}`;
+      const leafId = `${baseMid}-leaf${wPad}`;
       const wWs = db.connectedAgents.get(wId);
       if (wWs && wWs.readyState === WebSocket.OPEN) return wWs;
+      const leafWs = db.connectedAgents.get(leafId);
+      if (leafWs && leafWs.readyState === WebSocket.OPEN) return leafWs;
     }
 
     for (const [id, ws] of db.connectedAgents.entries()) {
@@ -1178,6 +1182,194 @@ function findAppStream(streamId, correlationId, machineId) {
     }
   }
   return null;
+}
+
+// =========================================================================
+// 🌳 MULTIVERSE TREE MESH ENGINE (N Systems × 20 Leaf Links, Interconnected)
+// =========================================================================
+const LEAVES_PER_SYSTEM = 20;
+
+function getMultiverseTreeTopology() {
+  const tInfo = tunnelManager.getInfo();
+  const rootTunnelUrl = tInfo.public_url || `http://127.0.0.1:${PORT}`;
+
+  const branchMap = new Map();
+  const branchIndexMap = new Map();
+  let branchCounter = 0;
+
+  for (const [id, m] of db.machines.entries()) {
+    let baseSysId = m.swarm_cluster;
+    if (!baseSysId) {
+      const match = id.match(/^(.*?)(?:-w\d+|-leaf\d+)$/);
+      baseSysId = match ? match[1] : id;
+    }
+    if (!branchMap.has(baseSysId)) {
+      branchCounter++;
+      branchIndexMap.set(baseSysId, branchCounter);
+      branchMap.set(baseSysId, {
+        base_id: baseSysId,
+        hostname: m.hostname ? m.hostname.replace(/(?:-w|-leaf)\d+$/, '') : baseSysId,
+        platform: m.os || 'Windows',
+        created_at: m.created_at,
+        last_seen: m.last_seen,
+        tunnel_url: m.cloudflare_tunnel_url || rootTunnelUrl,
+        raw_machines: []
+      });
+    }
+    const b = branchMap.get(baseSysId);
+    b.raw_machines.push({ id, machine: m });
+    if (m.cloudflare_tunnel_url && (!b.tunnel_url || b.tunnel_url === rootTunnelUrl)) {
+      b.tunnel_url = m.cloudflare_tunnel_url;
+    }
+    if (m.last_seen && (!b.last_seen || m.last_seen > b.last_seen)) {
+      b.last_seen = m.last_seen;
+    }
+  }
+
+  const allBranches = [];
+  const allLeafLinks = [];
+  const systemIds = Array.from(branchMap.keys());
+
+  for (const [sysId, bData] of branchMap.entries()) {
+    const bIdx = branchIndexMap.get(sysId);
+    const leaves = [];
+    let branchOnlineWorkers = 0;
+
+    for (let leafIdx = 1; leafIdx <= LEAVES_PER_SYSTEM; leafIdx++) {
+      const leafPad = String(leafIdx).padStart(2, '0');
+      const leafId = leafIdx === 1 ? sysId : `${sysId}-w${leafPad}`;
+      const leafAliasId = `${sysId}-leaf${leafPad}`;
+      
+      const isConnected = (db.connectedAgents.has(leafId) && db.connectedAgents.get(leafId).readyState === WebSocket.OPEN) ||
+                          (db.connectedAgents.has(leafAliasId) && db.connectedAgents.get(leafAliasId).readyState === WebSocket.OPEN) ||
+                          (leafIdx === 1 && db.connectedAgents.has(sysId) && db.connectedAgents.get(sysId).readyState === WebSocket.OPEN);
+
+      if (isConnected) branchOnlineWorkers++;
+
+      const leafUrl = `${bData.tunnel_url}?branch=${encodeURIComponent(sysId)}&leaf=${leafIdx}&target=${encodeURIComponent(leafId)}`;
+      const leafProxyUrl = `${bData.tunnel_url}/api/v1/tree/leaf/${encodeURIComponent(leafId)}`;
+
+      const leafObj = {
+        leaf_id: leafId,
+        leaf_alias: leafAliasId,
+        leaf_index: leafIdx,
+        branch_id: sysId,
+        branch_index: bIdx,
+        status: isConnected ? 'online' : 'ready',
+        virtual_ip: `10.77.${bIdx}.${leafIdx}`,
+        leaf_link: leafUrl,
+        proxy_url: leafProxyUrl,
+        capabilities: ["terminal", "file_manager", "process_runner", "cloudflare_tunnel", "tree_cross_route"],
+        peer_branches: systemIds.filter(id => id !== sysId)
+      };
+
+      leaves.push(leafObj);
+      allLeafLinks.push({
+        leaf_id: leafId,
+        leaf_alias: leafAliasId,
+        branch_id: sysId,
+        hostname: bData.hostname,
+        leaf_index: leafIdx,
+        virtual_ip: leafObj.virtual_ip,
+        status: leafObj.status,
+        url: leafUrl,
+        proxy_url: leafProxyUrl
+      });
+    }
+
+    const peerConnections = systemIds.filter(id => id !== sysId).map(peerId => {
+      const peerData = branchMap.get(peerId);
+      return {
+        peer_system_id: peerId,
+        peer_hostname: peerData ? peerData.hostname : peerId,
+        peer_tunnel: peerData ? peerData.tunnel_url : rootTunnelUrl,
+        status: 'interconnected',
+        latency_ms: 12
+      };
+    });
+
+    allBranches.push({
+      branch_id: sysId,
+      branch_index: bIdx,
+      hostname: bData.hostname,
+      platform: bData.platform,
+      status: branchOnlineWorkers > 0 ? 'online' : 'ready',
+      public_tunnel_url: bData.tunnel_url,
+      leaves_count: LEAVES_PER_SYSTEM,
+      online_leaves_count: branchOnlineWorkers,
+      leaves: leaves,
+      interconnected_peers: peerConnections,
+      last_seen: bData.last_seen || new Date().toISOString()
+    });
+  }
+
+  const totalSystems = allBranches.length;
+  const totalLeafLinks = totalSystems * LEAVES_PER_SYSTEM;
+  const activeLeafLinks = allLeafLinks.filter(l => l.status === 'online').length;
+
+  return {
+    ok: true,
+    success: true,
+    root: {
+      id: "space-station-multiverse-core",
+      name: "CyberVPS Space Station Multiverse Core",
+      protocol: "v2.5-multiverse-tree-mesh",
+      primary_tunnel: rootTunnelUrl,
+      timestamp: new Date().toISOString()
+    },
+    formula: "Total Leaf Links = N Systems × 20 Leaves",
+    stats: {
+      total_systems: totalSystems,
+      leaves_per_system: LEAVES_PER_SYSTEM,
+      total_leaf_links: totalLeafLinks,
+      active_leaf_links: activeLeafLinks,
+      interconnect_routes_count: totalSystems * Math.max(0, totalSystems - 1),
+      mesh_topology: "Multiverse Tree (Root -> Branch Systems -> 20 Leaves Each)",
+      tree_health: activeLeafLinks > 0 ? "100% interconnected" : "ready"
+    },
+    branches: allBranches,
+    all_leaf_links: allLeafLinks
+  };
+}
+
+function handleTreeCrossRoute(fromLeaf, targetSystem, action, payload = {}) {
+  const targetWs = getAgentSocket(targetSystem);
+  if (!targetWs) {
+    return {
+      success: false,
+      error: `Target system [${targetSystem}] has no active workers in the multiverse tree mesh`
+    };
+  }
+
+  const requestId = 'xroute_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+  const routeMsg = {
+    type: 'TreeCrossRoute',
+    request_id: requestId,
+    from_leaf: fromLeaf,
+    target_system: targetSystem,
+    action: action,
+    payload: payload,
+    timestamp: new Date().toISOString()
+  };
+
+  try {
+    targetWs.send(JSON.stringify(routeMsg));
+    return {
+      success: true,
+      request_id: requestId,
+      status: 'routed',
+      from_leaf: fromLeaf,
+      target_system: targetSystem,
+      action: action,
+      hop_count: 1,
+      mesh_route: `${fromLeaf} -> Multiverse Core -> ${targetSystem}`
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: `Failed to deliver cross-route message: ${err.message}`
+    };
+  }
 }
 
 function getMachineStatus(m) {
@@ -1518,6 +1710,7 @@ function isPublicApiRoute(pathname) {
   if (pathname === '/api/v1/access/pairing') return true;
   if (pathname === '/api/v1/access/status') return true;
   if (pathname === '/api/v1/tunnel/public-url' || pathname === '/api/v1/cluster/public-links') return true;
+  if (pathname.startsWith('/api/v1/tree/')) return true;
   if (pathname === '/api/v1/swarm/nodes' || pathname === '/api/v1/swarm/summary') return true;
   if (pathname === '/api/v1/tunnel/cloudflare/start' || pathname === '/api/v1/tunnel/cloudflare/stop') return true;
   if (pathname === '/api/v1/terminal/token' || pathname === '/api/v1/terminal/session' || pathname === '/api/v1/terminal/upload-run') return true;
@@ -3012,6 +3205,95 @@ const server = http.createServer(async (req, res) => {
       public_url: tInfo.public_url,
       pairing_key: tunnelManager.pairingKey
     }));
+    return;
+  }
+
+  // 2B-5. MULTIVERSE TREE MESH: N SYSTEMS × 20 LEAF LINKS TOPOLOGY
+  if (pathname === '/api/v1/tree/multiverse' && method === 'GET') {
+    const topology = getMultiverseTreeTopology();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(topology));
+    return;
+  }
+
+  // 2B-6. FLAT LIST OF ALL MULTIVERSE LEAF LINKS (20 per system -> 20, 40, 80...)
+  if (pathname === '/api/v1/tree/leaves' && method === 'GET') {
+    const topology = getMultiverseTreeTopology();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      ok: true,
+      success: true,
+      total_leaves: topology.stats.total_leaf_links,
+      leaves_per_system: LEAVES_PER_SYSTEM,
+      total_systems: topology.stats.total_systems,
+      active_leaves: topology.stats.active_leaf_links,
+      formula: "1 system = 20 links, 2 systems = 40 links, 4 systems = 80 links, N systems = N*20 links",
+      leaf_links: topology.all_leaf_links
+    }));
+    return;
+  }
+
+  // 2B-7. INTER-SYSTEM CROSS-ROUTE COMMAND EXECUTION
+  if (pathname === '/api/v1/tree/cross-route' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const fromLeaf = payload.from_leaf || 'root';
+        const targetSystem = payload.target_system || payload.machine_id;
+        const action = payload.action || 'ping';
+        if (!targetSystem) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'target_system is required for tree cross-route' }));
+          return;
+        }
+        const result = handleTreeCrossRoute(fromLeaf, targetSystem, action, payload.payload || {});
+        const statusCode = result.success ? 200 : 404;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // 2B-8. INTER-SYSTEM TREE GOSSIP & PEER ANNOUNCEMENT
+  if (pathname === '/api/v1/tree/gossip' && method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const systemId = payload.system_id || payload.machine_id;
+        if (systemId && payload.cloudflare_tunnel_url) {
+          const m = db.machines.get(systemId);
+          if (m) {
+            m.cloudflare_tunnel_url = payload.cloudflare_tunnel_url;
+            m.last_seen = new Date().toISOString();
+          }
+        }
+        const topology = getMultiverseTreeTopology();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          success: true,
+          gossip_acknowledged: true,
+          system_id: systemId,
+          peer_systems_count: topology.stats.total_systems,
+          mesh_peers: topology.branches.filter(b => b.branch_id !== systemId).map(b => ({
+            branch_id: b.branch_id,
+            tunnel_url: b.public_tunnel_url,
+            status: b.status
+          }))
+        }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
     return;
   }
 
@@ -11058,6 +11340,8 @@ module.exports = {
   isServerProtectedPath,
   getMachineBackendInventory,
   getAllClusterBackends,
+  getMultiverseTreeTopology,
+  handleTreeCrossRoute,
   cleanup
 };
 

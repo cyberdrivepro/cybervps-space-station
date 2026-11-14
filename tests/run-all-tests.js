@@ -2097,6 +2097,14 @@ async function runTests() {
   assert(swarmMeshTest.includes('ALL 20-AGENT SWARM & CLOUDFLARE DIRECT LINK TESTS PASSED'), 'Swarm mesh tests must pass');
   console.log('  ✅ 20-Agent Swarm Mesh, Sibling Failover, and Direct Cloudflare Tunnel Endpoints verified.');
 
+  // [TEST 57] Testing Multiverse Tree Mesh (N Systems × 20 Leaves: 1 sys=20, 2 sys=40, 4 sys=80)...
+  console.log('\n[TEST 57] Testing Multiverse Tree Mesh (1 sys=20, 2 sys=40, 4 sys=80 Leaf Links, Interconnected Peering)...');
+  const treeMeshTest = execSync(`node "${require('path').join(__dirname, 'test-multiverse-tree-mesh.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(treeMeshTest.includes('ALL MULTIVERSE TREE MESH TESTS PASSED'), 'Multiverse Tree Mesh tests must pass');
+  console.log('  ✅ Multiverse Tree Mesh, Scaling Formula (N × 20), Inter-System Cross Peering & Gossip verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2104,7 +2112,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 56 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 57 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

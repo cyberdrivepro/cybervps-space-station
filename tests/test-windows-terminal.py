@@ -50,21 +50,27 @@ print("\n[Step 2] Testing real output & persistent state...")
 events.clear()
 agent.write_terminal_input(session_id, '$cvpsSecret = 8899\r\n')
 agent.write_terminal_input(session_id, 'Write-Output "SECRET_VAL_$cvpsSecret"\r\n')
-time.sleep(1.5)
-
-print("Captured events count:", len(events))
-for e in events:
-    print("EVENT:", repr(e))
-output_chunks = "".join(e["payload"]["data"] for e in events if e.get("type") == "TerminalOutput")
+start_w = time.time()
+output_chunks = ""
+while time.time() - start_w < 5.0:
+    time.sleep(0.3)
+    output_chunks = "".join(e["payload"]["data"] for e in events if e.get("type") == "TerminalOutput")
+    if "SECRET_VAL_8899" in output_chunks:
+        break
 assert "SECRET_VAL_8899" in output_chunks, f"Expected SECRET_VAL_8899 in output, got: {output_chunks}"
 print("  ✅ Real output & persistent variable state verified! ($cvpsSecret = 8899 -> SECRET_VAL_8899)")
 
 print("\n[Step 3] Testing progressive loop streaming...")
 events.clear()
 agent.write_terminal_input(session_id, '1..3 | ForEach-Object { Write-Output "LOOP_TICK_$_" }\r\n')
-time.sleep(1.2)
+start_w = time.time()
+loop_output = ""
+while time.time() - start_w < 5.0:
+    time.sleep(0.3)
+    loop_output = "".join(e["payload"]["data"] for e in events if e.get("type") == "TerminalOutput")
+    if all(f"LOOP_TICK_{i}" in loop_output for i in (1, 2, 3)):
+        break
 
-loop_output = "".join(e["payload"]["data"] for e in events if e.get("type") == "TerminalOutput")
 for i in (1, 2, 3):
     assert f"LOOP_TICK_{i}" in loop_output, f"LOOP_TICK_{i} must be in output"
 print("  ✅ Progressive loop streaming verified (LOOP_TICK_1, 2, 3)!")
@@ -72,13 +78,22 @@ print("  ✅ Progressive loop streaming verified (LOOP_TICK_1, 2, 3)!")
 print("\n[Step 4] Testing interactive prompt confirmation [Y/N] & sequential commands...")
 events.clear()
 agent.write_terminal_input(session_id, '$ans = Read-Host "AGREE_PROMPT [Y/N]"; Write-Output "ANSWER_WAS_$ans"\r\n')
-time.sleep(1.2)
+start_w = time.time()
+while time.time() - start_w < 4.0:
+    time.sleep(0.2)
+    if any("AGREE_PROMPT" in e["payload"]["data"] for e in events if e.get("type") == "TerminalOutput"):
+        break
 agent.write_terminal_input(session_id, "Y\r\n")
-time.sleep(1.2)
+time.sleep(0.4)
 agent.write_terminal_input(session_id, 'Write-Output "POST_CONFIRM_OK"\r\n')
-time.sleep(1.2)
 
-interactive_out = "".join(e["payload"]["data"] for e in events if e.get("type") == "TerminalOutput")
+start_w = time.time()
+interactive_out = ""
+while time.time() - start_w < 5.0:
+    time.sleep(0.3)
+    interactive_out = "".join(e["payload"]["data"] for e in events if e.get("type") == "TerminalOutput")
+    if "ANSWER_WAS_Y" in interactive_out and "POST_CONFIRM_OK" in interactive_out:
+        break
 assert "ANSWER_WAS_Y" in interactive_out, f"Expected ANSWER_WAS_Y in output, got: {interactive_out}"
 assert "POST_CONFIRM_OK" in interactive_out, f"Expected POST_CONFIRM_OK in output, got: {interactive_out}"
 print("  ✅ Interactive confirmation prompt (Read-Host -> 'Y' -> subsequent command) verified!")
