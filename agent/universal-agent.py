@@ -10836,6 +10836,14 @@ class CyberVPSAgent:
         caps = self.get_capabilities()
         hw = self.get_hardware_identity()
 
+        if isinstance(caps, dict):
+            caps["cloudflare_tunnel"] = True
+            caps["swarm_worker"] = True
+            caps["unbreakable_mesh"] = True
+            caps_payload = caps
+        else:
+            caps_payload = list(dict.fromkeys((caps or []) + ["cloudflare_tunnel", "swarm_worker", "unbreakable_mesh"]))
+
         auth_payload = {
             "type": "Auth",
             "payload": {
@@ -10849,7 +10857,7 @@ class CyberVPSAgent:
                 "arch": platform.machine(),
                 "hardware_uuid": hw.get("hardware_uuid"),
                 "hardware_serial": hw.get("hardware_serial"),
-                "capabilities": list(dict.fromkeys(caps + ["cloudflare_tunnel", "swarm_worker", "unbreakable_mesh"])),
+                "capabilities": caps_payload,
                 "swarm_role": "coordinator" if getattr(self, "swarm_index", 1) == 1 else "worker",
                 "swarm_index": getattr(self, "swarm_index", 1),
                 "swarm_total": getattr(self, "swarm_total", 20),
