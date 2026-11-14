@@ -1242,7 +1242,7 @@ class CyberVPSAgent:
                         if isinstance(data, list):
                             for u in data:
                                 u_clean = str(u).strip().rstrip("/")
-                                if u_clean and "cybervps-render-control" not in u_clean and u_clean not in self.backend_pool:
+                                if u_clean and "cybervps-render-control" not in u_clean and "railway.app" not in u_clean and u_clean not in self.backend_pool:
                                     self.backend_pool.append(u_clean)
             except Exception:
                 pass
@@ -1257,7 +1257,7 @@ class CyberVPSAgent:
                                 s_list.append(cfg_data.get("server_url"))
                             for u in s_list:
                                 u_clean = str(u).strip().rstrip("/")
-                                if u_clean and "cybervps-render-control" not in u_clean and u_clean not in self.backend_pool:
+                                if u_clean and "cybervps-render-control" not in u_clean and "railway.app" not in u_clean and u_clean not in self.backend_pool:
                                     self.backend_pool.append(u_clean)
             except Exception:
                 pass
