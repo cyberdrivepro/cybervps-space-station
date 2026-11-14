@@ -181,6 +181,7 @@ class TunnelManager {
           settled = true;
           cleanup();
           console.log(`[+] Cloudflare Quick Tunnel established: ${discoveredUrl}`);
+          this.persistPublicTunnelUrl(discoveredUrl, 'cloudflare');
           resolve({
             provider: 'cloudflare',
             url: discoveredUrl,
@@ -369,6 +370,7 @@ class TunnelManager {
       this.publicUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN.replace(/\/$/, '')}`;
       this.status = 'connected';
       console.log(`[+] Railway Public Domain detected: ${this.publicUrl}`);
+      this.persistPublicTunnelUrl(this.publicUrl, this.providerName);
       return this.getInfo();
     }
     if (process.env.RAILWAY_STATIC_URL) {
@@ -376,6 +378,7 @@ class TunnelManager {
       this.publicUrl = `https://${process.env.RAILWAY_STATIC_URL.replace(/\/$/, '')}`;
       this.status = 'connected';
       console.log(`[+] Railway Static URL detected: ${this.publicUrl}`);
+      this.persistPublicTunnelUrl(this.publicUrl, this.providerName);
       return this.getInfo();
     }
 
@@ -386,6 +389,7 @@ class TunnelManager {
         this.providerName = daytonaResult.provider;
         this.publicUrl = daytonaResult.url;
         this.status = 'connected';
+        this.persistPublicTunnelUrl(this.publicUrl, this.providerName);
         return this.getInfo();
       }
     } catch (e) {
@@ -400,6 +404,7 @@ class TunnelManager {
           this.providerName = cfResult.provider;
           this.publicUrl = cfResult.url;
           this.status = 'connected';
+          this.persistPublicTunnelUrl(this.publicUrl, this.providerName);
           return this.getInfo();
         }
       } catch (cfErr) {
@@ -413,6 +418,7 @@ class TunnelManager {
           this.providerName = pinggyResult.provider;
           this.publicUrl = pinggyResult.url;
           this.status = 'connected';
+          this.persistPublicTunnelUrl(this.publicUrl, this.providerName);
           return this.getInfo();
         }
       } catch (pinggyErr) {
@@ -425,7 +431,51 @@ class TunnelManager {
     this.publicUrl = `http://127.0.0.1:${this.port}`;
     this.status = 'connected';
     this.lastError = 'Outbound public tunnels disabled or blocked by host firewall. Serving locally.';
+    this.persistPublicTunnelUrl(this.publicUrl, this.providerName);
     return this.getInfo();
+  }
+
+  /**
+   * Persist public tunnel metadata to disk for instant discovery
+   */
+  persistPublicTunnelUrl(publicUrl, provider = 'cloudflare') {
+    try {
+      const payload = {
+        public_url: publicUrl,
+        provider: provider,
+        port: this.port,
+        pairing_key: this.pairingKey,
+        updated_at: new Date().toISOString()
+      };
+      const dataDir = path.join(__dirname, '..', 'data');
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(path.join(dataDir, 'public-tunnel-url.json'), JSON.stringify(payload, null, 2), 'utf8');
+
+      const userDir = path.join(os.homedir(), '.cybervps');
+      if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+      fs.writeFileSync(path.join(userDir, 'public-tunnel-url.json'), JSON.stringify(payload, null, 2), 'utf8');
+    } catch (e) {
+      console.warn(`[!] Warning persisting public tunnel url: ${e.message}`);
+    }
+  }
+
+  /**
+   * Load cached tunnel URL from disk if available
+   */
+  loadCachedPublicTunnelUrl() {
+    const candidates = [
+      path.join(__dirname, '..', 'data', 'public-tunnel-url.json'),
+      path.join(os.homedir(), '.cybervps', 'public-tunnel-url.json')
+    ];
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)) {
+          const content = JSON.parse(fs.readFileSync(p, 'utf8'));
+          if (content && content.public_url) return content;
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 
   /**

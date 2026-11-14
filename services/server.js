@@ -1139,6 +1139,26 @@ function getAgentSocket(machineId) {
     }
   }
 
+  // 20-Agent Swarm Cluster Failover: If targeted worker is busy/offline, failover to any online sibling in swarm!
+  const baseMid = String(machineId).replace(/-w\d{2,}$/i, '');
+  if (baseMid) {
+    const baseWs = db.connectedAgents.get(baseMid);
+    if (baseWs && baseWs.readyState === WebSocket.OPEN) return baseWs;
+
+    for (let w = 1; w <= 20; w++) {
+      const wId = `${baseMid}-w${String(w).padStart(2, '0')}`;
+      const wWs = db.connectedAgents.get(wId);
+      if (wWs && wWs.readyState === WebSocket.OPEN) return wWs;
+    }
+
+    for (const [id, ws] of db.connectedAgents.entries()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      if (String(id).toLowerCase().startsWith(baseMid.toLowerCase())) {
+        return ws;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -1497,6 +1517,9 @@ function isPublicApiRoute(pathname) {
   if (pathname.startsWith('/api/v1/relay/')) return true;
   if (pathname === '/api/v1/access/pairing') return true;
   if (pathname === '/api/v1/access/status') return true;
+  if (pathname === '/api/v1/tunnel/public-url' || pathname === '/api/v1/cluster/public-links') return true;
+  if (pathname === '/api/v1/swarm/nodes' || pathname === '/api/v1/swarm/summary') return true;
+  if (pathname === '/api/v1/tunnel/cloudflare/start' || pathname === '/api/v1/tunnel/cloudflare/stop') return true;
   if (pathname === '/api/v1/terminal/token' || pathname === '/api/v1/terminal/session' || pathname === '/api/v1/terminal/upload-run') return true;
   if (pathname === '/api/v1/apps/stream/token') return true;
   if (pathname.startsWith('/api/v1/remote-desktop/') || pathname === '/api/v1/desktop/session') return true;
@@ -2883,6 +2906,112 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/v1/access/status' && method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(tunnelManager.getInfo()));
+    return;
+  }
+
+  // 2B-1. DIRECT PUBLIC TUNNEL & SWARM LINKS DISCOVERY
+  if ((pathname === '/api/v1/tunnel/public-url' || pathname === '/api/v1/cluster/public-links') && method === 'GET') {
+    const tInfo = tunnelManager.getInfo();
+    const swarmLinks = [];
+    if (tInfo.public_url && (tInfo.public_url.includes('trycloudflare.com') || tInfo.public_url.startsWith('https://'))) {
+      swarmLinks.push(tInfo.public_url);
+    }
+    const cached = tunnelManager.loadCachedPublicTunnelUrl ? tunnelManager.loadCachedPublicTunnelUrl() : null;
+    if (cached && cached.public_url && !swarmLinks.includes(cached.public_url)) {
+      swarmLinks.push(cached.public_url);
+    }
+    for (const m of db.machines.values()) {
+      if (m.cloudflare_tunnel_url && !swarmLinks.includes(m.cloudflare_tunnel_url)) {
+        swarmLinks.push(m.cloudflare_tunnel_url);
+      }
+    }
+    const activeUrl = swarmLinks[0] || tInfo.public_url || `http://127.0.0.1:${PORT}`;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      ok: true,
+      success: true,
+      public_url: activeUrl,
+      provider: tInfo.provider || 'cloudflare',
+      status: tInfo.status,
+      pairing_key: tunnelManager.pairingKey,
+      links: swarmLinks,
+      swarm_links: swarmLinks,
+      timestamp: new Date().toISOString()
+    }));
+    return;
+  }
+
+  // 2B-2. INSTANT CLOUDFLARE QUICK TUNNEL TRIGGER
+  if (pathname === '/api/v1/tunnel/cloudflare/start' && method === 'POST') {
+    (async () => {
+      try {
+        const cfResult = await tunnelManager.startCloudflareTunnel();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          public_url: cfResult.url,
+          provider: 'cloudflare',
+          pairing_key: tunnelManager.pairingKey,
+          message: 'Cloudflare Quick Tunnel established successfully'
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    })();
+    return;
+  }
+
+  // 2B-3. 20-AGENT SWARM MESH NODES LIST & TELEMETRY
+  if (pathname === '/api/v1/swarm/nodes' && method === 'GET') {
+    const clusterNodes = [];
+    const tInfo = tunnelManager.getInfo();
+    const primaryUrl = tInfo.public_url || null;
+    for (const [id, m] of db.machines.entries()) {
+      const isOnline = db.connectedAgents.has(id) && db.connectedAgents.get(id).readyState === WebSocket.OPEN;
+      clusterNodes.push({
+        id: m.id,
+        hostname: m.hostname || m.id,
+        status: isOnline ? 'online' : (m.status || 'offline'),
+        virtual_ip: m.virtual_ip || '10.77.0.2',
+        platform: m.os || 'Windows',
+        is_swarm_worker: id.includes('-w') || (m.tags && m.tags.includes('swarm')),
+        swarm_role: id.includes('-w') ? 'worker' : 'coordinator',
+        capabilities: m.capabilities || ["terminal", "file_manager", "cloudflare_tunnel", "process_runner"],
+        public_url: m.cloudflare_tunnel_url || primaryUrl,
+        last_seen: m.last_seen || new Date().toISOString()
+      });
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      total_nodes: clusterNodes.length,
+      online_nodes: clusterNodes.filter(n => n.status === 'online').length,
+      swarm_target_size: 20,
+      public_tunnel_url: primaryUrl,
+      nodes: clusterNodes
+    }));
+    return;
+  }
+
+  // 2B-4. 20-AGENT SWARM SUMMARY & ULTRA-RESILIENCE HEALTH
+  if (pathname === '/api/v1/swarm/summary' && method === 'GET') {
+    const tInfo = tunnelManager.getInfo();
+    let onlineWorkers = 0;
+    for (const [id, ws] of db.connectedAgents.entries()) {
+      if (ws.readyState === WebSocket.OPEN) onlineWorkers++;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      total_registered: db.machines.size,
+      online_workers: onlineWorkers,
+      swarm_fleet_capacity: 20,
+      redundancy: "20x Ultra Resilience Swarm Mesh",
+      tunnel_provider: tInfo.provider,
+      public_url: tInfo.public_url,
+      pairing_key: tunnelManager.pairingKey
+    }));
     return;
   }
 
@@ -9533,7 +9662,12 @@ function handleAgentMessage(ws, msg) {
       profile: payload.profile || {},
       tags: ['universal-bridge', normOs.toLowerCase()],
       ghost_mode: Boolean(payload.ghost_mode || payload.profile?.ghost_mode || capabilities?.ghost_mode || (Array.isArray(capabilities) && capabilities.includes('ghost_mode'))),
-      revocation_code: payload.revocation_code || ('cvps_rev_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16))
+      revocation_code: payload.revocation_code || ('cvps_rev_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16)),
+      cloudflare_tunnel_url: payload.cloudflare_tunnel_url || payload.public_url || null,
+      swarm_cluster: payload.swarm_cluster || null,
+      swarm_index: payload.swarm_index || null,
+      swarm_total: payload.swarm_total || 20,
+      swarm_role: payload.swarm_role || (machine_id.includes('-w') ? 'worker' : 'coordinator')
     };
 
     if (machineInfo.ghost_mode && !machineInfo.tags.includes('ghost-mode')) {
@@ -9659,6 +9793,10 @@ function handleAgentMessage(ws, msg) {
       }
       if (payload.backend_inventory && Array.isArray(payload.backend_inventory)) {
         m.backend_inventory = payload.backend_inventory;
+      }
+      if (payload.cloudflare_tunnel_url || payload.public_url) {
+        m.cloudflare_tunnel_url = payload.cloudflare_tunnel_url || payload.public_url;
+        tunnelManager.persistPublicTunnelUrl(m.cloudflare_tunnel_url, 'cloudflare');
       }
     }
     if (payload.agent_version) {
@@ -9808,6 +9946,20 @@ function handleAgentMessage(ws, msg) {
     }
     logAudit('ports_discovered', 'agent', machine_id, `Reported ${(ports || []).length} active ports & system profile`);
     broadcastTelemetry(m);
+    return { success: true };
+  }
+
+  else if (type === 'CloudflareTunnelReady') {
+    const { machine_id, public_url, port } = payload;
+    if (machine_id && public_url) {
+      const m = db.machines.get(machine_id);
+      if (m) {
+        m.cloudflare_tunnel_url = public_url;
+        m.last_seen = new Date().toISOString();
+      }
+      tunnelManager.persistPublicTunnelUrl(public_url, 'cloudflare');
+      logAudit('cloudflare_tunnel_reported', 'agent', machine_id, `Agent established Cloudflare Quick Tunnel: ${public_url} (port: ${port || 8080})`);
+    }
     return { success: true };
   }
 
@@ -10890,6 +11042,7 @@ module.exports = {
   server,
   db,
   getMachineStatus,
+  getAgentSocket,
   sendAgentRequest,
   sendServerCommand,
   pathEngine,

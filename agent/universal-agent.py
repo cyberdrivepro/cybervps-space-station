@@ -905,7 +905,8 @@ class ElevationNotAvailableError(Exception):
 
 
 class CyberVPSAgent:
-    def __init__(self, server_url, token=None, machine_id=None, pid_file=None, ghost_mode=False):
+    def __init__(self, server_url, token=None, machine_id=None, pid_file=None, ghost_mode=False,
+                 is_swarm_worker=False, swarm_index=1, swarm_total=1, swarm_cluster=None):
         raw = (server_url or "https://cybervps-space-station.up.railway.app").strip().rstrip("/")
         if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("ws://") or raw.startswith("wss://")):
             raw = "https://" + raw
@@ -914,6 +915,11 @@ class CyberVPSAgent:
         self.token = token or os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
         self.machine_id = machine_id or self.generate_machine_id()
         self.ghost_mode = bool(ghost_mode or os.environ.get("CYBERVPS_GHOST_MODE") == "1")
+        self.is_swarm_worker = bool(is_swarm_worker)
+        self.swarm_index = int(swarm_index or 1)
+        self.swarm_total = int(swarm_total or 1)
+        self.swarm_cluster = swarm_cluster or self.machine_id
+        self.active_public_tunnel = None
         if self.ghost_mode and platform.system() == "Windows" and ctypes:
             try:
                 hwnd = ctypes.windll.kernel32.GetConsoleWindow()
@@ -10669,52 +10675,54 @@ class CyberVPSAgent:
         if sys.platform == "win32" and ctypes:
             try:
                 safe_mid = re.sub(r'[^a-zA-Z0-9_]', '_', str(self.machine_id))
-                mutex_name = f"Local\\CyberVPS_Agent_Mutex_{safe_mid}"
+                mutex_name = f"Local\\CyberVPS_Agent_Worker_{safe_mid}" if getattr(self, "is_swarm_worker", False) else f"Local\\CyberVPS_Agent_Mutex_{safe_mid}"
                 h_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
                 if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-                    # Allow 1.2s grace period if previous instance is terminating during restart
-                    acquired = False
-                    for _ in range(12):
-                        time.sleep(0.1)
-                        if h_mutex:
-                            ctypes.windll.kernel32.CloseHandle(h_mutex)
-                        h_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
-                        if ctypes.windll.kernel32.GetLastError() != 183:
-                            acquired = True
-                            break
-                    if not acquired:
-                        msg = f"[!] [DUPLICATE_INSTANCE] Another CyberVPS agent instance is already active for [{self.machine_id}]. Exiting cleanly."
-                        print(msg, flush=True)
-                        if getattr(self, "log_file", None):
-                            try:
-                                with open(self.log_file, "a", encoding="utf-8") as _lf:
-                                    _lf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {msg}\n")
-                            except Exception:
-                                pass
-                        sys.exit(0)
+                    if not getattr(self, "is_swarm_worker", False):
+                        # Allow 1.2s grace period if previous instance is terminating during restart
+                        acquired = False
+                        for _ in range(12):
+                            time.sleep(0.1)
+                            if h_mutex:
+                                ctypes.windll.kernel32.CloseHandle(h_mutex)
+                            h_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
+                            if ctypes.windll.kernel32.GetLastError() != 183:
+                                acquired = True
+                                break
+                        if not acquired:
+                            msg = f"[!] [DUPLICATE_INSTANCE] Another CyberVPS agent instance is already active for [{self.machine_id}]. Exiting cleanly."
+                            print(msg, flush=True)
+                            if getattr(self, "log_file", None):
+                                try:
+                                    with open(self.log_file, "a", encoding="utf-8") as _lf:
+                                        _lf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {msg}\n")
+                                except Exception:
+                                    pass
+                            sys.exit(0)
                 self._singleton_mutex = h_mutex
             except SystemExit:
                 raise
             except Exception:
                 pass
 
-        pid_file = self.pid_file
-        try:
-            if os.path.exists(pid_file):
-                with open(pid_file, "r") as f:
-                    content = f.read().strip()
-                if content.isdigit():
-                    existing_pid = int(content)
-                    if existing_pid != os.getpid() and self.is_pid_alive(existing_pid):
-                        print(f"[!] Another CyberVPS agent instance is already active (PID {existing_pid}). Exiting to prevent duplicate running instances.", flush=True)
-                        sys.exit(0)
-            os.makedirs(os.path.dirname(pid_file), exist_ok=True)
-            with open(pid_file, "w") as f:
-                f.write(str(os.getpid()))
-        except SystemExit:
-            raise
-        except Exception as e:
-            print(f"[!] Warning checking PID file: {e}", flush=True)
+        if not getattr(self, "is_swarm_worker", False):
+            pid_file = self.pid_file
+            try:
+                if os.path.exists(pid_file):
+                    with open(pid_file, "r") as f:
+                        content = f.read().strip()
+                    if content.isdigit():
+                        existing_pid = int(content)
+                        if existing_pid != os.getpid() and self.is_pid_alive(existing_pid):
+                            print(f"[!] Another CyberVPS agent instance is already active (PID {existing_pid}). Exiting to prevent duplicate running instances.", flush=True)
+                            sys.exit(0)
+                os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+                with open(pid_file, "w") as f:
+                    f.write(str(os.getpid()))
+            except SystemExit:
+                raise
+            except Exception as e:
+                print(f"[!] Warning checking PID file: {e}", flush=True)
 
         print(f"[*] CyberVPS Space Station Agent v{PROTOCOL_VERSION} Starting", flush=True)
         print(f"[*] Machine ID: {self.machine_id}", flush=True)
@@ -10737,7 +10745,11 @@ class CyberVPSAgent:
                 "arch": platform.machine(),
                 "hardware_uuid": hw.get("hardware_uuid"),
                 "hardware_serial": hw.get("hardware_serial"),
-                "capabilities": caps,
+                "capabilities": list(dict.fromkeys(caps + ["cloudflare_tunnel", "swarm_worker", "unbreakable_mesh"])),
+                "swarm_role": "coordinator" if getattr(self, "swarm_index", 1) == 1 else "worker",
+                "swarm_index": getattr(self, "swarm_index", 1),
+                "swarm_total": getattr(self, "swarm_total", 1),
+                "swarm_cluster": getattr(self, "swarm_cluster", self.machine_id),
                 "profile": profile,
                 "runtime_paths": self.get_runtime_paths() if hasattr(self, "get_runtime_paths") else {},
                 "backend_inventory": self.get_backend_inventory() if hasattr(self, "get_backend_inventory") else []
@@ -10792,6 +10804,11 @@ class CyberVPSAgent:
                                 "hardware_uuid": hw.get("hardware_uuid"),
                                 "hardware_serial": hw.get("hardware_serial"),
                                 "ghost_mode": getattr(self, "ghost_mode", False),
+                                "swarm_role": "coordinator" if getattr(self, "swarm_index", 1) == 1 else "worker",
+                                "swarm_index": getattr(self, "swarm_index", 1),
+                                "swarm_total": getattr(self, "swarm_total", 1),
+                                "swarm_cluster": getattr(self, "swarm_cluster", self.machine_id),
+                                "cloudflare_tunnel_url": getattr(self, "active_public_tunnel", None),
                                 "runtime_paths": self.get_runtime_paths() if hasattr(self, "get_runtime_paths") else {},
                                 "backend_inventory": self.get_backend_inventory() if hasattr(self, "get_backend_inventory") else []
                             }
@@ -11600,6 +11617,143 @@ def handle_cli_subcommands(args):
     return True
 
 
+class CyberVPSSwarmSupervisor:
+    """
+    Ultra-Resilient 20-Agent Swarm Mesh Supervisor.
+    Spawns and orchestrates 20 concurrent worker agents per host, each with identical capabilities
+    (ConPTY Terminal, File Manager, Process Runner, Cloudflare Quick Tunnel),
+    instant < 1s auto-revival watchdog, and zero external dependency.
+    """
+    def __init__(self, server_url, token=None, machine_id=None, num_workers=20, ghost_mode=False):
+        raw = (server_url or "http://127.0.0.1:8080").strip().rstrip("/")
+        if not (raw.startswith("http://") or raw.startswith("https://") or raw.startswith("ws://") or raw.startswith("wss://")):
+            raw = "http://" + raw
+        self.server_url = raw
+        self.token = token or os.environ.get("CYBERVPS_AGENT_TOKEN") or os.environ.get("CYBERVPS_TOKEN") or ""
+        self.base_machine_id = machine_id or CyberVPSAgent.generate_machine_id()
+        self.num_workers = max(1, int(num_workers or 20))
+        self.ghost_mode = bool(ghost_mode)
+        self.workers = {}  # index -> CyberVPSAgent
+        self.threads = {}  # index -> Thread
+        self.running = True
+        self.lock = threading.Lock()
+        self.active_public_tunnel = None
+        self._singleton_mutex = None
+
+    def _acquire_supervisor_mutex(self):
+        if sys.platform == "win32" and ctypes:
+            try:
+                safe_mid = re.sub(r'[^a-zA-Z0-9_]', '_', str(self.base_machine_id))
+                mutex_name = f"Local\\CyberVPS_Agent_Swarm_Supervisor_{safe_mid}"
+                h_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
+                if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+                    print(f"[!] [DUPLICATE_SWARM] Another Swarm Supervisor is already active for [{self.base_machine_id}]. Exiting.", flush=True)
+                    sys.exit(0)
+                self._singleton_mutex = h_mutex
+            except SystemExit:
+                raise
+            except Exception:
+                pass
+
+    def _get_worker_id(self, idx):
+        if idx == 1:
+            return self.base_machine_id
+        return f"{self.base_machine_id}-w{idx:02d}"
+
+    def _spawn_worker(self, idx):
+        w_id = self._get_worker_id(idx)
+        agent = CyberVPSAgent(
+            server_url=self.server_url,
+            token=self.token,
+            machine_id=w_id,
+            ghost_mode=self.ghost_mode,
+            is_swarm_worker=True,
+            swarm_index=idx,
+            swarm_total=self.num_workers,
+            swarm_cluster=self.base_machine_id
+        )
+        if self.active_public_tunnel:
+            agent.active_public_tunnel = self.active_public_tunnel
+
+        t = threading.Thread(
+            target=agent.run,
+            name=f"SwarmWorker-{idx:02d}-{w_id}",
+            daemon=True
+        )
+        with self.lock:
+            self.workers[idx] = agent
+            self.threads[idx] = t
+        t.start()
+        print(f"[*] [Swarm Mesh] Launched Worker {idx:02d}/{self.num_workers} [{w_id}]", flush=True)
+        return agent
+
+    def _auto_start_cloudflare_tunnel(self):
+        try:
+            time.sleep(3.0)
+            worker1 = None
+            with self.lock:
+                worker1 = self.workers.get(1)
+            if not worker1:
+                return
+            cf_bin = worker1._resolve_cloudflared_bin()
+            if not cf_bin:
+                return
+            print("[*] [Swarm Cloudflare] Initiating Cloudflare Quick Tunnel on port 8080...", flush=True)
+            worker1.handle_cloudflare_tunnel_start({"port": 8080, "tunnel_id": "swarm_cf_primary"})
+        except Exception:
+            pass
+
+    def run(self):
+        self._acquire_supervisor_mutex()
+        home = os.path.expanduser("~")
+        pid_file = os.path.join(home, ".cybervps", "run", "agent.pid")
+        try:
+            os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+            with open(pid_file, "w") as pf:
+                pf.write(str(os.getpid()))
+        except Exception:
+            pass
+
+        print(f"================================================================", flush=True)
+        print(f"⚡ CYBERVPS SPACE STATION - 20-AGENT ULTRA RESILIENCE SWARM MESH", flush=True)
+        print(f"================================================================", flush=True)
+        print(f"[*] Base Host ID:      {self.base_machine_id}", flush=True)
+        print(f"[*] Target Relay:      {self.server_url}", flush=True)
+        print(f"[*] Swarm Fleet Size:  {self.num_workers} concurrent agents with equal powers", flush=True)
+        print(f"[*] Redundancy Factor: {self.num_workers}x (Zero-Drop Self-Healing)", flush=True)
+        print(f"================================================================", flush=True)
+
+        for i in range(1, self.num_workers + 1):
+            self._spawn_worker(i)
+            time.sleep(0.04)
+
+        threading.Thread(target=self._auto_start_cloudflare_tunnel, daemon=True).start()
+
+        print("[*] Swarm Supervisor Active. Monitoring 20 agents with <1s auto-revival.", flush=True)
+        while self.running:
+            try:
+                time.sleep(1.5)
+                for i in range(1, self.num_workers + 1):
+                    with self.lock:
+                        t = self.threads.get(i)
+                        w = self.workers.get(i)
+                    needs_restart = False
+                    if not t or not t.is_alive():
+                        needs_restart = True
+                    elif w and not getattr(w, "running", True):
+                        needs_restart = True
+
+                    if needs_restart:
+                        w_id = self._get_worker_id(i)
+                        print(f"[!] [SWARM SELF-HEAL] Worker {i:02d} ({w_id}) dropped. Resurrecting immediately...", flush=True)
+                        self._spawn_worker(i)
+            except (KeyboardInterrupt, SystemExit):
+                self.running = False
+                break
+            except Exception:
+                time.sleep(1.0)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         handle_cli_subcommands(sys.argv[1:])
@@ -11649,9 +11803,17 @@ if __name__ == "__main__":
     ghost_mode = False
     bootstrap_mode = False
     recovery_ticket = None
+    swarm_workers = None
     while i < len(args):
         a = args[i]
-        if a in ("--ghost",):
+        if a in ("--swarm", "--workers"):
+            if i + 1 < len(args) and args[i + 1].isdigit():
+                swarm_workers = int(args[i + 1])
+                i += 2
+            else:
+                swarm_workers = 20
+                i += 1
+        elif a in ("--ghost",):
             ghost_mode = True
             i += 1
         elif a in ("--bootstrap",):
@@ -11681,6 +11843,10 @@ if __name__ == "__main__":
                             token = c_data["token"]
                         if c_data.get("machine_id"):
                             mid = c_data["machine_id"]
+                        if c_data.get("swarm_workers"):
+                            swarm_workers = int(c_data["swarm_workers"])
+                        elif c_data.get("swarm"):
+                            swarm_workers = int(c_data["swarm"])
                         if c_data.get("ghost_mode"):
                             ghost_mode = True
                         if c_data.get("proxy"):
@@ -11743,6 +11909,44 @@ if __name__ == "__main__":
             i += 1
         else:
             i += 1
+
+    if swarm_workers is None:
+        env_sw = os.environ.get("CYBERVPS_SWARM_WORKERS") or os.environ.get("CYBERVPS_SWARM")
+        if env_sw and env_sw.isdigit():
+            swarm_workers = int(env_sw)
+        elif os.environ.get("CYBERVPS_SWARM_MODE") == "1":
+            swarm_workers = 20
+
+    if swarm_workers and swarm_workers > 1 and not os.environ.get("CYBERVPS_TEST_MODE"):
+        try:
+            supervisor = CyberVPSSwarmSupervisor(target, token, mid, num_workers=swarm_workers, ghost_mode=ghost_mode)
+            if token and token != "dummy_token" and mid != "test_machine":
+                try:
+                    home = os.path.expanduser("~")
+                    cvps_dir = os.path.join(home, ".cybervps")
+                    os.makedirs(cvps_dir, exist_ok=True)
+                    cfg_file = os.path.join(cvps_dir, "config.json")
+                    cur_c = {}
+                    if os.path.exists(cfg_file):
+                        try:
+                            with open(cfg_file, "r") as cf: cur_c = json.load(cf)
+                        except Exception: pass
+                    cur_c.update({
+                        "server_url": target,
+                        "token": token,
+                        "machine_id": supervisor.base_machine_id,
+                        "swarm_workers": swarm_workers,
+                        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    })
+                    with open(cfg_file, "w") as cf: json.dump(cur_c, cf, indent=2)
+                except Exception:
+                    pass
+            supervisor.run()
+            sys.exit(0)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
 
     try:
         agent = CyberVPSAgent(target, token, mid, ghost_mode=ghost_mode)

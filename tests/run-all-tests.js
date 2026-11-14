@@ -2089,6 +2089,14 @@ async function runTests() {
   assert(cfTest.includes('ALL CLOUDFLARE QUICK TUNNEL & PATH SANITIZATION TESTS PASSED'), 'Cloudflare tunnel tests must pass');
   console.log('  ✅ On-Demand Cloudflare Quick Tunnel (trycloudflare.com), Port & Directory Exposure, and Path Expansion verified.');
 
+  // [TEST 56] Testing 20-Agent Swarm Mesh, Sibling Failover & Direct Public Tunnel Mesh Endpoints...
+  console.log('\n[TEST 56] Testing 20-Agent Swarm Mesh, Sibling Failover & Direct Public Tunnel Mesh Endpoints...');
+  const swarmMeshTest = execSync(`node "${require('path').join(__dirname, 'test-swarm-and-cf-direct.js')}"`, {
+    encoding: 'utf-8'
+  });
+  assert(swarmMeshTest.includes('ALL 20-AGENT SWARM & CLOUDFLARE DIRECT LINK TESTS PASSED'), 'Swarm mesh tests must pass');
+  console.log('  ✅ 20-Agent Swarm Mesh, Sibling Failover, and Direct Cloudflare Tunnel Endpoints verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2096,7 +2104,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 55 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 56 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }
