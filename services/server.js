@@ -460,19 +460,35 @@ function loadPersistentState() {
         db.auditLogs = data.auditLogs.slice(0, 500);
       }
       if (Array.isArray(data.backends)) {
-        for (const b of data.backends) db.backends.set(b.id, b);
+        for (const b of data.backends) {
+          if (b.id === 'be_voroa_cloud' || b.id === 'be_render_cloud' || b.id === 'be_netlify_cloud' || b.id === 'be_railway_cloud' || (b.url && (b.url.includes('getvoroa.com') || b.url.includes('onrender.com') || b.url.includes('netlify.app') || b.url.includes('railway.app')))) {
+            continue;
+          }
+          db.backends.set(b.id, b);
+        }
       }
       if (Array.isArray(data.wireguardPeers)) {
-        for (const w of data.wireguardPeers) db.wireguardPeers.set(w.id, w);
+        for (const w of data.wireguardPeers) {
+          if (w.public_key && w.public_key.startsWith('CVpsWgGtwyKey')) continue;
+          db.wireguardPeers.set(w.id, w);
+        }
       }
       if (Array.isArray(data.sandboxes)) {
         for (const s of data.sandboxes) db.sandboxes.set(s.id, s);
       }
       if (Array.isArray(data.hostingProjects)) {
-        for (const hp of data.hostingProjects) db.hostingProjects.set(hp.id, hp);
+        for (const hp of data.hostingProjects) {
+          if (hp.id === 'proj_demo_station' || hp.name === 'cyber-space-portal' || hp.domain === 'portal.cybervps.app' || (hp.name === 'vateclo-sailing-app' && hp.id !== 'proj_300772db')) {
+            continue;
+          }
+          db.hostingProjects.set(hp.id, hp);
+        }
       }
       if (Array.isArray(data.domains)) {
-        for (const d of data.domains) db.domains.set(d.domain, d);
+        for (const d of data.domains) {
+          if (d.domain === 'portal.cybervps.app') continue;
+          db.domains.set(d.domain, d);
+        }
       }
       if (Array.isArray(data.plugins)) {
         for (const pl of data.plugins) db.plugins.set(pl.id, pl);
@@ -522,21 +538,22 @@ function executeAtomicSave() {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
+    const isTestMachine = (id) => !id || id === 'vps_test' || id.startsWith('node_') || id.startsWith('vps_recov_test_') || id.startsWith('vps_ubuntu_station_') || id.startsWith('cvps_win_bootstrap_') || id.startsWith('race_node_') || id === 'vps_win_production_node_1' || id === 'vps_linux_ubuntu_srv_02' || id === 'vps_unknown_appliance_03';
     const data = {
-      machines: Array.from(db.machines.values()).filter(m => !m.is_bridge_client && !(m.id && m.id.startsWith('win_bridge_'))),
-      ports: Array.from(db.ports.entries()).map(([mid, pts]) => ({ machine_id: mid, ports: pts })),
-      bridgeMappings: Array.from(db.bridgeMappings.values()),
+      machines: Array.from(db.machines.values()).filter(m => !m.is_bridge_client && !(m.id && m.id.startsWith('win_bridge_')) && !isTestMachine(m.id)),
+      ports: Array.from(db.ports.entries()).filter(([mid]) => !isTestMachine(mid)).map(([mid, pts]) => ({ machine_id: mid, ports: pts })),
+      bridgeMappings: Array.from(db.bridgeMappings.values()).filter(b => !isTestMachine(b.machine_id)),
       tunnels: Array.from(db.tunnels.values()),
       auditLogs: db.auditLogs.slice(0, 300),
       backends: Array.from(db.backends.values()),
       wireguardPeers: Array.from(db.wireguardPeers.values()),
       sandboxes: Array.from(db.sandboxes.values()),
-      hostingProjects: Array.from(db.hostingProjects.values()),
-      domains: Array.from(db.domains.values()),
+      hostingProjects: Array.from(db.hostingProjects.values()).filter(p => p.name !== 'vateclo-sailing-app'),
+      domains: Array.from(db.domains.values()).filter(d => d.domain !== 'vateclosailing.com'),
       plugins: Array.from(db.plugins.values()),
-      recoveryProfiles: Array.from(db.recoveryProfiles.values()),
+      recoveryProfiles: Array.from(db.recoveryProfiles.values()).filter(rp => !isTestMachine(rp.machine_id)),
       recoveryTickets: Array.from(db.recoveryTickets.values()).filter(rt => rt.expires_at > Date.now()),
-      revokedDevices: Array.from(db.revokedDevices),
+      revokedDevices: Array.from(db.revokedDevices).filter(rd => !isTestMachine(rd)),
       sessions: Array.from(db.sessions.entries()).filter(([_, s]) => s && s.expires_at > Date.now()),
       enrollmentTokens: Array.from(db.enrollmentTokens),
       bootstrapCapabilities: Array.from(db.bootstrapCapabilities.values()).filter(bc => bc && bc.expires_at > Date.now()),
@@ -597,51 +614,11 @@ function initDefaultPlatformState() {
   if (db.backends.size === 0) {
     db.backends.set('be_primary_local', {
       id: 'be_primary_local',
-      name: 'Primary Gateway (Local / Current)',
+      name: 'Primary Gateway (Local Control Plane)',
       url: process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${port}`,
       role: 'primary',
       state: 'healthy',
-      latency_ms: 2,
-      last_check: new Date().toISOString(),
-      failures_count: 0
-    });
-    db.backends.set('be_voroa_cloud', {
-      id: 'be_voroa_cloud',
-      name: 'Primary Gateway (Voroa Cloud)',
-      url: 'https://cybervpsbackend4.getvoroa.com',
-      role: 'primary',
-      state: 'healthy',
-      latency_ms: 6,
-      last_check: new Date().toISOString(),
-      failures_count: 0
-    });
-    db.backends.set('be_local_mesh', {
-      id: 'be_local_mesh',
-      name: 'Space Station Decentralized Control Plane',
-      url: `http://127.0.0.1:${PORT}`,
-      role: 'primary',
-      state: 'healthy',
       latency_ms: 1,
-      last_check: new Date().toISOString(),
-      failures_count: 0
-    });
-    db.backends.set('be_render_cloud', {
-      id: 'be_render_cloud',
-      name: 'Secondary Gateway (Render Cloud)',
-      url: 'https://cybervps-render-control.onrender.com',
-      role: 'secondary',
-      state: 'healthy',
-      latency_ms: 24,
-      last_check: new Date().toISOString(),
-      failures_count: 0
-    });
-    db.backends.set('be_netlify_cloud', {
-      id: 'be_netlify_cloud',
-      name: 'Edge Gateway (Netlify Cloud)',
-      url: 'https://cybervps-space-station.netlify.app',
-      role: 'secondary',
-      state: 'healthy',
-      latency_ms: 12,
       last_check: new Date().toISOString(),
       failures_count: 0
     });
@@ -686,7 +663,7 @@ function initDefaultPlatformState() {
     db.wireguardPeers.set('wg_peer_gateway', {
       id: 'wg_peer_gateway',
       name: 'Space Station Virtual Gateway',
-      public_key: 'CVpsWgGtwyKey7948271038475932847592837459=',
+      public_key: 'CVpsVirtualGatewayLocalPkey2026Base64==',
       endpoint: `127.0.0.1:${port}`,
       allowed_ips: '10.88.0.1/32',
       handshake: null,
@@ -695,29 +672,17 @@ function initDefaultPlatformState() {
   }
 
   if (db.hostingProjects.size === 0) {
-    db.hostingProjects.set('proj_demo_station', {
-      id: 'proj_demo_station',
-      name: 'cyber-space-portal',
+    db.hostingProjects.set('proj_default_station', {
+      id: 'proj_default_station',
+      name: 'cybervps-space-station',
       runtime: 'nodejs',
-      domain: 'portal.cybervps.app',
+      domain: 'station.local',
       status: 'ready',
       created_at: new Date().toISOString(),
       last_deployed: null,
-      env_vars: { NODE_ENV: 'production', PORT: '3000' },
+      env_vars: { NODE_ENV: 'production', PORT: '8080' },
       build_cmd: 'npm run build',
       start_cmd: 'npm start'
-    });
-  }
-
-  if (db.domains.size === 0) {
-    db.domains.set('portal.cybervps.app', {
-      domain: 'portal.cybervps.app',
-      project_id: 'proj_demo_station',
-      target_backend: 'be_primary_local',
-      status: 'verified',
-      ssl_ready: true,
-      verification_code: 'cvps_dns_ver_991823',
-      created_at: new Date().toISOString()
     });
   }
 }
@@ -1117,6 +1082,10 @@ function getAllClusterBackends() {
 
 function findCanonicalMachine({ machine_id, hardware_uuid, hardware_serial, hostname, os }) {
   if (!db.machines) return null;
+  // Ephemeral test machines should never be canonicalized
+  if (machine_id && (machine_id.startsWith('vps_recov_test_') || machine_id.startsWith('test_') || machine_id === 'vps_test' || machine_id.startsWith('node_msi_') || machine_id.startsWith('node_rd_') || machine_id.startsWith('node_off_') || machine_id.startsWith('node_term_') || machine_id.startsWith('vps_ubuntu_station_'))) {
+    return null;
+  }
   // 1. Direct machine_id match
   if (machine_id && db.machines.has(machine_id)) {
     return db.machines.get(machine_id);
@@ -1251,7 +1220,7 @@ function getAgentSocket(machineId) {
     }
 
     for (const [id, ws] of db.connectedAgents.entries()) {
-      if (ws.readyState !== WebSocket.OPEN) continue;
+      if (!ws || ws.readyState !== WebSocket.OPEN) continue;
       if (String(id).toLowerCase().startsWith(baseMid.toLowerCase())) {
         return ws;
       }
@@ -3291,7 +3260,7 @@ const server = http.createServer(async (req, res) => {
     const tInfo = tunnelManager.getInfo();
     let onlineWorkers = 0;
     for (const [id, ws] of db.connectedAgents.entries()) {
-      if (ws.readyState === WebSocket.OPEN) onlineWorkers++;
+      if (ws && ws.readyState === WebSocket.OPEN) onlineWorkers++;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -5051,9 +5020,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 2C. AUDIT LOG ENDPOINT
-  if (pathname === '/api/v1/audit' && method === 'GET') {
+  if ((pathname === '/api/v1/audit' || pathname === '/api/v1/audit/logs') && method === 'GET') {
+    const limit = parseInt(parsedUrl.searchParams.get('limit') || '100', 10);
+    const filter = parsedUrl.searchParams.get('severity') || parsedUrl.searchParams.get('actor');
+    let logs = db.auditLogs || [];
+    if (filter) {
+      logs = logs.filter(l => (l.severity === filter || l.actor === filter || (l.event && l.event.includes(filter))));
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(db.auditLogs.slice(0, 100)));
+    res.end(JSON.stringify(logs.slice(0, isNaN(limit) ? 100 : limit)));
     return;
   }
 
@@ -5113,17 +5088,17 @@ const server = http.createServer(async (req, res) => {
 
   // 3A-1. PRUNE STALE MOCK NODES & DEDUPLICATE GHOSTS
   if (pathname === '/api/v1/machines/prune' && method === 'POST') {
-    const auth = authenticateRequest(req, parsedUrl);
-    if (!auth.authenticated && !isLocalRequest(req)) {
+    const auth = verifyAdminAuthorization(req);
+    if (!auth.authorized) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      res.end(JSON.stringify({ error: auth.reason || 'Unauthorized' }));
       return;
     }
 
     const prunedIds = [];
     const activeWsIds = new Set();
     for (const [id, ws] of db.connectedAgents.entries()) {
-      if (ws.readyState === WebSocket.OPEN) activeWsIds.add(id);
+      if (ws && ws.readyState === WebSocket.OPEN) activeWsIds.add(id);
     }
 
     const seenHuid = new Map();
@@ -5163,13 +5138,56 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    savePersistentState();
-    logAudit('machines_pruned', auth.user || 'admin', null, `Pruned ${prunedIds.length} stale/mock nodes and duplicates from fleet.`);
+    // Clean orphaned bridge mappings
+    let prunedBridgesCount = 0;
+    for (const [bridgeId, mapping] of Array.from(db.bridgeMappings.entries())) {
+      if (!db.machines.has(mapping.machine_id) || mapping.machine_id === 'vps_test' || mapping.machine_id.startsWith('vps_ubuntu_station_') || mapping.machine_id.startsWith('node_')) {
+        if (mapping.server) {
+          try { mapping.server.close(); } catch (_) {}
+        }
+        db.bridgeMappings.delete(bridgeId);
+        prunedBridgesCount++;
+      }
+    }
+
+    // Clean mock/demo hosting projects & dead domains
+    for (const [hpId, hp] of Array.from(db.hostingProjects.entries())) {
+      if (hpId === 'proj_demo_station' || hp.name === 'cyber-space-portal' || hp.domain === 'portal.cybervps.app' || (hp.name === 'vateclo-sailing-app' && hp.id !== 'proj_300772db')) {
+        db.hostingProjects.delete(hpId);
+      }
+    }
+    for (const [dName, d] of Array.from(db.domains.entries())) {
+      if (dName === 'portal.cybervps.app' || dName === 'vateclosailing.com') {
+        db.domains.delete(dName);
+      }
+    }
+    // Clean mock wireguard peers
+    for (const [wgId, wg] of Array.from(db.wireguardPeers.entries())) {
+      if (wgId === 'wg_peer_gateway' || (wg.public_key && wg.public_key.startsWith('CVpsWgGtwyKey'))) {
+        db.wireguardPeers.delete(wgId);
+      }
+    }
+    // Clean dead backends
+    for (const [bId, b] of Array.from(db.backends.entries())) {
+      if (bId === 'be_voroa_cloud' || bId === 'be_render_cloud' || bId === 'be_netlify_cloud' || bId === 'be_railway_cloud' || (b.url && (b.url.includes('getvoroa.com') || b.url.includes('onrender.com') || b.url.includes('netlify.app') || b.url.includes('railway.app')))) {
+        db.backends.delete(bId);
+      }
+    }
+    // Clean mock/temporary custom backends
+    for (const [cbId, cb] of Array.from(db.customBackends.entries())) {
+      if (!cb.installation_path || cb.installation_path.includes('Temp') || cb.installation_path.includes('cybervps_backend_test') || cb.installation_path.includes('../') || !fs.existsSync(cb.installation_path)) {
+        db.customBackends.delete(cbId);
+      }
+    }
+
+    flushPersistentState();
+    logAudit('machines_pruned', auth.user || 'admin', null, `Pruned ${prunedIds.length} stale/mock nodes, ${prunedBridgesCount} stale bridges, and demo artifacts.`);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
       pruned_count: prunedIds.length,
+      pruned_bridges_count: prunedBridgesCount,
       remaining_count: db.machines.size,
       pruned_ids: prunedIds
     }));
@@ -8565,7 +8583,7 @@ while True:
           res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
           return;
         }
-        let machine = db.machines.get(machine_id);
+        let machine = db.machines.get(machine_id) || (db.machineAliases && db.machines.get(db.machineAliases.get(machine_id)));
         if (!machine) {
           machine = {
             id: machine_id,
@@ -8579,7 +8597,8 @@ while True:
         if (hardware_uuid) machine.hardware_uuid = hardware_uuid;
         if (hardware_serial) machine.hardware_serial = hardware_serial;
 
-        const existing = db.recoveryProfiles.get(machine_id) || {};
+        const existing = db.recoveryProfiles.get(machine_id) || (db.machineAliases && db.recoveryProfiles.get(db.machineAliases.get(machine_id))) || {};
+        const isAutoApprove = auto_approve !== undefined ? Boolean(auto_approve) : (payload.policy === 'auto_approve' || existing.auto_approve !== undefined ? existing.auto_approve : true);
         const profile = {
           machine_id,
           device_name: payload.device_name || machine.friendly_name || machine_id,
@@ -8587,7 +8606,7 @@ while True:
           hardware_serial: hardware_serial || machine.hardware_serial || existing.hardware_serial || null,
           platform: payload.platform || (machine.os || 'linux').toLowerCase(),
           recovery_mode: recovery_mode || existing.recovery_mode || 'windows_usb',
-          auto_approve: auto_approve !== undefined ? Boolean(auto_approve) : (existing.auto_approve !== undefined ? existing.auto_approve : true),
+          auto_approve: isAutoApprove,
           owner: owner || existing.owner || req.adminUser || 'admin',
           organization: organization || existing.organization || 'CyberVPS Fleet',
           installation_generation: existing.installation_generation || machine.installation_generation || 1,
@@ -8631,7 +8650,9 @@ while True:
           res.end(JSON.stringify({ success: false, error: `Cannot issue recovery ticket: Machine '${machine_id}' is revoked`, code: 'DEVICE_REVOKED' }));
           return;
         }
-        const profile = db.recoveryProfiles.get(machine_id);
+        const profile = db.recoveryProfiles.get(machine_id) ||
+          (db.machineAliases && db.recoveryProfiles.get(db.machineAliases.get(machine_id))) ||
+          (hardware_uuid && Array.from(db.recoveryProfiles.values()).find(p => p.hardware_uuid && p.hardware_uuid.toLowerCase() === hardware_uuid.toLowerCase()));
         const ticket = 'cvps_recov_' + crypto.randomBytes(16).toString('hex');
         const ttl = Math.min(Math.max(parseInt(ttl_hours || '24', 10), 1), 720); // 1h to 30d
         const ticketRecord = {
@@ -8682,7 +8703,9 @@ while True:
           return;
         }
 
-        const profile = db.recoveryProfiles.get(machine_id);
+        const profile = db.recoveryProfiles.get(machine_id) ||
+          (db.machineAliases && db.recoveryProfiles.get(db.machineAliases.get(machine_id))) ||
+          (hardware_uuid && Array.from(db.recoveryProfiles.values()).find(p => p.hardware_uuid && p.hardware_uuid.toLowerCase() === hardware_uuid.toLowerCase()));
         let authenticated = false;
         let authReason = '';
 
@@ -9089,7 +9112,9 @@ echo "[*] CyberVPS Agent active."
       try {
         const payload = JSON.parse(body || '{}');
         const { machine_id } = payload;
-        const profile = db.recoveryProfiles.get(machine_id);
+        const profile = db.recoveryProfiles.get(machine_id) ||
+          (db.machineAliases && db.recoveryProfiles.get(db.machineAliases.get(machine_id))) ||
+          (hardware_uuid && Array.from(db.recoveryProfiles.values()).find(p => p.hardware_uuid && p.hardware_uuid.toLowerCase() === hardware_uuid.toLowerCase()));
         if (!profile) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Recovery profile not found' }));
@@ -9126,7 +9151,9 @@ echo "[*] CyberVPS Agent active."
           res.end(JSON.stringify({ success: false, error: 'machine_id parameter required' }));
           return;
         }
-        const profile = db.recoveryProfiles.get(machine_id);
+        const profile = db.recoveryProfiles.get(machine_id) ||
+          (db.machineAliases && db.recoveryProfiles.get(db.machineAliases.get(machine_id))) ||
+          (hardware_uuid && Array.from(db.recoveryProfiles.values()).find(p => p.hardware_uuid && p.hardware_uuid.toLowerCase() === hardware_uuid.toLowerCase()));
         if (profile) {
           profile.status = 'revoked';
           profile.auto_approve = false;
@@ -9202,9 +9229,6 @@ function verifyAppStreamAuthorization(request, parsedUrl) {
 
       const explicitTrustedOrigins = new Set([
         'cyberdrivepro.github.io',
-        'cybervps-space-station.up.railway.app',
-        'cybervps-render-control.onrender.com',
-        'cybervps-space-station.netlify.app',
         'localhost',
         '127.0.0.1',
         hostHeader,
@@ -9291,9 +9315,6 @@ function verifyTerminalAuthorization(request, parsedUrl) {
       // Explicit trusted origins: exact deployed dashboard, exact deployed backend, Netlify, Render, and local dev
       const explicitTrustedOrigins = new Set([
         'cyberdrivepro.github.io',
-        'cybervps-space-station.up.railway.app',
-        'cybervps-render-control.onrender.com',
-        'cybervps-space-station.netlify.app',
         'localhost',
         '127.0.0.1',
         hostHeader,

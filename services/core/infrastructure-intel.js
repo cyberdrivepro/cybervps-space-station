@@ -15,11 +15,11 @@ class InfrastructureIntelService {
     this.pathEngine = options.pathEngine || null;
     this.auditService = options.auditService || null;
 
-    // Known Obsidian Pillars Cluster Registry
+    // Known Obsidian Pillars Cluster Registry (Local & Dynamic Mesh Nodes)
     this.obsidianPillars = [
       { id: 'pillar_local_lead', name: 'Space Station Mesh Control Plane', url: 'http://localhost:8080', role: 'Leader' },
-      { id: 'pillar_voroa_alpha', name: 'Obsidian Pillar Alpha (Voroa Node)', url: 'https://cybervpsbackend4.getvoroa.com', role: 'Follower' },
-      { id: 'pillar_render_beta', name: 'Obsidian Pillar Beta (Render Cloud)', url: 'https://cybervps-render-control.onrender.com', role: 'Follower' },
+      { id: 'pillar_mesh_alpha', name: 'Obsidian Mesh Pillar Alpha', url: 'http://127.0.0.1:8081', role: 'Follower' },
+      { id: 'pillar_mesh_beta', name: 'Obsidian Mesh Pillar Beta', url: 'http://127.0.0.1:8082', role: 'Follower' },
       { id: 'pillar_local_gamma', name: 'Obsidian Pillar Gamma (Local Station)', url: 'http://127.0.0.1:8080', role: 'Candidate' },
       { id: 'pillar_cf_delta', name: 'Obsidian Pillar Delta (Cloudflare Tunnel)', url: 'http://localhost:8080/api/v1/tunnel/public-url', role: 'Witness' }
     ];

@@ -7,16 +7,19 @@ class StationApiClient {
   constructor(stateStore) {
     this.store = stateStore;
     const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-    this.candidateBackends = [
-      'https://cybervpsbackend4.getvoroa.com',
-      'https://cybervps-render-control.onrender.com'
-    ];
-    const cachedCf = typeof localStorage !== 'undefined' ? localStorage.getItem('cvps_active_cf_link') : null;
-    if (cachedCf) {
-      this.candidateBackends.unshift(cachedCf);
+    this.candidateBackends = [];
+    const cachedBackend = typeof localStorage !== 'undefined' ? (localStorage.getItem('cvps_backend_url') || localStorage.getItem('cvps_active_cf_link')) : null;
+    if (cachedBackend) {
+      this.candidateBackends.push(cachedBackend);
+    }
+    if (typeof window !== 'undefined' && window.location.origin && !window.location.hostname.endsWith('github.io')) {
+      if (!this.candidateBackends.includes(window.location.origin)) {
+        this.candidateBackends.push(window.location.origin);
+      }
     }
     if (!isHttps) {
-      this.candidateBackends.push('http://localhost:8080');
+      if (!this.candidateBackends.includes('http://127.0.0.1:8080')) this.candidateBackends.push('http://127.0.0.1:8080');
+      if (!this.candidateBackends.includes('http://localhost:8080')) this.candidateBackends.push('http://localhost:8080');
     }
   }
 

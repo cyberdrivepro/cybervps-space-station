@@ -52,38 +52,60 @@ class ClusterHAView {
     const grid = document.getElementById('ha-pillars-grid');
     if (!grid) return;
 
-    const backends = [
-      { name: 'Space Station Decentralized Control Plane', url: 'http://localhost:8080', role: 'Leader' },
-      { name: 'Obsidian Pillar Alpha (Voroa Node)', url: 'https://cybervpsbackend4.getvoroa.com', role: 'Follower' },
-      { name: 'Obsidian Pillar Beta (Render Cloud)', url: 'https://cybervps-render-control.onrender.com', role: 'Follower' },
-      { name: 'Obsidian Pillar Gamma (Local Station)', url: 'http://127.0.0.1:8080', role: 'Candidate' },
-      { name: 'Obsidian Pillar Delta (Cloudflare Tunnel)', url: 'http://localhost:8080/api/v1/tunnel/public-url', role: 'Witness' }
-    ];
+    let backends = [];
+    try {
+      const res = await fetch('/api/v1/backends');
+      if (res.ok) {
+        const data = await res.json();
+        backends = (data.backends || []).map(b => ({
+          name: b.name || b.id,
+          url: b.url,
+          role: b.role || 'Secondary',
+          state: b.state || 'healthy',
+          latency: b.latency_ms || null
+        }));
+      }
+    } catch (_) {}
 
-    grid.innerHTML = backends.map(b => `
-      <div class="pillar-card card" id="pillar-${b.name.replace(/[^a-zA-Z0-9]/g, '')}">
+    if (backends.length === 0) {
+      const activeUrl = window.stationApp?.state?.get('backendUrl') || window.location.origin;
+      backends = [
+        { name: 'Local Control Plane', url: activeUrl, role: 'Primary', state: 'healthy', latency: 1 }
+      ];
+    }
+
+    grid.innerHTML = backends.map(b => {
+      const safeId = (b.name || 'node').replace(/[^a-zA-Z0-9]/g, '');
+      const isOnline = b.state === 'healthy';
+      const statusColor = isOnline ? 'var(--accent-emerald, #10b981)' : 'var(--accent-rose, #ef4444)';
+      const statusText = isOnline ? '● ONLINE' : '○ OFFLINE';
+      return `
+      <div class="pillar-card card" id="pillar-${safeId}">
         <div class="pillar-header">
           <strong>${b.name}</strong>
-          <span class="badge badge-secondary">${b.role}</span>
+          <span class="badge ${b.role === 'Primary' || b.role === 'primary' ? 'badge-primary' : 'badge-secondary'}">${b.role}</span>
         </div>
         <p class="pillar-url"><code>${b.url}</code></p>
         <div class="pillar-status-row">
-          <span class="pillar-status" style="color:#00ffcc">● ONLINE</span>
-          <span class="pillar-latency"><small>Probing...</small></span>
+          <span class="pillar-status" style="color:${statusColor}">${statusText}</span>
+          <span class="pillar-latency"><small>${b.latency !== null ? b.latency + 'ms' : 'Probing...'}</small></span>
         </div>
         <div class="pillar-actions">
           <button class="btn-sm" onclick="ClusterHAView.switchToBackend('${b.url}')">Switch Target</button>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     // Probe latency concurrently
     for (const b of backends) {
+      if (!b.url || b.url.startsWith('http://127.0.0.1') || b.url.startsWith('http://localhost')) continue;
       const start = Date.now();
       try {
         await fetch(`${b.url}/health`, { method: 'GET', mode: 'no-cors' });
         const latency = Date.now() - start;
-        const el = document.getElementById(`pillar-${b.name.replace(/[^a-zA-Z0-9]/g, '')}`);
+        const safeId = (b.name || 'node').replace(/[^a-zA-Z0-9]/g, '');
+        const el = document.getElementById(`pillar-${safeId}`);
         if (el) {
           const latEl = el.querySelector('.pillar-latency');
           if (latEl) latEl.innerHTML = `<small>${latency}ms</small>`;

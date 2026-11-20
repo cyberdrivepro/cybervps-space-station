@@ -56,7 +56,7 @@ async function runEndCoreTestSuite() {
     assert.strictEqual(cs.epoch, 1);
     assert.ok(cs.nodes.size >= 5, `Expected >= 5 default pillars, got ${cs.nodes.size}`);
     assert.ok(cs.nodes.has('be_primary_local'));
-    assert.ok(cs.nodes.has('be_railway_cloud'));
+    assert.ok(cs.nodes.has('be_local_mesh_cloud'));
     assert.ok(cs.nodes.has('be_render_cloud'));
     assert.ok(cs.nodes.has('be_voroa_cloud'));
     assert.ok(cs.nodes.has('be_netlify_cloud'));
@@ -105,11 +105,11 @@ async function runEndCoreTestSuite() {
     // Reset all nodes to healthy
     for (const n of cs.nodes.values()) n.observed_state = 'healthy';
 
-    const electRes = cs.electLeader('be_railway_cloud', 1);
+    const electRes = cs.electLeader('be_local_mesh_cloud', 1);
     assert.strictEqual(electRes.success, true);
-    assert.strictEqual(cs.leaderId, 'be_railway_cloud');
+    assert.strictEqual(cs.leaderId, 'be_local_mesh_cloud');
     assert.strictEqual(cs.epoch, 2);
-    assert.strictEqual(cs.nodes.get('be_railway_cloud').role, 'primary');
+    assert.strictEqual(cs.nodes.get('be_local_mesh_cloud').role, 'primary');
     assert.strictEqual(cs.nodes.get('be_primary_local').role, 'secondary');
 
     // Stale term rejection

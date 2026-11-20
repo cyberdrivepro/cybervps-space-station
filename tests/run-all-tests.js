@@ -2109,6 +2109,15 @@ async function runTests() {
   winBridge.stop();
   agentWs.close();
   localTargetApp.close();
+
+  // Cleanup mock test instances, test bridges & ephemeral artifacts from control plane
+  try {
+    await request(`${SERVER_URL}/api/v1/machines/prune`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (_) {}
+
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
