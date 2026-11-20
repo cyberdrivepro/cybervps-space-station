@@ -6551,7 +6551,9 @@ const server = http.createServer(async (req, res) => {
   // =========================================================================
 
   if (pathname === '/api/v1/backends' && method === 'GET') {
-    const list = Array.from(clusterState.nodes.values()).map(n => ({
+    const list = Array.from(clusterState.nodes.values())
+      .filter(n => !clusterState.tombstones.has(n.backend_id) && n.observed_state !== 'removed' && n.desired_state !== 'removed')
+      .map(n => ({
       id: n.backend_id,
       name: n.display_name,
       url: n.deployment_url,
@@ -6635,7 +6637,9 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/v1/backends/health' && method === 'POST') {
     await recoveryCoordinator.reconcile();
-    const list = Array.from(clusterState.nodes.values()).map(n => ({
+    const list = Array.from(clusterState.nodes.values())
+      .filter(n => !clusterState.tombstones.has(n.backend_id) && n.observed_state !== 'removed' && n.desired_state !== 'removed')
+      .map(n => ({
       id: n.backend_id,
       name: n.display_name,
       url: n.deployment_url,
@@ -6682,7 +6686,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/v1/backends/broadcast' && method === 'POST') {
     const broadcastCount = broadcastBackendPoolToAgents();
     clusterTransport.broadcastStateToPeers();
-    const backendList = Array.from(clusterState.nodes.values()).map(b => ({ id: b.backend_id, url: b.deployment_url, role: b.role, state: b.observed_state }));
+    const backendList = Array.from(clusterState.nodes.values())
+      .filter(b => !clusterState.tombstones.has(b.backend_id) && b.observed_state !== 'removed' && b.desired_state !== 'removed')
+      .map(b => ({ id: b.backend_id, url: b.deployment_url, role: b.role, state: b.observed_state }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, message: `Broadcasted ${backendList.length} backends to ${broadcastCount} connected fleet nodes.` }));
     return;
