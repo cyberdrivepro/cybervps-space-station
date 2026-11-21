@@ -2864,6 +2864,12 @@ const server = http.createServer(async (req, res) => {
     if (queryServer) {
       return queryServer.trim().replace(/\/+$/, '');
     }
+    try {
+      const cached = tunnelManager.loadCachedPublicTunnelUrl();
+      if (cached && cached.public_url && cached.public_url.startsWith('https://')) {
+        return cached.public_url.replace(/\/+$/, '');
+      }
+    } catch (_) {}
     if (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost') {
       return tunnelManager.publicUrl.replace(/\/+$/, '');
     }
@@ -9587,10 +9593,7 @@ while True:
     });
     savePersistentState();
 
-    const hostProto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
-    const targetHost = (tunnelManager.publicUrl && tunnelManager.providerName !== 'localhost')
-      ? tunnelManager.publicUrl
-      : `${hostProto}://${req.headers.host || 'localhost:' + PORT}`;
+    const targetHost = resolveTargetHost(req, parsedUrl);
 
     const oneLiner = `& ([scriptblock]::Create(((Invoke-RestMethod '${targetHost}/install.ps1?ticket=${ticket}').TrimStart([char]65279))))`;
     logAudit('bootstrap_ticket_issued', auth.user || 'dashboard', null, `Issued 1-click bootstrap ticket (Expires in ${ttlSeconds}s)`);
