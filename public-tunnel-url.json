@@ -1,7 +1,7 @@
 {
-    "port":  8080,
-    "public_url":  "https://templates-tract-notes-shopping.trycloudflare.com",
-    "updated_at":  "2026-11-21T02:05:06.816Z",
-    "provider":  "cloudflare",
-    "pairing_key":  "cybervps_pair_station_2026"
+  "port": 8080,
+  "public_url": "https://templates-tract-notes-shopping.trycloudflare.com",
+  "updated_at": "2026-11-21T02:20:40.730Z",
+  "provider": "cloudflare",
+  "pairing_key": "cybervps_pair_station_2026"
 }

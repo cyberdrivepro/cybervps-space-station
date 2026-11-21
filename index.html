@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>CyberVPS Space Station — Orbital Network Control</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -6011,11 +6014,9 @@
       } catch (_) {}
     }
     const isLoopbackTarget = savedUrl && (savedUrl.includes('localhost') || savedUrl.includes('127.0.0.1'));
-    if (isStaticHost && (!savedUrl || isLoopbackTarget) && !paramBackend) {
-      const cachedCf = localStorage.getItem('cvps_active_cf_link');
-      if (cachedCf && (cachedCf.includes('trycloudflare.com') || cachedCf.startsWith('https://'))) {
-        savedUrl = cachedCf;
-      } else {
+    if (isStaticHost && !paramBackend) {
+      // On static GitHub Pages without explicit query parameter, prefer known active live tunnel fallback over stale ephemeral tunnel strings
+      if (!savedUrl || isLoopbackTarget || (savedUrl.includes('trycloudflare.com') && savedUrl !== defaultLiveTunnelFallback)) {
         savedUrl = defaultLiveTunnelFallback;
       }
     }
@@ -6046,6 +6047,41 @@
     if (appConfig.serverUrl) {
       localStorage.setItem('cvps_server_url', appConfig.serverUrl);
       localStorage.setItem('cvps_control_plane_url', appConfig.serverUrl);
+    }
+
+    // Immediate Fast-Boot Tunnel Discovery for Static / GitHub Pages Hosts
+    if (isStaticHost || (appConfig.serverUrl && appConfig.serverUrl.includes('trycloudflare.com'))) {
+      (async function fastBootDiscovery() {
+        const regUrls = [
+          './public-tunnel-url.json',
+          './data/public-tunnel-url.json',
+          'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/public-tunnel-url.json',
+          'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/data/public-tunnel-url.json'
+        ];
+        for (const rUrl of regUrls) {
+          try {
+            const resp = await fetch(rUrl + '?_t=' + Date.now(), { cache: 'no-store' });
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data && data.public_url && data.public_url.startsWith('https://')) {
+                if (data.public_url !== appConfig.serverUrl) {
+                  const probe = await fetch(data.public_url + '/health', { mode: 'cors', cache: 'no-store' }).catch(() => null);
+                  if (probe && probe.ok) {
+                    console.log('[FastBoot] Upgraded to live Cloudflare tunnel from registry:', data.public_url);
+                    appConfig.serverUrl = data.public_url;
+                    localStorage.setItem('cvps_server_url', data.public_url);
+                    localStorage.setItem('cvps_active_cf_link', data.public_url);
+                    const statusEndpoint = document.getElementById('status-endpoint');
+                    if (statusEndpoint) statusEndpoint.innerText = data.public_url;
+                    if (typeof syncData === 'function') syncData(false);
+                    return;
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+        }
+      })();
     }
 
     // Apply saved theme
@@ -6183,7 +6219,7 @@
       if (appState._syncInProgress && !manual) return;
       appState._syncInProgress = true;
       try {
-        const healthCheck = await apiRequest('/health', { timeout: 8000 });
+        const healthCheck = await apiRequest('/health', { timeout: 3500 });
 
         const statusDot = document.getElementById('status-dot');
         const statusLabel = document.getElementById('status-label');
@@ -6194,9 +6230,10 @@
         checkLoopbackBanner();
 
         if (!healthCheck.ok) {
-          // Autonomous Registry Recovery: If current backend is unreachable, auto-probe the active registry
-          if (!appState._attemptedTunnelRecovery) {
-            appState._attemptedTunnelRecovery = true;
+          // Autonomous Registry Recovery: If current backend is unreachable, auto-probe the active registry on interval
+          const nowRecovery = Date.now();
+          if (!appState._lastTunnelRecovery || (nowRecovery - appState._lastTunnelRecovery > 4000)) {
+            appState._lastTunnelRecovery = nowRecovery;
             try {
               const regUrls = [
                 './public-tunnel-url.json',
@@ -6206,17 +6243,17 @@
               ];
               for (const rUrl of regUrls) {
                 try {
-                  const regResp = await fetch(rUrl + '?_t=' + Date.now());
+                  const regResp = await fetch(rUrl + '?_t=' + Date.now(), { cache: 'no-store' });
                   if (regResp.ok) {
                     const regData = await regResp.json();
-                    if (regData && regData.public_url && regData.public_url.startsWith('https://') && regData.public_url !== appConfig.serverUrl) {
-                      const probe = await fetch(regData.public_url + '/health', { mode: 'cors' }).catch(() => null);
+                    if (regData && regData.public_url && regData.public_url.startsWith('https://')) {
+                      const probe = await fetch(regData.public_url + '/health', { mode: 'cors', cache: 'no-store' }).catch(() => null);
                       if (probe && probe.ok) {
                         console.log('[*] Autonomous failover to live Cloudflare tunnel:', regData.public_url);
                         appConfig.serverUrl = regData.public_url;
                         localStorage.setItem('cvps_server_url', regData.public_url);
                         localStorage.setItem('cvps_active_cf_link', regData.public_url);
-                        appState._attemptedTunnelRecovery = false;
+                        statusEndpoint.innerText = regData.public_url;
                         appState._syncInProgress = false;
                         return syncData(manual);
                       }
@@ -6226,14 +6263,14 @@
               }
 
               // Direct probe against fallback tunnel if registry lookup was not reached
-              if (defaultLiveTunnelFallback && defaultLiveTunnelFallback !== appConfig.serverUrl) {
-                const probe = await fetch(defaultLiveTunnelFallback + '/health', { mode: 'cors' }).catch(() => null);
+              if (defaultLiveTunnelFallback) {
+                const probe = await fetch(defaultLiveTunnelFallback + '/health', { mode: 'cors', cache: 'no-store' }).catch(() => null);
                 if (probe && probe.ok) {
                   console.log('[*] Autonomous failover to default live tunnel:', defaultLiveTunnelFallback);
                   appConfig.serverUrl = defaultLiveTunnelFallback;
                   localStorage.setItem('cvps_server_url', defaultLiveTunnelFallback);
                   localStorage.setItem('cvps_active_cf_link', defaultLiveTunnelFallback);
-                  appState._attemptedTunnelRecovery = false;
+                  statusEndpoint.innerText = defaultLiveTunnelFallback;
                   appState._syncInProgress = false;
                   return syncData(manual);
                 }
@@ -8314,17 +8351,20 @@
 
       for (const rUrl of regUrls) {
         try {
-          const resp = await fetch(rUrl + '?_t=' + Date.now());
+          const resp = await fetch(rUrl + '?_t=' + Date.now(), { cache: 'no-store' });
           if (resp.ok) {
             const data = await resp.json();
             if (data && data.public_url && data.public_url.startsWith('https://')) {
-              appConfig.serverUrl = data.public_url;
-              localStorage.setItem('cvps_server_url', data.public_url);
-              localStorage.setItem('cvps_active_cf_link', data.public_url);
-              showToast(`Connected to live tunnel: ${data.public_url}`, 'success');
-              if (btn) btn.innerText = '⚡ Connected!';
-              syncData(true);
-              return;
+              const probe = await fetch(data.public_url + '/health', { mode: 'cors', cache: 'no-store' }).catch(() => null);
+              if (probe && probe.ok) {
+                appConfig.serverUrl = data.public_url;
+                localStorage.setItem('cvps_server_url', data.public_url);
+                localStorage.setItem('cvps_active_cf_link', data.public_url);
+                showToast(`Connected to live tunnel: ${data.public_url}`, 'success');
+                if (btn) btn.innerText = '⚡ Connected!';
+                syncData(true);
+                return;
+              }
             }
           }
         } catch (_) {}
@@ -8333,7 +8373,7 @@
       // Proactive probe against fallback tunnel
       if (defaultLiveTunnelFallback) {
         try {
-          const probe = await fetch(defaultLiveTunnelFallback + '/health', { mode: 'cors' });
+          const probe = await fetch(defaultLiveTunnelFallback + '/health', { mode: 'cors', cache: 'no-store' }).catch(() => null);
           if (probe && probe.ok) {
             appConfig.serverUrl = defaultLiveTunnelFallback;
             localStorage.setItem('cvps_server_url', defaultLiveTunnelFallback);

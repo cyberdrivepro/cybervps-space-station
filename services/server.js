@@ -8220,6 +8220,17 @@ const server = http.createServer(async (req, res) => {
   // WIREGUARD VPN, DOCKER, SANDBOXES & CYBERROOT PRIVILEGE MANAGEMENT
   // =========================================================================
   if (pathname === '/api/v1/wireguard/peers' && method === 'GET') {
+    if (db.wireguardPeers.size === 0) {
+      db.wireguardPeers.set('wg_peer_gateway', {
+        id: 'wg_peer_gateway',
+        name: 'Space Station Virtual Gateway',
+        public_key: 'CVpsVirtualGatewayLocalPkey2026Base64==',
+        endpoint: `127.0.0.1:${port}`,
+        allowed_ips: '10.88.0.1/32',
+        handshake: null,
+        status: 'standby'
+      });
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       network: '10.88.0.0/24',
