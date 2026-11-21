@@ -3371,6 +3371,10 @@ const server = http.createServer(async (req, res) => {
     (async () => {
       try {
         const cfResult = await tunnelManager.startCloudflareTunnel();
+        tunnelManager.publicUrl = cfResult.url;
+        tunnelManager.providerName = 'cloudflare';
+        tunnelManager.status = 'connected';
+        tunnelManager.persistPublicTunnelUrl(cfResult.url, 'cloudflare');
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,

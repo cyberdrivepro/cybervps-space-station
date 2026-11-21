@@ -426,6 +426,16 @@ class TunnelManager {
       }
     }
 
+    // 4B. Check active cached Cloudflare tunnel if available
+    const cached = this.loadCachedPublicTunnelUrl();
+    if (cached && cached.public_url && cached.public_url.includes('trycloudflare.com')) {
+      this.providerName = cached.provider || 'cloudflare';
+      this.publicUrl = cached.public_url;
+      this.status = 'connected';
+      this.lastError = '';
+      return this.getInfo();
+    }
+
     // 5. Fallback: Localhost only
     this.providerName = 'localhost';
     this.publicUrl = `http://127.0.0.1:${this.port}`;
