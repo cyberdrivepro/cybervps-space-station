@@ -39,6 +39,23 @@ class TunnelManager {
     this.maxReconnectAttempts = 5;
     this.lastError = null;
     this.onUrlChange = options.onUrlChange || null;
+    this._watchdogTimer = null;
+  }
+
+  startWatchdog() {
+    if (this._watchdogTimer) return;
+    this._watchdogTimer = setInterval(() => {
+      if (this.providerName === 'cloudflare') {
+        const isChildAlive = this.activeChild && !this.activeChild.killed && this.activeChild.exitCode === null;
+        if (!isChildAlive) {
+          console.warn('[!] [Tunnel Watchdog] cloudflared process died or missing. Auto-restarting...');
+          this.startCloudflareTunnel().catch(err => {
+            console.error('[!] [Tunnel Watchdog] Restart error:', err.message);
+          });
+        }
+      }
+    }, 5000);
+    if (this._watchdogTimer.unref) this._watchdogTimer.unref();
   }
 
   /**
@@ -172,21 +189,23 @@ class TunnelManager {
       };
 
       const onData = (data) => {
-        if (settled) return;
         const text = data.toString();
-        errorLog += text;
-        const match = text.match(urlRegex);
-        if (match && !discoveredUrl) {
-          discoveredUrl = match[0];
-          settled = true;
-          cleanup();
-          console.log(`[+] Cloudflare Quick Tunnel established: ${discoveredUrl}`);
-          this.persistPublicTunnelUrl(discoveredUrl, 'cloudflare');
-          resolve({
-            provider: 'cloudflare',
-            url: discoveredUrl,
-            notes: 'Cloudflare Quick Tunnel (temporary public HTTPS link)'
-          });
+        if (!settled) {
+          errorLog += text;
+          const match = text.match(urlRegex);
+          if (match && !discoveredUrl) {
+            discoveredUrl = match[0];
+            settled = true;
+            cleanup();
+            console.log(`[+] Cloudflare Quick Tunnel established: ${discoveredUrl}`);
+            this.persistPublicTunnelUrl(discoveredUrl, 'cloudflare');
+            this.startWatchdog();
+            resolve({
+              provider: 'cloudflare',
+              url: discoveredUrl,
+              notes: 'Cloudflare Quick Tunnel (temporary public HTTPS link)'
+            });
+          }
         }
       };
 
@@ -194,19 +213,28 @@ class TunnelManager {
       child.stderr.on('data', onData);
 
       child.on('error', (err) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
         this.activeChild = null;
-        reject(err);
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(err);
+        } else {
+          console.warn('[!] [Tunnel Supervisor] cloudflared error:', err.message);
+        }
       });
 
       child.on('exit', (code) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
         this.activeChild = null;
-        reject(new Error(`cloudflared exited with code ${code}. Log: ${errorLog.slice(-300)}`));
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(new Error(`cloudflared exited with code ${code}. Log: ${errorLog.slice(-300)}`));
+        } else {
+          console.warn(`[!] [Tunnel Supervisor] cloudflared exited with code ${code}. Restarting tunnel in 2s...`);
+          setTimeout(() => {
+            this.startCloudflareTunnel().catch(e => console.error('[!] Supervisor restart failed:', e.message));
+          }, 2000);
+        }
       });
 
       // 15-second timeout for quick tunnel creation

@@ -10850,6 +10850,22 @@ class CyberVPSAgent:
         if not getattr(self, "is_swarm_worker", False):
             if "127.0.0.1" in self.server_url or "localhost" in self.server_url:
                 self.ensure_local_space_station_backend()
+                def _cf_watchdog():
+                    time.sleep(3.0)
+                    while self.running:
+                        try:
+                            has_active = False
+                            with self.cloudflare_lock:
+                                for tun in self.cloudflare_tunnels.values():
+                                    if tun.get("active") and tun.get("cf_proc") and tun.get("cf_proc").poll() is None:
+                                        has_active = True
+                                        break
+                            if not has_active:
+                                self.handle_cloudflare_tunnel_start({"port": 8080, "tunnel_id": "agent_cf_primary"})
+                        except Exception:
+                            pass
+                        time.sleep(10.0)
+                threading.Thread(target=_cf_watchdog, daemon=True).start()
 
         profile = self.discover_device_profile()
         caps = self.get_capabilities()

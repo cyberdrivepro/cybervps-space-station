@@ -11799,6 +11799,9 @@ function handleAgentMessage(ws, msg) {
         m.cloudflare_tunnel_url = public_url;
         m.last_seen = new Date().toISOString();
       }
+      tunnelManager.publicUrl = public_url;
+      tunnelManager.providerName = 'cloudflare';
+      tunnelManager.status = 'connected';
       tunnelManager.persistPublicTunnelUrl(public_url, 'cloudflare');
       logAudit('cloudflare_tunnel_reported', 'agent', machine_id, `Agent established Cloudflare Quick Tunnel: ${public_url} (port: ${port || 8080})`);
     }
