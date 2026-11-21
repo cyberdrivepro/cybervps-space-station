@@ -2011,13 +2011,30 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  let _cachedGitCommit = null;
+  function getLiveGitCommitSha() {
+    if (_cachedGitCommit) return _cachedGitCommit;
+    try {
+      _cachedGitCommit = require('child_process').execSync('git rev-parse --short HEAD', {
+        cwd: __dirname,
+        timeout: 1000,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim();
+      return _cachedGitCommit;
+    } catch (_) {
+      _cachedGitCommit = '0750906';
+      return _cachedGitCommit;
+    }
+  }
+
   function getControlPlaneMetadata() {
     const commitSha = process.env.RAILWAY_GIT_COMMIT_SHA ||
                       process.env.GIT_COMMIT_SHA ||
                       process.env.COMMIT_SHA ||
-                      '57bf173';
-    const version = '2.2.0';
-    const protocolVersion = '2.2.0';
+                      getLiveGitCommitSha();
+    const version = '2.3.0';
+    const protocolVersion = '2.3.0';
     const buildId = `cvps-${version}-${commitSha}`;
     return {
       version,

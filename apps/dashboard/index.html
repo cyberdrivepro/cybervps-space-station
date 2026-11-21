@@ -960,7 +960,7 @@
     <ul class="nav-list">
       <li><a class="nav-item active" onclick="navigate('overview')"><svg viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>Overview</a></li>
       <li><a class="nav-item" onclick="navigate('machines')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Instances Fleet</a></li>
-      <li><a class="nav-item" id="nav-swarm" onclick="navigate('swarm')"><svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>20-Agent Swarm <span class="badge badge-success" style="font-size:0.62rem; padding:1px 5px; margin-left:auto;">20x</span></a></li>
+      <li><a class="nav-item" id="nav-swarm" onclick="navigate('swarm')"><svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>20-Agent Swarm <span class="badge badge-success" id="nav-badge-tree-leaves" style="font-size:0.62rem; padding:1px 5px; margin-left:auto;">20x</span></a></li>
       <li><a class="nav-item" onclick="navigate('recovery')"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>Disaster Recovery</a></li>
       <li><a class="nav-item" onclick="navigate('apps')"><svg viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>Applications</a></li>
       <li><a class="nav-item" onclick="navigate('desktop')"><svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/><circle cx="12" cy="10" r="2"/></svg>Remote Desktop</a></li>
@@ -991,8 +991,8 @@
       </div>
       <div id="status-endpoint" style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); word-break:break-all;"></div>
       <div style="margin-top:0.6rem; padding-top:0.45rem; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; font-size:0.68rem; color:var(--text-muted);">
-        <span id="footer-build-ver">v2.2.0 Stable</span>
-        <span id="footer-build-sha" style="font-family:var(--font-mono); color:var(--accent-cyan); font-weight:600; cursor:pointer;" title="Deployed Git Commit" onclick="navigate('settings')">43579ce</span>
+        <span id="footer-build-ver">v2.3.0 Ultra</span>
+        <span id="footer-build-sha" style="font-family:var(--font-mono); color:var(--accent-cyan); font-weight:600; cursor:pointer;" title="Deployed Git Commit" onclick="navigate('settings')">0750906</span>
       </div>
     </div>
   </aside>
@@ -1303,7 +1303,7 @@
             </div>
             <div style="display:flex; gap:0.5rem; align-items:center;">
               <button class="btn btn-secondary" onclick="pruneStaleMachines()" style="font-size:0.78rem; padding:0.35rem 0.85rem;" title="Purge leftover mock/test nodes and deduplicate ghost records">🧹 Clean Fleet</button>
-              <button class="btn btn-secondary" onclick="loadState(true)" style="font-size:0.78rem; padding:0.35rem 0.85rem;">🔄 Refresh</button>
+              <button class="btn btn-secondary" onclick="syncData(true)" style="font-size:0.78rem; padding:0.35rem 0.85rem;">🔄 Refresh</button>
               <button class="btn btn-primary" onclick="openBridgeModal()">+ Bridge Port</button>
             </div>
           </div>
@@ -5541,6 +5541,10 @@
           <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.5rem;">
             For use after your local bridge is running on <code>127.0.0.1</code>:
           </div>
+          <div style="display:flex; align-items:center; gap:0.5rem; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); padding:0.4rem 0.65rem; margin-bottom:0.5rem;">
+            <code id="modal-rdp-local-cmd" style="font-family:var(--font-mono); font-size:0.78rem; color:#10b981; flex:1;">mstsc /v:127.0.0.1:33890</code>
+            <button class="btn btn-secondary" onclick="copyMstscCommand()" style="padding:0.25rem 0.55rem; font-size:0.72rem;">Copy</button>
+          </div>
           <div style="display:flex; gap:0.5rem;">
             <button class="btn btn-secondary" onclick="downloadRdpConfig()" style="flex:1; font-size:0.76rem;">
               📥 Download .rdp File
@@ -6553,6 +6557,10 @@
       }).join('');
     }
 
+    function loadState(manual = false) {
+      return syncData(manual);
+    }
+
     async function pruneStaleMachines() {
       if (!confirm('Clean Fleet: Purge stale mock test nodes and deduplicate ghost records?')) return;
       showToast('Pruning stale instances and ghost duplicates...', 'info');
@@ -6561,7 +6569,7 @@
         if (res && res.ok !== false) {
           const data = res.data || res;
           showToast(`Fleet Cleaned! Pruned ${data.pruned_count || 0} stale records.`, 'success');
-          await loadState(true);
+          await syncData(true);
         } else {
           showToast('Failed to prune stale machines: ' + ((res && res.error) || 'Unknown error'), 'error');
         }
@@ -9128,6 +9136,13 @@
       saveSettings();
     }
 
+    function useCloudflareMeshDefault() {
+      const activeLink = localStorage.getItem('cvps_active_cf_link') || defaultLiveTunnelFallback;
+      document.getElementById('setting-server-url').value = activeLink;
+      updateConnectionModeUI('custom');
+      saveSettings();
+    }
+
     function useNetlifyDefault() {
       document.getElementById('setting-server-url').value = defaultNetlify;
       updateConnectionModeUI('custom');
@@ -11111,6 +11126,12 @@
       }
     }
 
+    function openExternalVncTab() {
+      const webPort = (replitLabState.data && replitLabState.data.web_port) || 8080;
+      const url = `http://${window.location.hostname || 'localhost'}:${webPort}/vnc.html?autoconnect=true&resize=scale`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+
     function copyReplitSshxLink() {
       const input = document.getElementById('replit-sshx-url');
       if (input && input.value) {
@@ -11132,6 +11153,7 @@
 
     // 10. NAVIGATION, MODALS & THEME TOGGLE
     function navigate(viewName) {
+      if (viewName === 'fleet') viewName = 'machines';
       document.querySelectorAll('.view-panel').forEach(el => el.style.display = 'none');
       document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
 
@@ -12640,7 +12662,7 @@
     }
 
     async function loadBackupSnapshots() {
-      const tbody = document.getElementById('backup-snapshots-table-body');
+      const tbody = document.getElementById('dr-snapshots-table-body') || document.getElementById('backup-snapshots-table-body');
       if (!tbody) return;
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1.5rem; color:var(--text-muted);"><span class="spinner"></span> Querying restic & Kopia repositories...</td></tr>';
 
@@ -13297,7 +13319,7 @@
       let targetName = name;
       let targetIp = ip;
       if (!targetName) {
-        const activeSel = document.getElementById('fleet-machine-select');
+        const activeSel = document.getElementById('details-machine-select') || document.getElementById('terminal-machine-select') || document.getElementById('desktop-machine-select');
         targetName = activeSel ? activeSel.value : '';
       }
       if (!targetName) {
@@ -17855,7 +17877,7 @@
           `;
         } else if (category === 'HOST_OFFLINE' || category === 'AGENT_DISCONNECTED') {
           actionsEl.innerHTML = `
-            <button class="btn btn-secondary" onclick="closeAppLiveViewer(); navigate('fleet');">🛰️ View Fleet Status</button>
+            <button class="btn btn-secondary" onclick="closeAppLiveViewer(); navigate('machines');">🛰️ View Fleet Status</button>
             <button class="btn btn-primary" onclick="retryAppStream()">🔄 Retry Capture</button>
           `;
         } else if (category === 'NO_GRAPHICAL_WINDOW' || category === 'WINDOW_NOT_FOUND') {
