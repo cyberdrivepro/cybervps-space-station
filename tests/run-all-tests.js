@@ -41,6 +41,9 @@ async function request(url, options = {}) {
         });
       });
     });
+    req.setTimeout(options.timeout || 10000, () => {
+      req.destroy(new Error(`Request to ${url} timed out after 10s`));
+    });
     req.on('error', reject);
     if (options.body) req.write(options.body);
     req.end();
@@ -2123,6 +2126,15 @@ async function runTests() {
   assert(megaTest.includes('ALL MEGA UPGRADES (TEST 59) VERIFIED AND PASSING 100%'), 'Mega upgrades must pass');
   console.log('  ✅ Prometheus /metrics, Fleet Broadcast Exec, Vector Clock Sync, Hot DR Snapshot/Restore, AES-256 Vault & 24-Point Doctor verified.');
 
+  // [TEST 60] Testing Space Station Mega Upgrades V2 (Dynamic Topology Matrix, TOTP 2FA, Merkle Hashes, Blackout Protocol, Fleet Auto-Healing, WireGuard Profiles, Fleet Cron, Speedtest, Containers & 26-Point Doctor)...
+  console.log('\n[TEST 60] Testing Space Station Mega Upgrades V2 (Dynamic Topology Matrix, TOTP 2FA, Merkle Hashes, Blackout Protocol, Fleet Auto-Healing, WireGuard Profiles, Fleet Cron, Speedtest, Containers & 26-Point Doctor)...');
+  const megaV2Test = execSync(`node "${require('path').join(__dirname, 'test-mega-upgrades-v2.js')}"`, {
+    encoding: 'utf-8',
+    env: { ...process.env, SERVER_URL }
+  });
+  assert(megaV2Test.includes('ALL MEGA UPGRADES V2 (TEST 60) VERIFIED AND PASSING 100%'), 'Mega upgrades V2 must pass');
+  console.log('  ✅ Dynamic Topology Matrix, TOTP 2FA, Merkle Hashes, Blackout Protocol, Fleet Auto-Healing, WireGuard Profiles, Fleet Cron, Speedtest, Containers & 26-Point Doctor verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2139,7 +2151,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 59 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 60 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }

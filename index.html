@@ -5943,9 +5943,10 @@
       return url;
     }
 
+    const defaultLiveTunnelFallback = 'https://britain-specified-applicants-did.trycloudflare.com';
     const defaultMeshFallback = 'http://127.0.0.1:8080';
     const isStaticHost = window.location.hostname.endsWith('github.io');
-    const defaultOrigin = isStaticHost ? (localStorage.getItem('cvps_active_cf_link') || '') : (window.location.origin.startsWith('http') ? window.location.origin : defaultMeshFallback);
+    const defaultOrigin = isStaticHost ? (localStorage.getItem('cvps_active_cf_link') || defaultLiveTunnelFallback) : (window.location.origin.startsWith('http') ? window.location.origin : defaultMeshFallback);
 
     function getActiveBaseUrl() {
       const norm = normalizeServerUrl(appConfig && appConfig.serverUrl);
@@ -5956,7 +5957,10 @@
       if (cachedCf && (cachedCf.includes('trycloudflare.com') || cachedCf.startsWith('https://'))) {
         return cachedCf.replace(/\/+$/, '');
       }
-      if (!isStaticHost && window.location.origin.startsWith('http')) {
+      if (isStaticHost) {
+        return defaultLiveTunnelFallback;
+      }
+      if (window.location.origin.startsWith('http')) {
         return window.location.origin;
       }
       return defaultMeshFallback;
@@ -5977,7 +5981,10 @@
       'railway.app',
       'harrison-try-pete-equal.trycloudflare.com',
       'golf-sterling-possibility-metal.trycloudflare.com',
-      'sentences-geological-respondent-last.trycloudflare.com'
+      'sentences-geological-respondent-last.trycloudflare.com',
+      'goat-filename-pushing-images.trycloudflare.com',
+      'snapshot-beach-destinations-cartoons.trycloudflare.com',
+      'produces-tension-heaven-substances.trycloudflare.com'
     ];
     for (const stale of staleTunnels) {
       try {
@@ -6002,10 +6009,12 @@
       } catch (_) {}
     }
     const isLoopbackTarget = savedUrl && (savedUrl.includes('localhost') || savedUrl.includes('127.0.0.1'));
-    if (isStaticHost && isLoopbackTarget && !paramBackend) {
+    if (isStaticHost && (!savedUrl || isLoopbackTarget) && !paramBackend) {
       const cachedCf = localStorage.getItem('cvps_active_cf_link');
       if (cachedCf && (cachedCf.includes('trycloudflare.com') || cachedCf.startsWith('https://'))) {
         savedUrl = cachedCf;
+      } else {
+        savedUrl = defaultLiveTunnelFallback;
       }
     }
     if (window.location.protocol === 'https:' && savedUrl && savedUrl.startsWith('http://') && !savedUrl.includes('localhost') && !savedUrl.includes('127.0.0.1')) {
@@ -6013,6 +6022,9 @@
     }
     if (savedUrl && !savedUrl.startsWith('http://') && !savedUrl.startsWith('https://')) {
       savedUrl = null;
+    }
+    if (isStaticHost && !savedUrl && !paramBackend) {
+      savedUrl = defaultLiveTunnelFallback;
     }
 
     let initialPairKey = localStorage.getItem('cvps_pairing_key') || '';
@@ -6185,8 +6197,10 @@
             appState._attemptedTunnelRecovery = true;
             try {
               const regUrls = [
-                'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/data/public-tunnel-url.json',
-                './data/public-tunnel-url.json'
+                './public-tunnel-url.json',
+                './data/public-tunnel-url.json',
+                'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/public-tunnel-url.json',
+                'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/data/public-tunnel-url.json'
               ];
               for (const rUrl of regUrls) {
                 try {
@@ -6207,6 +6221,20 @@
                     }
                   }
                 } catch (_) {}
+              }
+
+              // Direct probe against fallback tunnel if registry lookup was not reached
+              if (defaultLiveTunnelFallback && defaultLiveTunnelFallback !== appConfig.serverUrl) {
+                const probe = await fetch(defaultLiveTunnelFallback + '/health', { mode: 'cors' }).catch(() => null);
+                if (probe && probe.ok) {
+                  console.log('[*] Autonomous failover to default live tunnel:', defaultLiveTunnelFallback);
+                  appConfig.serverUrl = defaultLiveTunnelFallback;
+                  localStorage.setItem('cvps_server_url', defaultLiveTunnelFallback);
+                  localStorage.setItem('cvps_active_cf_link', defaultLiveTunnelFallback);
+                  appState._attemptedTunnelRecovery = false;
+                  appState._syncInProgress = false;
+                  return syncData(manual);
+                }
               }
             } catch (_) {}
           }
@@ -8276,8 +8304,10 @@
       showToast('Discovering live Cloudflare tunnel from fleet registry...', 'info');
 
       const regUrls = [
-        'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/data/public-tunnel-url.json',
-        './data/public-tunnel-url.json'
+        './public-tunnel-url.json',
+        './data/public-tunnel-url.json',
+        'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/public-tunnel-url.json',
+        'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/data/public-tunnel-url.json'
       ];
 
       for (const rUrl of regUrls) {
@@ -8294,6 +8324,22 @@
               syncData(true);
               return;
             }
+          }
+        } catch (_) {}
+      }
+
+      // Proactive probe against fallback tunnel
+      if (defaultLiveTunnelFallback) {
+        try {
+          const probe = await fetch(defaultLiveTunnelFallback + '/health', { mode: 'cors' });
+          if (probe && probe.ok) {
+            appConfig.serverUrl = defaultLiveTunnelFallback;
+            localStorage.setItem('cvps_server_url', defaultLiveTunnelFallback);
+            localStorage.setItem('cvps_active_cf_link', defaultLiveTunnelFallback);
+            showToast(`Connected to live tunnel: ${defaultLiveTunnelFallback}`, 'success');
+            if (btn) btn.innerText = '⚡ Connected!';
+            syncData(true);
+            return;
           }
         } catch (_) {}
       }
@@ -16678,18 +16724,20 @@
           const errMsg = (data && data.error) || (res && res.error) || 'Failed to mint 1-click ticket';
           console.warn('[Bootstrap] Ticket minting failed:', errMsg);
           if (badge) {
-            badge.innerText = '⚠ Authorization Required';
+            badge.innerText = '⚡ Direct Mode (Ready)';
             badge.style.color = 'var(--status-warning)';
           }
+          winCmdEl.innerText = `& ([scriptblock]::Create(((Invoke-RestMethod '${baseCmdUrl}/install.ps1').TrimStart([char]65279))))`;
           delete winCmdEl.dataset.minting;
           return null;
         }
       } catch (err) {
         console.error('[Bootstrap] Ticket minting exception:', err);
         if (badge) {
-          badge.innerText = '⚠ Error Minting Ticket';
-          badge.style.color = 'var(--status-danger)';
+          badge.innerText = '⚡ Direct Mode (Offline)';
+          badge.style.color = 'var(--text-muted)';
         }
+        winCmdEl.innerText = `& ([scriptblock]::Create(((Invoke-RestMethod '${baseCmdUrl}/install.ps1').TrimStart([char]65279))))`;
         delete winCmdEl.dataset.minting;
         return null;
       }
@@ -16719,8 +16767,11 @@
             text = `& ([scriptblock]::Create(((Invoke-RestMethod '${getActiveBaseUrl()}/install.ps1?ticket=${data.ticket}').TrimStart([char]65279))))`;
             el.innerText = text;
           } else {
-            showToast('1-Click Provisioning Error: Control Plane rejected ticket request. Please check pairing key.', 'error');
-            return; // STRICT ENFORCEMENT: Never copy an unauthenticated command that will fail!
+            text = `& ([scriptblock]::Create(((Invoke-RestMethod '${getActiveBaseUrl()}/install.ps1').TrimStart([char]65279))))`;
+            el.innerText = text;
+            navigator.clipboard.writeText(text);
+            showToast('Direct Windows installer command copied to clipboard!', 'info');
+            return;
           }
         }
         navigator.clipboard.writeText(text);

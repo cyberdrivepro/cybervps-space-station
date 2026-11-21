@@ -468,6 +468,10 @@ class TunnelManager {
       if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
       fs.writeFileSync(path.join(dataDir, 'public-tunnel-url.json'), JSON.stringify(payload, null, 2), 'utf8');
 
+      // Also persist to repository root for instant GitHub Pages / static hosting resolution
+      const rootFile = path.join(__dirname, '..', 'public-tunnel-url.json');
+      fs.writeFileSync(rootFile, JSON.stringify(payload, null, 2), 'utf8');
+
       const userDir = path.join(os.homedir(), '.cybervps');
       if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
       fs.writeFileSync(path.join(userDir, 'public-tunnel-url.json'), JSON.stringify(payload, null, 2), 'utf8');

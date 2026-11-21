@@ -10,7 +10,9 @@ Cargo.lock
 
 # Runtime / Temporary data
 .cybervps/
-data/
+data/*
+!data/public-tunnel-url.json
+!public-tunnel-url.json
 *.log
 *.pid
 .env
