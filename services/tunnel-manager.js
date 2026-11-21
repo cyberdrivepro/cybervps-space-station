@@ -157,6 +157,33 @@ class TunnelManager {
       throw new Error('cloudflared executable not available and auto-download failed.');
     }
 
+    // 2.5 Check if an active cloudflared process is already running and query its quicktunnel endpoint
+    try {
+      const qRes = await new Promise(res => {
+        http.get('http://127.0.0.1:20241/quicktunnel', { timeout: 1500 }, r => {
+          let b = '';
+          r.on('data', c => b += c);
+          r.on('end', () => {
+            try {
+              const j = JSON.parse(b);
+              if (j && j.hostname) res(`https://${j.hostname}`);
+              else res(null);
+            } catch (_) { res(null); }
+          });
+        }).on('error', () => res(null));
+      });
+      if (qRes) {
+        console.log(`[+] Discovered existing active cloudflared tunnel: ${qRes}`);
+        this.persistPublicTunnelUrl(qRes, 'cloudflare');
+        this.startWatchdog();
+        return {
+          provider: 'cloudflare',
+          url: qRes,
+          notes: 'Existing Cloudflare Quick Tunnel'
+        };
+      }
+    } catch (_) {}
+
     // 3. Launch cloudflared tunnel
     console.log(`[*] Starting Cloudflare Quick Tunnel using ${cloudflaredBin}...`);
     return new Promise((resolve, reject) => {

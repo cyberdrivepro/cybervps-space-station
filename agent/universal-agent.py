@@ -5928,6 +5928,30 @@ class CyberVPSAgent:
                     "active": True
                 }
 
+            # Persist directly to public-tunnel-url.json locations
+            try:
+                payload_disk = {
+                    "public_url": discovered_url,
+                    "provider": "cloudflare",
+                    "port": port,
+                    "pairing_key": "cybervps_pair_station_2026",
+                    "updated_at": _iso_now()
+                }
+                candidates = [
+                    os.path.join(os.path.expanduser("~"), ".cybervps", "public-tunnel-url.json"),
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "public-tunnel-url.json"),
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "public-tunnel-url.json")
+                ]
+                for c in candidates:
+                    try:
+                        os.makedirs(os.path.dirname(c), exist_ok=True)
+                        with open(c, "w", encoding="utf-8") as f_cf:
+                            json.dump(payload_disk, f_cf, indent=2)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             res = {
                 "tunnel_id": tunnel_id,
                 "public_url": discovered_url,
