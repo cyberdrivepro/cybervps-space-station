@@ -1009,6 +1009,11 @@
       </div>
 
       <div class="header-right">
+        <div id="ultra-radar-hud" style="display:inline-flex; align-items:center; gap:0.5rem; margin-right:0.25rem;">
+          <span id="hud-latency-pill" title="Control Plane Ping Latency" style="display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; font-weight:600; padding:4px 10px; border-radius:12px; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); color:var(--status-online);"><span style="width:6px; height:6px; border-radius:50%; background:#10b981; box-shadow:0 0 6px #10b981;"></span><span id="hud-latency-val">1ms</span></span>
+          <span id="hud-tree-pill" title="Multiverse Tree Mesh Leaves (N × 20)" style="display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; font-weight:600; padding:4px 10px; border-radius:12px; background:rgba(0,240,255,0.08); border:1px solid rgba(0,240,255,0.3); color:var(--accent-cyan);"><span style="font-size:0.8rem;">🌿</span><span id="hud-tree-val">20 Leaves</span></span>
+          <a id="hud-metrics-pill" href="/metrics" target="_blank" title="Prometheus OpenMetrics Stream" style="display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; font-weight:600; padding:4px 10px; border-radius:12px; background:rgba(168,85,247,0.1); border:1px solid rgba(168,85,247,0.3); color:#c084fc; text-decoration:none;"><span style="width:6px; height:6px; border-radius:50%; background:#a855f7; box-shadow:0 0 6px #a855f7;"></span><span>Metrics</span></a>
+        </div>
         <button class="btn btn-secondary" id="btn-quick-cf-mesh" onclick="openCloudflareMeshModal()" title="Direct Cloudflare Mesh & Tunnel Connection" style="display:inline-flex; align-items:center; gap:0.4rem; border-color:rgba(0,240,255,0.4); color:var(--accent-cyan); background:rgba(0,240,255,0.08);">
           <span class="status-indicator online" style="background:#00f0ff; width:8px; height:8px; box-shadow:0 0 8px #00f0ff;"></span>
           <span id="header-cf-mesh-label">CF Mesh</span>
@@ -6180,6 +6185,14 @@
         banner.style.display = 'none';
         document.getElementById('board-backend-status').innerHTML = `<span style="color:var(--status-success);">Healthy (${healthCheck.duration}ms)</span>`;
         document.getElementById('health-timestamp').innerText = 'Synced ' + appState.lastSync.toLocaleTimeString();
+
+        const latVal = document.getElementById('hud-latency-val');
+        if (latVal) latVal.innerText = `${healthCheck.duration}ms`;
+        const treeVal = document.getElementById('hud-tree-val');
+        if (treeVal && appState.machines) {
+          const mCount = Math.max(1, appState.machines.length);
+          treeVal.innerText = `${mCount * 20} Leaves`;
+        }
 
         if (healthCheck.data) {
           if (healthCheck.data.commit_sha) {

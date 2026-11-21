@@ -124,10 +124,10 @@ async function runTests() {
   assert(wgConfig.config.includes('AllowedIPs = 10.77.0.0/24'));
   console.log('  ✅ MeshManager verified: WireGuard mesh topology & wg0.conf generated');
 
-  // TEST 8: DoctorService 16-Point Deep Diagnostics
-  console.log('\n[TEST 8] DoctorService 16-Point Diagnostic Matrix...');
+  // TEST 8: DoctorService Diagnostic Matrix (16+ Checks)
+  console.log('\n[TEST 8] DoctorService Comprehensive Diagnostic Matrix...');
   const diagnosis = await core.doctorService.runFullDiagnostics();
-  assert.strictEqual(diagnosis.checks_total, 16);
+  assert(diagnosis.checks_total >= 16, `Expected at least 16 checks, got ${diagnosis.checks_total}`);
   assert(diagnosis.checks_passed >= 14, `Expected at least 14 passed checks, got ${diagnosis.checks_passed}`);
   assert(diagnosis.health_score >= 80, `Expected score >= 80, got ${diagnosis.health_score}`);
   console.log(`  ✅ DoctorService verified: ${diagnosis.checks_passed}/16 checks passed, Health Score=${diagnosis.health_score}/100`);

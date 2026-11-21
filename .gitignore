@@ -27,4 +27,7 @@ __pycache__/
 # Binary distribution artifacts
 dist/
 
+# Test artifacts
+tests/tmp-domain-test/
+
 

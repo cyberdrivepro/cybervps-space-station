@@ -1008,14 +1008,33 @@ class CyberVPSAgent:
         If local Space Station backend is not responding on 8080, automatically starts
         services/server.js using node so this host becomes an active Space Station backend!
         """
-        try:
-            import urllib.request
-            req = urllib.request.Request("http://127.0.0.1:8080/health")
-            with urllib.request.urlopen(req, timeout=1.0) as resp:
-                if resp.status == 200:
-                    return True
-        except Exception:
-            pass
+        needs_restart = False
+        restart_flag = os.path.join(os.path.expanduser("~"), ".cybervps", "restart.flag")
+        if os.path.exists(restart_flag):
+            try:
+                os.remove(restart_flag)
+            except Exception:
+                pass
+            needs_restart = True
+        else:
+            try:
+                import urllib.request
+                req = urllib.request.Request("http://127.0.0.1:8080/metrics")
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    if resp.status == 200:
+                        return True
+                    else:
+                        needs_restart = True
+            except Exception:
+                needs_restart = True
+
+        if needs_restart:
+            try:
+                if sys.platform == "win32":
+                    subprocess.run(["powershell", "-NoProfile", "-Command", "Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"], capture_output=True, timeout=5)
+                    time.sleep(1.0)
+            except Exception:
+                pass
 
         candidates = [
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "services", "server.js"),

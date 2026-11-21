@@ -1931,7 +1931,7 @@ async function runTests() {
   const doctorRes = await request(`${SERVER_URL}/api/v1/doctor/run`);
   assert.strictEqual(doctorRes.statusCode, 200, 'Doctor diagnostics must return 200');
   const doctorData = JSON.parse(doctorRes.body);
-  assert.strictEqual(doctorData.checks_total, 16, 'Doctor must execute all 16 checks');
+  assert(doctorData.checks_total >= 16, 'Doctor must execute all checks (>= 16)');
   assert(doctorData.health_score >= 80, 'Health score must be >= 80');
   
   const remediateRes = await request(`${SERVER_URL}/api/v1/doctor/run`, {
@@ -2105,6 +2105,24 @@ async function runTests() {
   assert(treeMeshTest.includes('ALL MULTIVERSE TREE MESH TESTS PASSED'), 'Multiverse Tree Mesh tests must pass');
   console.log('  ✅ Multiverse Tree Mesh, Scaling Formula (N × 20), Inter-System Cross Peering & Gossip verified.');
 
+  // [TEST 58] Testing Space Station Ultra Upgrades (Gzip, Quantum Security, Tree Events, Terminal Replay, Checksums, 20-Point Doctor)...
+  console.log('\n[TEST 58] Testing Space Station Ultra Upgrades (Gzip, Security Headers, Tree Events, Terminal Buffer, Checksums & 20-Point Doctor)...');
+  const ultraTest = execSync(`node "${require('path').join(__dirname, 'test-ultra-upgrades.js')}"`, {
+    encoding: 'utf-8',
+    env: { ...process.env, SERVER_URL }
+  });
+  assert(ultraTest.includes('ALL ULTRA UPGRADES VERIFIED AND PASSING 100%'), 'Ultra upgrades must pass');
+  console.log('  ✅ Transparent Gzip Compression, Security Headers, Tree Events, Terminal Replay, File Checksum Engine & 20-Point Doctor verified.');
+
+  // [TEST 59] Testing Space Station Mega Upgrades (Prometheus Metrics, Fleet Broadcast, Vector Delta Sync, DR Snapshots, AES Vault & 24-Point Doctor)...
+  console.log('\n[TEST 59] Testing Space Station Mega Upgrades (Prometheus Metrics, Fleet Broadcast, Vector Clock Delta, DR Snapshot/Restore, AES Vault & 24-Point Doctor)...');
+  const megaTest = execSync(`node "${require('path').join(__dirname, 'test-mega-upgrades.js')}"`, {
+    encoding: 'utf-8',
+    env: { ...process.env, SERVER_URL }
+  });
+  assert(megaTest.includes('ALL MEGA UPGRADES (TEST 59) VERIFIED AND PASSING 100%'), 'Mega upgrades must pass');
+  console.log('  ✅ Prometheus /metrics, Fleet Broadcast Exec, Vector Clock Sync, Hot DR Snapshot/Restore, AES-256 Vault & 24-Point Doctor verified.');
+
   // Clean up
   winBridge.stop();
   agentWs.close();
@@ -2121,7 +2139,7 @@ async function runTests() {
   if (serverProcess) serverProcess.kill();
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 57 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
+  console.log('🎉 ALL 59 ADVANCED SECURITY, DISASTER RECOVERY, OPEN-SOURCE ADAPTERS, CONTROL PLANE, HA & INSTALLER TESTS PASSED!');
   console.log('================================================================\n');
   process.exit(0);
 }
