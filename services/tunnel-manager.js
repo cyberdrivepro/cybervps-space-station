@@ -440,6 +440,13 @@ class TunnelManager {
    */
   persistPublicTunnelUrl(publicUrl, provider = 'cloudflare') {
     try {
+      // Do not overwrite an active Cloudflare tunnel with localhost
+      if (provider === 'localhost') {
+        const cached = this.loadCachedPublicTunnelUrl();
+        if (cached && cached.public_url && cached.public_url.includes('trycloudflare.com')) {
+          return;
+        }
+      }
       const payload = {
         public_url: publicUrl,
         provider: provider,

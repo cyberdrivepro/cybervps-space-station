@@ -988,8 +988,8 @@
       </div>
       <div id="status-endpoint" style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); word-break:break-all;"></div>
       <div style="margin-top:0.6rem; padding-top:0.45rem; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; font-size:0.68rem; color:var(--text-muted);">
-        <span id="footer-build-ver">v2.1.0 Stable</span>
-        <span id="footer-build-sha" style="font-family:var(--font-mono); color:var(--accent-cyan); font-weight:600; cursor:pointer;" title="Deployed Git Commit" onclick="navigate('settings')">cc24d44</span>
+        <span id="footer-build-ver">v2.2.0 Stable</span>
+        <span id="footer-build-sha" style="font-family:var(--font-mono); color:var(--accent-cyan); font-weight:600; cursor:pointer;" title="Deployed Git Commit" onclick="navigate('settings')">43579ce</span>
       </div>
     </div>
   </aside>
@@ -1012,7 +1012,7 @@
         <div id="ultra-radar-hud" style="display:inline-flex; align-items:center; gap:0.5rem; margin-right:0.25rem;">
           <span id="hud-latency-pill" title="Control Plane Ping Latency" style="display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; font-weight:600; padding:4px 10px; border-radius:12px; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); color:var(--status-online);"><span style="width:6px; height:6px; border-radius:50%; background:#10b981; box-shadow:0 0 6px #10b981;"></span><span id="hud-latency-val">1ms</span></span>
           <span id="hud-tree-pill" title="Multiverse Tree Mesh Leaves (N × 20)" style="display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; font-weight:600; padding:4px 10px; border-radius:12px; background:rgba(0,240,255,0.08); border:1px solid rgba(0,240,255,0.3); color:var(--accent-cyan);"><span style="font-size:0.8rem;">🌿</span><span id="hud-tree-val">20 Leaves</span></span>
-          <a id="hud-metrics-pill" href="/metrics" target="_blank" title="Prometheus OpenMetrics Stream" style="display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; font-weight:600; padding:4px 10px; border-radius:12px; background:rgba(168,85,247,0.1); border:1px solid rgba(168,85,247,0.3); color:#c084fc; text-decoration:none;"><span style="width:6px; height:6px; border-radius:50%; background:#a855f7; box-shadow:0 0 6px #a855f7;"></span><span>Metrics</span></a>
+          <a id="hud-metrics-pill" href="#" onclick="openMetricsStream(event)" title="Prometheus OpenMetrics Stream" style="display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; font-weight:600; padding:4px 10px; border-radius:12px; background:rgba(168,85,247,0.1); border:1px solid rgba(168,85,247,0.3); color:#c084fc; text-decoration:none;"><span style="width:6px; height:6px; border-radius:50%; background:#a855f7; box-shadow:0 0 6px #a855f7;"></span><span>Metrics</span></a>
         </div>
         <button class="btn btn-secondary" id="btn-quick-cf-mesh" onclick="openCloudflareMeshModal()" title="Direct Cloudflare Mesh & Tunnel Connection" style="display:inline-flex; align-items:center; gap:0.4rem; border-color:rgba(0,240,255,0.4); color:var(--accent-cyan); background:rgba(0,240,255,0.08);">
           <span class="status-indicator online" style="background:#00f0ff; width:8px; height:8px; box-shadow:0 0 8px #00f0ff;"></span>
@@ -1039,12 +1039,15 @@
 
     <div class="content-body">
       <!-- Global Connection Notice when backend offline -->
-      <div id="connection-banner" class="connection-banner warning" style="display:none;">
-        <div>
+      <div id="connection-banner" class="connection-banner warning" style="display:none; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+        <div style="flex:1; min-width:280px;">
           <strong>Control Plane Backend Offline</strong>
-          <div style="font-size:0.75rem; margin-top:2px;">Unable to reach control plane API. Displaying truthful empty states. Run <code style="color:var(--text-primary);">cybervps start</code> or configure your server in Settings.</div>
+          <div style="font-size:0.75rem; margin-top:2px;">Unable to reach control plane API. Displaying truthful empty states. Run <code style="color:var(--text-primary);">cybervps start</code> or auto-connect below.</div>
         </div>
-        <button class="btn btn-secondary" onclick="navigate('settings')">Configure Server</button>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <button class="btn btn-primary" id="btn-reconnect-live-tunnel" onclick="autoConnectLiveTunnel()" style="display:inline-flex; align-items:center; gap:4px; font-weight:700;">⚡ Connect Live Tunnel</button>
+          <button class="btn btn-secondary" onclick="navigate('settings')">Configure Server</button>
+        </div>
       </div>
 
       <!-- Hosted Loopback Warning & One-Click Auto-Repair Banner -->
@@ -3843,22 +3846,22 @@
             <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; margin-bottom:1rem;">
               <div style="background:var(--bg-subtle); padding:0.9rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
                 <div style="font-size:0.72rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Software Edition</div>
-                <div id="meta-edition" style="font-size:0.95rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;">v2.1.0 (Enterprise)</div>
+                <div id="meta-edition" style="font-size:0.95rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;">v2.2.0 (Enterprise)</div>
                 <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">Universal Mesh & Bridge</div>
               </div>
               <div style="background:var(--bg-subtle); padding:0.9rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
                 <div style="font-size:0.72rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Git Commit SHA</div>
-                <div id="meta-commit-sha" style="font-size:0.95rem; font-weight:700; font-family:var(--font-mono); color:var(--accent-cyan); margin-top:0.25rem;">cc24d44</div>
+                <div id="meta-commit-sha" style="font-size:0.95rem; font-weight:700; font-family:var(--font-mono); color:var(--accent-cyan); margin-top:0.25rem;">43579ce</div>
                 <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">Verified GitHub Release</div>
               </div>
               <div style="background:var(--bg-subtle); padding:0.9rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
                 <div style="font-size:0.72rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Protocol Version</div>
-                <div id="meta-protocol-ver" style="font-size:0.95rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;">v2.1.0</div>
+                <div id="meta-protocol-ver" style="font-size:0.95rem; font-weight:700; color:var(--text-primary); margin-top:0.25rem;">v2.2.0</div>
                 <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">ConPTY + Remote Apps + HA</div>
               </div>
               <div style="background:var(--bg-subtle); padding:0.9rem; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
                 <div style="font-size:0.72rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Build Timestamp</div>
-                <div id="meta-build-time" style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-top:0.25rem;">2026-10-15 06:15 UTC</div>
+                <div id="meta-build-time" style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-top:0.25rem;">2026-11-21 06:12 UTC</div>
                 <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.2rem;">Automated CI/CD Pipeline</div>
               </div>
             </div>
@@ -6159,6 +6162,37 @@
         checkLoopbackBanner();
 
         if (!healthCheck.ok) {
+          // Autonomous Registry Recovery: If current backend is unreachable, auto-probe the active registry
+          if (!appState._attemptedTunnelRecovery) {
+            appState._attemptedTunnelRecovery = true;
+            try {
+              const regUrls = [
+                'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/data/public-tunnel-url.json',
+                './data/public-tunnel-url.json'
+              ];
+              for (const rUrl of regUrls) {
+                try {
+                  const regResp = await fetch(rUrl + '?_t=' + Date.now());
+                  if (regResp.ok) {
+                    const regData = await regResp.json();
+                    if (regData && regData.public_url && regData.public_url.startsWith('https://') && regData.public_url !== appConfig.serverUrl) {
+                      const probe = await fetch(regData.public_url + '/health', { mode: 'cors' }).catch(() => null);
+                      if (probe && probe.ok) {
+                        console.log('[*] Autonomous failover to live Cloudflare tunnel:', regData.public_url);
+                        appConfig.serverUrl = regData.public_url;
+                        localStorage.setItem('cvps_server_url', regData.public_url);
+                        localStorage.setItem('cvps_active_cf_link', regData.public_url);
+                        appState._attemptedTunnelRecovery = false;
+                        appState._syncInProgress = false;
+                        return syncData(manual);
+                      }
+                    }
+                  }
+                } catch (_) {}
+              }
+            } catch (_) {}
+          }
+
           appState.isOnline = false;
           appState.latencyMs = null;
           statusDot.className = 'pulse-dot offline';
@@ -8211,6 +8245,45 @@
     // 20-AGENT SWARM MESH & DIRECT CLOUDFLARE CONTROLLER
     // =========================================================================
     let _activeSwarmPublicLink = null;
+
+    function openMetricsStream(e) {
+      if (e && e.preventDefault) e.preventDefault();
+      const base = getActiveBaseUrl();
+      window.open(base + '/metrics', '_blank');
+    }
+
+    async function autoConnectLiveTunnel() {
+      const btn = document.getElementById('btn-reconnect-live-tunnel');
+      if (btn) btn.innerText = '⚡ Connecting...';
+      showToast('Discovering live Cloudflare tunnel from fleet registry...', 'info');
+
+      const regUrls = [
+        'https://raw.githubusercontent.com/cyberdrivepro/cybervps-space-station/main/data/public-tunnel-url.json',
+        './data/public-tunnel-url.json'
+      ];
+
+      for (const rUrl of regUrls) {
+        try {
+          const resp = await fetch(rUrl + '?_t=' + Date.now());
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data && data.public_url && data.public_url.startsWith('https://')) {
+              appConfig.serverUrl = data.public_url;
+              localStorage.setItem('cvps_server_url', data.public_url);
+              localStorage.setItem('cvps_active_cf_link', data.public_url);
+              showToast(`Connected to live tunnel: ${data.public_url}`, 'success');
+              if (btn) btn.innerText = '⚡ Connected!';
+              syncData(true);
+              return;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (btn) btn.innerText = '⚡ Connect Live Tunnel';
+      showToast('Could not reach automated registry. Opening CF Mesh manager...', 'warning');
+      openCloudflareMeshModal();
+    }
 
     function openCloudflareMeshModal() {
       const modal = document.getElementById('modal-cloudflare-mesh');
@@ -20205,7 +20278,7 @@ class TerminalView {
 
         window.addEventListener('resize', () => this.fit());
 
-        this.term.writeln('\x1b[90m[*] CyberVPS Space Station Ultra Web Terminal (v2.1.0)\x1b[0m');
+        this.term.writeln('\x1b[90m[*] CyberVPS Space Station Ultra Web Terminal (v2.2.0)\x1b[0m');
         this.term.writeln('\x1b[90m[*] Select target host and click "⚡ Connect Shell" to establish live session.\x1b[0m\r\n');
         setTimeout(() => this.fit(), 50);
       }
