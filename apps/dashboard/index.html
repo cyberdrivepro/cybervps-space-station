@@ -5972,6 +5972,24 @@
       localStorage.setItem('cvps_pairing_key', paramPair.trim());
     }
 
+    // Automatically purge dead/stale cloudflare tunnels and dead platforms from previous sessions
+    const staleTunnels = [
+      'railway.app',
+      'harrison-try-pete-equal.trycloudflare.com',
+      'golf-sterling-possibility-metal.trycloudflare.com',
+      'sentences-geological-respondent-last.trycloudflare.com'
+    ];
+    for (const stale of staleTunnels) {
+      try {
+        const cur = localStorage.getItem('cvps_server_url') || '';
+        const curCf = localStorage.getItem('cvps_active_cf_link') || '';
+        const curCp = localStorage.getItem('cvps_control_plane_url') || '';
+        if (cur.includes(stale)) localStorage.removeItem('cvps_server_url');
+        if (curCf.includes(stale)) localStorage.removeItem('cvps_active_cf_link');
+        if (curCp.includes(stale)) localStorage.removeItem('cvps_control_plane_url');
+      } catch (_) {}
+    }
+
     let savedUrl = localStorage.getItem('cvps_server_url');
     if (savedUrl) {
       savedUrl = normalizeServerUrl(savedUrl);
@@ -19280,8 +19298,15 @@ class StationState {
       (window.location.hostname.endsWith('github.io') || window.location.hostname.endsWith('netlify.app'));
 
     let sClean = saved;
-    if (sClean && sClean.includes('railway.app')) {
-      sClean = null;
+    const staleTunnels = ['railway.app', 'harrison-try-pete-equal.trycloudflare.com', 'golf-sterling-possibility-metal.trycloudflare.com', 'sentences-geological-respondent-last.trycloudflare.com'];
+    for (const stale of staleTunnels) {
+      if (sClean && sClean.includes(stale)) sClean = null;
+      try {
+        const curCf = localStorage.getItem('cvps_active_cf_link') || '';
+        if (curCf.includes(stale)) localStorage.removeItem('cvps_active_cf_link');
+      } catch (_) {}
+    }
+    if (!sClean) {
       try {
         localStorage.removeItem('cvps_control_plane_url');
         localStorage.removeItem('cvps_server_url');
