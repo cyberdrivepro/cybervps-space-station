@@ -937,6 +937,44 @@
         height: 480px;
       }
     }
+
+    /* Virtual QWERTY Keyboard & Key Ticker Styling */
+    .vkey {
+      background: rgba(30, 41, 59, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 4px;
+      color: #e2e8f0;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.35rem 0.45rem;
+      min-width: 28px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.1s ease;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+    .vkey:hover {
+      background: rgba(6, 182, 212, 0.2);
+      border-color: rgba(6, 182, 212, 0.5);
+      color: #00f3ff;
+      transform: translateY(-1px);
+    }
+    .vkey.vkey-active, .vkey:active {
+      background: #00f3ff !important;
+      color: #05070c !important;
+      border-color: #00f3ff !important;
+      box-shadow: 0 0 12px rgba(0, 243, 255, 0.9) !important;
+      transform: translateY(1px);
+    }
+    .vkey-wide { min-width: 52px; }
+    .vkey-wider { min-width: 68px; }
+    .vkey-space { flex: 1; min-width: 140px; }
+    .vkey-fn { background: rgba(15, 23, 42, 0.9); font-size: 0.65rem; color: #94a3b8; }
   </style>
 </head>
 <body>
@@ -2347,11 +2385,19 @@
                     🎮 Interactive: ON
                   </button>
 
+                  <!-- Quality Presets -->
+                  <select id="desktop-quality-select" class="form-control" onchange="onDesktopQualityChange()" style="font-size:0.75rem; padding:0.3rem 0.55rem; height:auto; background:var(--bg-base); max-width:145px;" title="Stream Resolution & Encoding Quality">
+                    <option value="100" selected>4K Ultra HD (100%)</option>
+                    <option value="95">2K QHD (95%)</option>
+                    <option value="85">1080p FHD (85%)</option>
+                    <option value="70">720p Eco (70%)</option>
+                  </select>
+
                   <!-- FPS Presets -->
                   <select id="desktop-fps-select" class="form-control" onchange="onDesktopFpsChange()" style="font-size:0.75rem; padding:0.3rem 0.55rem; height:auto; background:var(--bg-base); max-width:135px;">
+                    <option value="60" selected>60 FPS (Ultra HD)</option>
+                    <option value="30">30 FPS (Fluid HD)</option>
                     <option value="15">15 FPS (Eco)</option>
-                    <option value="30" selected>30 FPS (Fluid HD)</option>
-                    <option value="60">60 FPS (Ultra HD)</option>
                   </select>
 
                   <!-- Scaling Mode -->
@@ -2417,6 +2463,10 @@
                     <span style="color:var(--text-muted);">Latency (Ping):</span>
                     <span id="desktop-ws-ping" style="color:#a78bfa; font-weight:600; margin-left:0.25rem;">-- ms</span>
                   </div>
+                  <div>
+                    <span style="color:var(--text-muted);">Cursor:</span>
+                    <span id="desktop-ws-cursor-pos" style="color:#00f3ff; font-weight:600; margin-left:0.25rem;">(---, ---)</span>
+                  </div>
                 </div>
 
                 <div style="display:flex; align-items:center; gap:0.75rem;">
@@ -2475,6 +2525,239 @@
                 <!-- Canvas Surface -->
                 <canvas id="desktop-workstation-canvas" style="display:none; max-width:100%; max-height:100%; object-fit:contain; box-shadow:0 12px 40px rgba(0,0,0,0.8); cursor:default;"></canvas>
 
+                <!-- Live Neon Hardware Mouse Cursor Follower Overlay -->
+                <div id="desktop-live-cursor" style="display:none; position:absolute; top:0; left:0; pointer-events:none; z-index:50; transform:translate(0, 0); will-change:transform; transition:opacity 0.15s ease;">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style="filter:drop-shadow(0 2px 8px rgba(0,243,255,0.7)); display:block;">
+                    <path d="M4 3L17 14.5L11 15L9 20.5L6.5 19.5L8.5 14L4 10.5V3Z" fill="#00f3ff" stroke="#05070c" stroke-width="1.5" stroke-linejoin="round"/>
+                  </svg>
+                  <div id="desktop-live-cursor-label" style="position:absolute; left:18px; top:12px; background:rgba(5,7,12,0.85); color:#00f3ff; font-family:var(--font-mono); font-size:0.62rem; padding:1px 4px; border-radius:3px; border:1px solid rgba(0,243,255,0.4); white-space:nowrap;">0, 0</div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- CARD 2: LIVE KEYSTROKE TELEMETRY & INTERACTIVE VIRTUAL QWERTY KEYBOARD -->
+            <div id="desktop-live-keyboard-card" class="card" style="margin-bottom:1.5rem; border:1px solid rgba(139,92,246,0.3); background:var(--bg-surface); box-shadow:0 12px 36px rgba(0,0,0,0.4);">
+              <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; background:linear-gradient(135deg, rgba(139,92,246,0.08), rgba(6,182,212,0.04)); border-bottom:1px solid var(--border-subtle); padding:0.85rem 1.25rem;">
+                <div style="display:flex; align-items:center; gap:0.65rem;">
+                  <div style="width:10px; height:10px; border-radius:50%; background:#a78bfa;" id="desktop-keyboard-status-dot"></div>
+                  <div>
+                    <div style="font-weight:700; font-size:0.95rem; color:var(--text-primary); display:flex; align-items:center; gap:0.5rem;">
+                      <span>Live Keyboard Telemetry & Virtual QWERTY Controller</span>
+                      <span class="badge badge-purple" style="font-size:0.68rem; padding:0.15rem 0.5rem;">REAL-TIME KEYLOGGER & INJECTOR</span>
+                      <span id="desktop-keyboard-active-badge" class="badge badge-subtle" style="font-size:0.68rem; padding:0.15rem 0.5rem;">Listening</span>
+                    </div>
+                    <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">
+                      Displays real-time keystrokes forwarded to host Session 1, modifier LEDs, and clickable on-screen hardware keys
+                    </div>
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                  <button class="btn btn-secondary btn-sm" onclick="clearKeystrokeTicker()" title="Clear stream history" style="font-size:0.74rem; padding:0.25rem 0.6rem;">
+                    🧹 Clear Ticker
+                  </button>
+                  <button id="btn-toggle-virtual-keys" class="btn btn-secondary btn-sm" onclick="toggleVirtualKeyboardLayout()" title="Show/Hide On-Screen Keyboard" style="font-size:0.74rem; padding:0.25rem 0.6rem; color:var(--accent-cyan); border-color:rgba(6,182,212,0.4);">
+                    ⌨️ Show Virtual Keyboard
+                  </button>
+                </div>
+              </div>
+
+              <div class="card-body" style="padding:1rem 1.25rem; background:#070b14;">
+                <!-- Modifier State Matrix HUD -->
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; margin-bottom:0.85rem; padding:0.5rem 0.85rem; background:rgba(15,23,42,0.7); border:1px solid var(--border-subtle); border-radius:var(--radius-sm);">
+                  <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.75rem; font-weight:600; color:var(--text-secondary);">
+                    <span>Modifier Matrix:</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; font-family:var(--font-mono); font-size:0.7rem;">
+                    <div id="mod-ctrl" class="badge badge-subtle" style="padding:0.25rem 0.6rem; transition:all 0.15s ease;">CTRL: OFF</div>
+                    <div id="mod-alt" class="badge badge-subtle" style="padding:0.25rem 0.6rem; transition:all 0.15s ease;">ALT: OFF</div>
+                    <div id="mod-shift" class="badge badge-subtle" style="padding:0.25rem 0.6rem; transition:all 0.15s ease;">SHIFT: OFF</div>
+                    <div id="mod-win" class="badge badge-subtle" style="padding:0.25rem 0.6rem; transition:all 0.15s ease;">WIN: OFF</div>
+                    <div id="mod-caps" class="badge badge-subtle" style="padding:0.25rem 0.6rem; transition:all 0.15s ease;">CAPS: OFF</div>
+                  </div>
+                </div>
+
+                <!-- Live Keystroke Flow Stream Ticker -->
+                <div style="margin-bottom:0.85rem;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.35rem; font-size:0.74rem; color:var(--text-muted);">
+                    <span>Live Keystrokes Flow (Latest 30 typed / injected):</span>
+                    <span id="keystroke-ticker-count" style="font-family:var(--font-mono); color:var(--accent-cyan);">0 events</span>
+                  </div>
+                  <div id="desktop-keystroke-ticker" style="min-height:52px; max-height:85px; overflow-x:auto; overflow-y:hidden; white-space:nowrap; display:flex; align-items:center; gap:0.45rem; padding:0.45rem 0.65rem; background:rgba(10,14,24,0.9); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); font-family:var(--font-mono); font-size:0.74rem;">
+                    <span style="color:var(--text-muted); font-style:italic;" id="keystroke-empty-hint">No keystrokes recorded yet. Type inside workstation or click virtual keys below to forward.</span>
+                  </div>
+                </div>
+
+                <!-- Interactive Virtual QWERTY Keyboard Layout -->
+                <div id="desktop-virtual-keyboard-container" style="display:none; background:rgba(10,14,24,0.95); border:1px solid rgba(139,92,246,0.3); border-radius:var(--radius-sm); padding:0.75rem; margin-top:0.5rem; user-select:none;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                    <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; font-weight:700; letter-spacing:0.5px;">Interactive Physical Key Injector (Mouse / Touch Clickable)</span>
+                    <span style="font-size:0.68rem; color:#a78bfa;">Simulates Windows Hardware Scan Codes</span>
+                  </div>
+                  <div id="desktop-vkey-grid" style="display:flex; flex-direction:column; gap:0.3rem;">
+                    <!-- Row 0: Function Keys -->
+                    <div style="display:flex; gap:0.25rem; flex-wrap:nowrap; overflow-x:auto;">
+                      <button type="button" class="vkey vkey-fn" id="vk-Escape" onclick="injectVirtualKey('Escape', 'Escape')">Esc</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F1" onclick="injectVirtualKey('F1', 'F1')">F1</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F2" onclick="injectVirtualKey('F2', 'F2')">F2</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F3" onclick="injectVirtualKey('F3', 'F3')">F3</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F4" onclick="injectVirtualKey('F4', 'F4')">F4</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F5" onclick="injectVirtualKey('F5', 'F5')">F5</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F6" onclick="injectVirtualKey('F6', 'F6')">F6</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F7" onclick="injectVirtualKey('F7', 'F7')">F7</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F8" onclick="injectVirtualKey('F8', 'F8')">F8</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F9" onclick="injectVirtualKey('F9', 'F9')">F9</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F10" onclick="injectVirtualKey('F10', 'F10')">F10</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F11" onclick="injectVirtualKey('F11', 'F11')">F11</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-F12" onclick="injectVirtualKey('F12', 'F12')">F12</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-PrintScreen" onclick="injectVirtualKey('PrintScreen', 'PrintScreen')">PrtSc</button>
+                      <button type="button" class="vkey vkey-fn" id="vk-Delete" onclick="injectVirtualKey('Delete', 'Delete')">Del</button>
+                    </div>
+
+                    <!-- Row 1: Numbers -->
+                    <div style="display:flex; gap:0.25rem; flex-wrap:nowrap; overflow-x:auto;">
+                      <button type="button" class="vkey" id="vk-Backquote" onclick="injectVirtualKey('`', 'Backquote')">`</button>
+                      <button type="button" class="vkey" id="vk-Digit1" onclick="injectVirtualKey('1', 'Digit1')">1</button>
+                      <button type="button" class="vkey" id="vk-Digit2" onclick="injectVirtualKey('2', 'Digit2')">2</button>
+                      <button type="button" class="vkey" id="vk-Digit3" onclick="injectVirtualKey('3', 'Digit3')">3</button>
+                      <button type="button" class="vkey" id="vk-Digit4" onclick="injectVirtualKey('4', 'Digit4')">4</button>
+                      <button type="button" class="vkey" id="vk-Digit5" onclick="injectVirtualKey('5', 'Digit5')">5</button>
+                      <button type="button" class="vkey" id="vk-Digit6" onclick="injectVirtualKey('6', 'Digit6')">6</button>
+                      <button type="button" class="vkey" id="vk-Digit7" onclick="injectVirtualKey('7', 'Digit7')">7</button>
+                      <button type="button" class="vkey" id="vk-Digit8" onclick="injectVirtualKey('8', 'Digit8')">8</button>
+                      <button type="button" class="vkey" id="vk-Digit9" onclick="injectVirtualKey('9', 'Digit9')">9</button>
+                      <button type="button" class="vkey" id="vk-Digit0" onclick="injectVirtualKey('0', 'Digit0')">0</button>
+                      <button type="button" class="vkey" id="vk-Minus" onclick="injectVirtualKey('-', 'Minus')">-</button>
+                      <button type="button" class="vkey" id="vk-Equal" onclick="injectVirtualKey('=', 'Equal')">=</button>
+                      <button type="button" class="vkey vkey-wide" id="vk-Backspace" onclick="injectVirtualKey('Backspace', 'Backspace')">⌫ Back</button>
+                    </div>
+
+                    <!-- Row 2: QWERTY -->
+                    <div style="display:flex; gap:0.25rem; flex-wrap:nowrap; overflow-x:auto;">
+                      <button type="button" class="vkey vkey-wide" id="vk-Tab" onclick="injectVirtualKey('Tab', 'Tab')">Tab ⇥</button>
+                      <button type="button" class="vkey" id="vk-KeyQ" onclick="injectVirtualKey('q', 'KeyQ')">Q</button>
+                      <button type="button" class="vkey" id="vk-KeyW" onclick="injectVirtualKey('w', 'KeyW')">W</button>
+                      <button type="button" class="vkey" id="vk-KeyE" onclick="injectVirtualKey('e', 'KeyE')">E</button>
+                      <button type="button" class="vkey" id="vk-KeyR" onclick="injectVirtualKey('r', 'KeyR')">R</button>
+                      <button type="button" class="vkey" id="vk-KeyT" onclick="injectVirtualKey('t', 'KeyT')">T</button>
+                      <button type="button" class="vkey" id="vk-KeyY" onclick="injectVirtualKey('y', 'KeyY')">Y</button>
+                      <button type="button" class="vkey" id="vk-KeyU" onclick="injectVirtualKey('u', 'KeyU')">U</button>
+                      <button type="button" class="vkey" id="vk-KeyI" onclick="injectVirtualKey('i', 'KeyI')">I</button>
+                      <button type="button" class="vkey" id="vk-KeyO" onclick="injectVirtualKey('o', 'KeyO')">O</button>
+                      <button type="button" class="vkey" id="vk-KeyP" onclick="injectVirtualKey('p', 'KeyP')">P</button>
+                      <button type="button" class="vkey" id="vk-BracketLeft" onclick="injectVirtualKey('[', 'BracketLeft')">[</button>
+                      <button type="button" class="vkey" id="vk-BracketRight" onclick="injectVirtualKey(']', 'BracketRight')">]</button>
+                      <button type="button" class="vkey" id="vk-Backslash" onclick="injectVirtualKey('\\', 'Backslash')">\</button>
+                    </div>
+
+                    <!-- Row 3: ASDF -->
+                    <div style="display:flex; gap:0.25rem; flex-wrap:nowrap; overflow-x:auto;">
+                      <button type="button" class="vkey vkey-wide" id="vk-CapsLock" onclick="injectVirtualKey('CapsLock', 'CapsLock')">Caps ⇪</button>
+                      <button type="button" class="vkey" id="vk-KeyA" onclick="injectVirtualKey('a', 'KeyA')">A</button>
+                      <button type="button" class="vkey" id="vk-KeyS" onclick="injectVirtualKey('s', 'KeyS')">S</button>
+                      <button type="button" class="vkey" id="vk-KeyD" onclick="injectVirtualKey('d', 'KeyD')">D</button>
+                      <button type="button" class="vkey" id="vk-KeyF" onclick="injectVirtualKey('f', 'KeyF')">F</button>
+                      <button type="button" class="vkey" id="vk-KeyG" onclick="injectVirtualKey('g', 'KeyG')">G</button>
+                      <button type="button" class="vkey" id="vk-KeyH" onclick="injectVirtualKey('h', 'KeyH')">H</button>
+                      <button type="button" class="vkey" id="vk-KeyJ" onclick="injectVirtualKey('j', 'KeyJ')">J</button>
+                      <button type="button" class="vkey" id="vk-KeyK" onclick="injectVirtualKey('k', 'KeyK')">K</button>
+                      <button type="button" class="vkey" id="vk-KeyL" onclick="injectVirtualKey('l', 'KeyL')">L</button>
+                      <button type="button" class="vkey" id="vk-Semicolon" onclick="injectVirtualKey(';', 'Semicolon')">;</button>
+                      <button type="button" class="vkey" id="vk-Quote" onclick="injectVirtualKey('\'', 'Quote')">'</button>
+                      <button type="button" class="vkey vkey-wider" id="vk-Enter" onclick="injectVirtualKey('Enter', 'Enter')" style="color:#22c55e;">Enter ↵</button>
+                    </div>
+
+                    <!-- Row 4: ZXCV -->
+                    <div style="display:flex; gap:0.25rem; flex-wrap:nowrap; overflow-x:auto;">
+                      <button type="button" class="vkey vkey-wider" id="vk-ShiftLeft" onclick="injectVirtualKey('Shift', 'ShiftLeft')">⇧ Shift</button>
+                      <button type="button" class="vkey" id="vk-KeyZ" onclick="injectVirtualKey('z', 'KeyZ')">Z</button>
+                      <button type="button" class="vkey" id="vk-KeyX" onclick="injectVirtualKey('x', 'KeyX')">X</button>
+                      <button type="button" class="vkey" id="vk-KeyC" onclick="injectVirtualKey('c', 'KeyC')">C</button>
+                      <button type="button" class="vkey" id="vk-KeyV" onclick="injectVirtualKey('v', 'KeyV')">V</button>
+                      <button type="button" class="vkey" id="vk-KeyB" onclick="injectVirtualKey('b', 'KeyB')">B</button>
+                      <button type="button" class="vkey" id="vk-KeyN" onclick="injectVirtualKey('n', 'KeyN')">N</button>
+                      <button type="button" class="vkey" id="vk-KeyM" onclick="injectVirtualKey('m', 'KeyM')">M</button>
+                      <button type="button" class="vkey" id="vk-Comma" onclick="injectVirtualKey(',', 'Comma')">,</button>
+                      <button type="button" class="vkey" id="vk-Period" onclick="injectVirtualKey('.', 'Period')">.</button>
+                      <button type="button" class="vkey" id="vk-Slash" onclick="injectVirtualKey('/', 'Slash')">/</button>
+                      <button type="button" class="vkey vkey-wider" id="vk-ShiftRight" onclick="injectVirtualKey('Shift', 'ShiftRight')">⇧ Shift</button>
+                      <button type="button" class="vkey" id="vk-ArrowUp" onclick="injectVirtualKey('ArrowUp', 'ArrowUp')">↑</button>
+                    </div>
+
+                    <!-- Row 5: Modifiers & Space -->
+                    <div style="display:flex; gap:0.25rem; flex-wrap:nowrap; overflow-x:auto;">
+                      <button type="button" class="vkey vkey-wide" id="vk-ControlLeft" onclick="injectVirtualKey('Control', 'ControlLeft')">Ctrl</button>
+                      <button type="button" class="vkey" id="vk-MetaLeft" onclick="injectVirtualKey('Meta', 'MetaLeft')">⊞ Win</button>
+                      <button type="button" class="vkey" id="vk-AltLeft" onclick="injectVirtualKey('Alt', 'AltLeft')">Alt</button>
+                      <button type="button" class="vkey vkey-space" id="vk-Space" onclick="injectVirtualKey(' ', 'Space')">——— Space ———</button>
+                      <button type="button" class="vkey" id="vk-AltRight" onclick="injectVirtualKey('Alt', 'AltRight')">Alt</button>
+                      <button type="button" class="vkey vkey-wide" id="vk-ControlRight" onclick="injectVirtualKey('Control', 'ControlRight')">Ctrl</button>
+                      <button type="button" class="vkey" id="vk-ArrowLeft" onclick="injectVirtualKey('ArrowLeft', 'ArrowLeft')">←</button>
+                      <button type="button" class="vkey" id="vk-ArrowDown" onclick="injectVirtualKey('ArrowDown', 'ArrowDown')">↓</button>
+                      <button type="button" class="vkey" id="vk-ArrowRight" onclick="injectVirtualKey('ArrowRight', 'ArrowRight')">→</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- CARD 3: LIVE BIDIRECTIONAL REMOTE CLIPBOARD WORKSTATION -->
+            <div id="desktop-live-clipboard-card" class="card" style="margin-bottom:1.5rem; border:1px solid rgba(34,197,94,0.3); background:var(--bg-surface); box-shadow:0 12px 36px rgba(0,0,0,0.4);">
+              <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; background:linear-gradient(135deg, rgba(34,197,94,0.08), rgba(6,182,212,0.04)); border-bottom:1px solid var(--border-subtle); padding:0.85rem 1.25rem;">
+                <div style="display:flex; align-items:center; gap:0.65rem;">
+                  <div style="width:10px; height:10px; border-radius:50%; background:#22c55e;" id="desktop-clipboard-indicator"></div>
+                  <div>
+                    <div style="font-weight:700; font-size:0.95rem; color:var(--text-primary); display:flex; align-items:center; gap:0.5rem;">
+                      <span>Live Bidirectional Remote Clipboard Workstation</span>
+                      <span class="badge badge-success" style="font-size:0.68rem; padding:0.15rem 0.5rem;">TWO-WAY SYNC</span>
+                      <span class="badge badge-cyan" style="font-size:0.68rem; padding:0.15rem 0.5rem;">64-BIT MEMORY BUFFER</span>
+                    </div>
+                    <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">
+                      Direct memory synchronization between local browser clipboard and host Windows CF_UNICODETEXT / Linux clipboard
+                    </div>
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.65rem; flex-wrap:wrap;">
+                  <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.75rem; color:var(--text-secondary); cursor:pointer; margin:0;">
+                    <input type="checkbox" id="desktop-clipboard-autosync-toggle" onchange="toggleClipboardAutoSync(this.checked)" style="accent-color:var(--status-success);">
+                    <span>Auto-Sync (2s)</span>
+                  </label>
+                  <button class="btn btn-secondary btn-sm" onclick="pullRemoteClipboardLive()" title="Query remote host clipboard text" style="font-size:0.75rem; padding:0.25rem 0.65rem; color:var(--accent-cyan); border-color:rgba(6,182,212,0.4);">
+                    📥 Pull from Host
+                  </button>
+                  <button class="btn btn-secondary btn-sm" onclick="pushRemoteClipboardLive()" title="Send editor text into remote host OS clipboard" style="font-size:0.75rem; padding:0.25rem 0.65rem; color:#22c55e; border-color:rgba(34,197,94,0.4);">
+                    📤 Push to Host
+                  </button>
+                  <button class="btn btn-primary btn-sm" onclick="pasteClipboardToRemoteSession()" title="Push text to remote clipboard and immediately inject Ctrl+V paste into active application" style="font-size:0.75rem; padding:0.25rem 0.85rem; font-weight:600;">
+                    📋 Paste to Remote (Ctrl+V)
+                  </button>
+                </div>
+              </div>
+
+              <div class="card-body" style="padding:1rem 1.25rem; background:#070b14;">
+                <div style="margin-bottom:0.75rem;">
+                  <textarea id="desktop-live-clipboard-textarea" class="form-control" rows="4" placeholder="Remote clipboard buffer empty. Type text to push, or click 'Pull from Host' to read the active remote clipboard..." style="width:100%; font-family:var(--font-mono); font-size:0.8rem; background:rgba(10,14,24,0.9); border:1px solid var(--border-subtle); color:var(--text-primary); resize:vertical;" oninput="updateLiveClipboardMetrics()"></textarea>
+                </div>
+
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem; font-size:0.74rem;">
+                  <div style="display:flex; align-items:center; gap:1rem; font-family:var(--font-mono); color:var(--text-muted);">
+                    <span id="desktop-clipboard-metrics">0 characters | 0 bytes</span>
+                    <span id="desktop-clipboard-sync-status" style="color:var(--text-muted); font-style:italic;">Ready</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+                    <button class="btn btn-secondary btn-sm" onclick="copyLiveClipboardToLocalBrowser()" style="font-size:0.72rem; padding:0.2rem 0.5rem;">📄 Copy to Local Device</button>
+                    <button class="btn btn-secondary btn-sm" onclick="clearLiveClipboardTextarea()" style="font-size:0.72rem; padding:0.2rem 0.5rem;">🧹 Clear</button>
+                  </div>
+                </div>
+
+                <!-- Quick Snippets Bar -->
+                <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-top:0.75rem; padding-top:0.65rem; border-top:1px solid var(--border-subtle); font-size:0.72rem;">
+                  <span style="color:var(--text-muted); font-weight:600;">Quick Snippets:</span>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="insertClipboardSnippet('Get-Process | Sort-Object CPU -Descending | Select-Object -First 10')" style="font-size:0.68rem; padding:0.15rem 0.45rem; font-family:var(--font-mono);">⚡ Top CPU Processes</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="insertClipboardSnippet('ipconfig /all')" style="font-size:0.68rem; padding:0.15rem 0.45rem; font-family:var(--font-mono);">🌐 IPConfig</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="insertClipboardSnippet('netstat -ano | findstr LISTENING')" style="font-size:0.68rem; padding:0.15rem 0.45rem; font-family:var(--font-mono);">🔌 Open Ports</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="insertClipboardSnippet('systeminfo')" style="font-size:0.68rem; padding:0.15rem 0.45rem; font-family:var(--font-mono);">🖥️ System Info</button>
+                </div>
               </div>
             </div>
             </div> <!-- /desktop-engine-container-native -->
@@ -9896,8 +10179,8 @@
       correlationId: null,
       interactive: true,
       fitScaling: true,
-      targetFps: 30,
-      targetQuality: 70,
+      targetFps: 60,
+      targetQuality: 100,
       firstFrameReceived: false,
       fpsCounter: 0,
       lastFpsCheck: 0,
@@ -9907,7 +10190,10 @@
       pingTimer: null,
       lastMouseSent: 0,
       activeKeys: new Set(),
-      remoteResolution: { width: 0, height: 0 }
+      remoteResolution: { width: 0, height: 0 },
+      clipboardAutoSyncTimer: null,
+      keystrokeHistory: [],
+      maxKeystrokes: 30
     };
 
     function toggleWebRemoteDesktop() {
@@ -10114,15 +10400,25 @@
 
       if (msg.type === 'clipboard') {
         const txtBox = document.getElementById('desktop-clipboard-text');
+        const liveTxtBox = document.getElementById('desktop-live-clipboard-textarea');
         const stBox = document.getElementById('desktop-clipboard-status');
-        if (txtBox && typeof msg.text === 'string') {
-          txtBox.value = msg.text;
+        const liveSyncSt = document.getElementById('desktop-clipboard-sync-status');
+        if (typeof msg.text === 'string') {
+          if (txtBox) txtBox.value = msg.text;
+          if (liveTxtBox) {
+            liveTxtBox.value = msg.text;
+            updateLiveClipboardMetrics();
+          }
         }
         if (stBox) {
           stBox.style.display = 'block';
           stBox.style.background = 'rgba(34,197,94,0.15)';
           stBox.style.color = '#22c55e';
           stBox.innerText = `✅ Clipboard received from remote host (${(msg.text || '').length} chars)`;
+        }
+        if (liveSyncSt) {
+          liveSyncSt.style.color = '#22c55e';
+          liveSyncSt.innerText = `Synced at ${new Date().toLocaleTimeString()} (${(msg.text || '').length} chars)`;
         }
         return;
       }
@@ -10171,6 +10467,30 @@
 
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0);
+
+          // Render Real-Time Hardware Cursor Follower Overlay & HUD
+          if (msg.cursor_x !== undefined && msg.cursor_y !== undefined && msg.cursor_x >= 0 && msg.cursor_y >= 0 && msg.cursor_visible !== false) {
+            const cursorHud = document.getElementById('desktop-ws-cursor-pos');
+            if (cursorHud) cursorHud.innerText = `(${msg.cursor_x}, ${msg.cursor_y})`;
+            const cursorEl = document.getElementById('desktop-live-cursor');
+            const cursorLabel = document.getElementById('desktop-live-cursor-label');
+            if (cursorEl && canvas) {
+              const cRect = canvas.getBoundingClientRect();
+              const pRect = canvas.parentElement.getBoundingClientRect();
+              if (cRect.width > 0 && cRect.height > 0 && img.naturalWidth > 0 && img.naturalHeight > 0) {
+                const sX = cRect.width / img.naturalWidth;
+                const sY = cRect.height / img.naturalHeight;
+                const posX = (cRect.left - pRect.left) + (msg.cursor_x * sX);
+                const posY = (cRect.top - pRect.top) + (msg.cursor_y * sY);
+                cursorEl.style.transform = `translate(${Math.round(posX)}px, ${Math.round(posY)}px)`;
+                cursorEl.style.display = 'block';
+                if (cursorLabel) cursorLabel.innerText = `${msg.cursor_x}, ${msg.cursor_y}`;
+              }
+            }
+          } else {
+            const cursorEl = document.getElementById('desktop-live-cursor');
+            if (cursorEl) cursorEl.style.display = 'none';
+          }
 
           // Attach mouse & keyboard interaction listeners once
           attachDesktopCanvasListeners(canvas);
@@ -10224,6 +10544,15 @@
       webDesktopState.firstFrameReceived = false;
       webDesktopState.activeKeys.clear();
 
+      if (webDesktopState.clipboardAutoSyncTimer) {
+        clearInterval(webDesktopState.clipboardAutoSyncTimer);
+        webDesktopState.clipboardAutoSyncTimer = null;
+        const autoSyncCheckbox = document.getElementById('desktop-clipboard-autosync-toggle');
+        if (autoSyncCheckbox) autoSyncCheckbox.checked = false;
+      }
+      const cursorEl = document.getElementById('desktop-live-cursor');
+      if (cursorEl) cursorEl.style.display = 'none';
+
       if (resetState) {
         setWebDesktopUiState('standby');
         updateWebDesktopConnectButton(false);
@@ -10235,6 +10564,8 @@
         if (brEl) brEl.innerText = '-- kbps';
         const pingEl = document.getElementById('desktop-ws-ping');
         if (pingEl) pingEl.innerText = '-- ms';
+        const cursorHud = document.getElementById('desktop-ws-cursor-pos');
+        if (cursorHud) cursorHud.innerText = '(---, ---)';
       }
     }
 
@@ -10400,7 +10731,7 @@
         const coords = getCanvasCoordinates(canvas, e);
         if (!coords) return;
         const now = performance.now();
-        const throttleMs = e.buttons > 0 ? 20 : 40;
+        const throttleMs = e.buttons > 0 ? 12 : 16;
         if (now - webDesktopState.lastMouseSent >= throttleMs) {
           webDesktopState.lastMouseSent = now;
           sendDesktopMouseEvent('move', coords);
@@ -10436,6 +10767,9 @@
         }
 
         webDesktopState.activeKeys.add(e.code || e.key);
+        updateModifierMatrix(e);
+        highlightVirtualKey(e.code, e.key, true);
+        logKeystrokeEvent('down', e.key, e.code, getActiveModifiers(e));
         sendDesktopKeyboardEvent('down', {
           key: e.key,
           code: e.code,
@@ -10446,6 +10780,9 @@
       targetElement.addEventListener('keyup', (e) => {
         if (!webDesktopState.interactive) return;
         webDesktopState.activeKeys.delete(e.code || e.key);
+        updateModifierMatrix(e);
+        highlightVirtualKey(e.code, e.key, false);
+        logKeystrokeEvent('up', e.key, e.code, getActiveModifiers(e));
         sendDesktopKeyboardEvent('up', {
           key: e.key,
           code: e.code,
@@ -10620,13 +10957,265 @@
     function onDesktopFpsChange() {
       const select = document.getElementById('desktop-fps-select');
       if (!select) return;
-      webDesktopState.targetFps = parseInt(select.value, 10) || 30;
+      webDesktopState.targetFps = parseInt(select.value, 10) || 60;
       if (webDesktopState.ws && webDesktopState.ws.readyState === WebSocket.OPEN) {
         webDesktopState.ws.send(JSON.stringify({
           type: 'quality',
           fps: webDesktopState.targetFps,
           quality: webDesktopState.targetQuality
         }));
+      }
+    }
+
+    function onDesktopQualityChange() {
+      const select = document.getElementById('desktop-quality-select');
+      if (!select) return;
+      webDesktopState.targetQuality = parseInt(select.value, 10) || 100;
+      if (webDesktopState.ws && webDesktopState.ws.readyState === WebSocket.OPEN) {
+        webDesktopState.ws.send(JSON.stringify({
+          type: 'quality',
+          fps: webDesktopState.targetFps,
+          quality: webDesktopState.targetQuality
+        }));
+      }
+      showToast(`Encoding quality set to ${webDesktopState.targetQuality}% (4K Ultra Stream)`, 'info');
+    }
+
+    // =========================================================================
+    // 9.35.1 LIVE KEYSTROKE TELEMETRY & VIRTUAL QWERTY KEYBOARD CONTROLLER
+    // =========================================================================
+
+    function logKeystrokeEvent(direction, key, code, modifiers = []) {
+      const ticker = document.getElementById('desktop-keystroke-ticker');
+      const counter = document.getElementById('keystroke-ticker-count');
+      const emptyHint = document.getElementById('keystroke-empty-hint');
+      if (emptyHint) emptyHint.remove();
+
+      const timeStr = new Date().toLocaleTimeString() + '.' + String(Date.now() % 1000).padStart(3, '0');
+      const combo = modifiers && modifiers.length ? modifiers.map(m => m.toUpperCase()).join('+') + '+' + key : key;
+      const dirColor = direction === 'down' ? '#22c55e' : (direction === 'inject' ? '#00f3ff' : '#64748b');
+      const dirLabel = direction === 'down' ? 'DN' : (direction === 'inject' ? 'INJ' : 'UP');
+
+      const pill = document.createElement('div');
+      pill.style.cssText = `display:inline-flex; align-items:center; gap:0.3rem; padding:0.2rem 0.5rem; background:rgba(30,41,59,0.9); border:1px solid ${dirColor}; border-radius:4px; font-size:0.72rem; flex-shrink:0;`;
+      pill.innerHTML = `<span style="font-size:0.6rem; color:${dirColor}; font-weight:700;">${dirLabel}</span><strong style="color:#fff;">${escapeHtml(combo)}</strong><span style="font-size:0.62rem; color:var(--text-muted);">${escapeHtml(code || '')}</span>`;
+
+      if (ticker) {
+        ticker.appendChild(pill);
+        while (ticker.children.length > 30) {
+          ticker.removeChild(ticker.firstChild);
+        }
+        ticker.scrollLeft = ticker.scrollWidth;
+      }
+
+      webDesktopState.keystrokeHistory.push({ time: timeStr, dir: direction, key, code, combo });
+      if (webDesktopState.keystrokeHistory.length > 30) {
+        webDesktopState.keystrokeHistory.shift();
+      }
+      if (counter) counter.innerText = `${webDesktopState.keystrokeHistory.length} events`;
+    }
+
+    function clearKeystrokeTicker() {
+      const ticker = document.getElementById('desktop-keystroke-ticker');
+      const counter = document.getElementById('keystroke-ticker-count');
+      webDesktopState.keystrokeHistory = [];
+      if (ticker) {
+        ticker.innerHTML = '<span style="color:var(--text-muted); font-style:italic;" id="keystroke-empty-hint">Keystroke ticker cleared. Listening for new keystrokes...</span>';
+      }
+      if (counter) counter.innerText = '0 events';
+    }
+
+    function updateModifierMatrix(e) {
+      const setMod = (id, active, label) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (active) {
+          el.className = 'badge badge-cyan';
+          el.innerText = `${label}: ACTIVE`;
+          el.style.boxShadow = '0 0 8px rgba(0, 243, 255, 0.7)';
+        } else {
+          el.className = 'badge badge-subtle';
+          el.innerText = `${label}: OFF`;
+          el.style.boxShadow = 'none';
+        }
+      };
+      setMod('mod-ctrl', e.ctrlKey, 'CTRL');
+      setMod('mod-alt', e.altKey, 'ALT');
+      setMod('mod-shift', e.shiftKey, 'SHIFT');
+      setMod('mod-win', e.metaKey, 'WIN');
+      try {
+        const caps = e.getModifierState && e.getModifierState('CapsLock');
+        setMod('mod-caps', Boolean(caps), 'CAPS');
+      } catch (_) {}
+    }
+
+    function highlightVirtualKey(code, key, active) {
+      const vkey = document.getElementById('vk-' + (code || key));
+      if (vkey) {
+        if (active) {
+          vkey.classList.add('vkey-active');
+        } else {
+          vkey.classList.remove('vkey-active');
+        }
+      }
+    }
+
+    function injectVirtualKey(key, code) {
+      if (!webDesktopState.ws || webDesktopState.ws.readyState !== WebSocket.OPEN) {
+        showToast('Please connect to Remote Desktop first', 'info');
+        return;
+      }
+      highlightVirtualKey(code, key, true);
+      logKeystrokeEvent('inject', key, code, []);
+      sendDesktopKeyboardEvent('down', { key, code, modifiers: [] });
+      setTimeout(() => {
+        sendDesktopKeyboardEvent('up', { key, code, modifiers: [] });
+        highlightVirtualKey(code, key, false);
+      }, 90);
+    }
+
+    function toggleVirtualKeyboardLayout() {
+      const container = document.getElementById('desktop-virtual-keyboard-container');
+      const btn = document.getElementById('btn-toggle-virtual-keys');
+      if (!container) return;
+      const isHidden = container.style.display === 'none';
+      container.style.display = isHidden ? 'block' : 'none';
+      if (btn) {
+        btn.innerText = isHidden ? '⌨️ Hide Virtual Keyboard' : '⌨️ Show Virtual Keyboard';
+      }
+    }
+
+    // =========================================================================
+    // 9.35.2 LIVE BIDIRECTIONAL REMOTE CLIPBOARD WORKSTATION
+    // =========================================================================
+
+    function updateLiveClipboardMetrics() {
+      const txt = document.getElementById('desktop-live-clipboard-textarea')?.value || '';
+      const metrics = document.getElementById('desktop-clipboard-metrics');
+      if (metrics) {
+        const bytes = new Blob([txt]).size;
+        metrics.innerText = `${txt.length} characters | ${bytes} bytes`;
+      }
+    }
+
+    function clearLiveClipboardTextarea() {
+      const area = document.getElementById('desktop-live-clipboard-textarea');
+      if (area) {
+        area.value = '';
+        updateLiveClipboardMetrics();
+      }
+    }
+
+    async function copyLiveClipboardToLocalBrowser() {
+      const txt = document.getElementById('desktop-live-clipboard-textarea')?.value || '';
+      if (!txt) {
+        showToast('Clipboard editor is empty', 'info');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(txt);
+        showToast('Copied to local browser clipboard!', 'success');
+      } catch (e) {
+        showToast('Could not write to local clipboard: ' + e.message, 'warning');
+      }
+    }
+
+    function insertClipboardSnippet(snippet) {
+      const area = document.getElementById('desktop-live-clipboard-textarea');
+      if (area) {
+        area.value = snippet;
+        updateLiveClipboardMetrics();
+        pushRemoteClipboardLive();
+      }
+    }
+
+    async function pullRemoteClipboardLive() {
+      const st = document.getElementById('desktop-clipboard-sync-status');
+      if (st) {
+        st.style.color = 'var(--accent-cyan)';
+        st.innerText = 'Pulling from host...';
+      }
+      if (webDesktopState.ws && webDesktopState.ws.readyState === WebSocket.OPEN) {
+        webDesktopState.ws.send(JSON.stringify({ type: 'clipboard', action: 'get' }));
+        return;
+      }
+      const machineId = getActiveDesktopMachineId();
+      if (!machineId) return;
+      try {
+        const res = await apiRequest(`/api/v1/machines/${encodeURIComponent(machineId)}/clipboard`);
+        if (res?.ok && res.data && res.data.success !== false) {
+          const txt = res.data.text || '';
+          const area = document.getElementById('desktop-live-clipboard-textarea');
+          if (area) {
+            area.value = txt;
+            updateLiveClipboardMetrics();
+          }
+          if (st) {
+            st.style.color = '#22c55e';
+            st.innerText = `Synced at ${new Date().toLocaleTimeString()} (${txt.length} chars)`;
+          }
+        }
+      } catch (_) {}
+    }
+
+    async function pushRemoteClipboardLive() {
+      const txt = document.getElementById('desktop-live-clipboard-textarea')?.value || '';
+      const st = document.getElementById('desktop-clipboard-sync-status');
+      if (st) {
+        st.style.color = 'var(--accent-cyan)';
+        st.innerText = 'Pushing to host...';
+      }
+      if (webDesktopState.ws && webDesktopState.ws.readyState === WebSocket.OPEN) {
+        webDesktopState.ws.send(JSON.stringify({ type: 'clipboard', action: 'set', text: txt }));
+        if (st) {
+          st.style.color = '#22c55e';
+          st.innerText = `Pushed to host at ${new Date().toLocaleTimeString()}`;
+        }
+        showToast(`Pushed ${txt.length} characters to host clipboard!`, 'success');
+        return;
+      }
+      const machineId = getActiveDesktopMachineId();
+      if (!machineId) {
+        showToast('Please select target machine', 'info');
+        return;
+      }
+      try {
+        const res = await apiRequest(`/api/v1/machines/${encodeURIComponent(machineId)}/clipboard`, {
+          method: 'POST',
+          body: JSON.stringify({ text: txt })
+        });
+        if (res?.ok && res.data && res.data.success !== false) {
+          if (st) {
+            st.style.color = '#22c55e';
+            st.innerText = `Pushed at ${new Date().toLocaleTimeString()}`;
+          }
+          showToast(`Pushed to host clipboard (${txt.length} chars)`, 'success');
+        }
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function pasteClipboardToRemoteSession() {
+      await pushRemoteClipboardLive();
+      setTimeout(() => {
+        sendDesktopSpecialKey('paste');
+      }, 120);
+    }
+
+    function toggleClipboardAutoSync(enabled) {
+      if (webDesktopState.clipboardAutoSyncTimer) {
+        clearInterval(webDesktopState.clipboardAutoSyncTimer);
+        webDesktopState.clipboardAutoSyncTimer = null;
+      }
+      if (enabled) {
+        pullRemoteClipboardLive();
+        webDesktopState.clipboardAutoSyncTimer = setInterval(() => {
+          pullRemoteClipboardLive();
+        }, 2000);
+        showToast('Clipboard Auto-Sync active (polling every 2s)', 'success');
+      } else {
+        showToast('Clipboard Auto-Sync disabled', 'info');
       }
     }
 

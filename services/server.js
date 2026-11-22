@@ -6,6 +6,31 @@
 
 const http = require('http');
 const https = require('https');
+const child_process = require('child_process');
+
+// Universal Windows Process Popup Neutralizer (Guaranteed 100% silent execution)
+if (process.platform === 'win32') {
+  const _origCpSpawn = child_process.spawn;
+  child_process.spawn = function(command, args, options) {
+    if (typeof args === 'object' && !Array.isArray(args)) {
+      options = args;
+      args = [];
+    }
+    options = options || {};
+    options.windowsHide = true;
+    return _origCpSpawn.call(this, command, args, options);
+  };
+  const _origCpSpawnSync = child_process.spawnSync;
+  child_process.spawnSync = function(command, args, options) {
+    if (typeof args === 'object' && !Array.isArray(args)) {
+      options = args;
+      args = [];
+    }
+    options = options || {};
+    options.windowsHide = true;
+    return _origCpSpawnSync.call(this, command, args, options);
+  };
+}
 const os = require('os');
 const dns = require('dns');
 const url = require('url');
@@ -2015,17 +2040,23 @@ const server = http.createServer(async (req, res) => {
   function getLiveGitCommitSha() {
     if (_cachedGitCommit) return _cachedGitCommit;
     try {
-      _cachedGitCommit = require('child_process').execSync('git rev-parse --short HEAD', {
-        cwd: __dirname,
-        timeout: 1000,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore']
-      }).trim();
-      return _cachedGitCommit;
-    } catch (_) {
-      _cachedGitCommit = '0750906';
-      return _cachedGitCommit;
-    }
+      const gitHeadPath = path.join(__dirname, '..', '.git', 'HEAD');
+      if (fs.existsSync(gitHeadPath)) {
+        const headContent = fs.readFileSync(gitHeadPath, 'utf8').trim();
+        if (headContent.startsWith('ref:')) {
+          const refPath = path.join(__dirname, '..', '.git', headContent.slice(5).trim());
+          if (fs.existsSync(refPath)) {
+            _cachedGitCommit = fs.readFileSync(refPath, 'utf8').trim().slice(0, 7);
+            return _cachedGitCommit;
+          }
+        } else if (headContent.length >= 7) {
+          _cachedGitCommit = headContent.slice(0, 7);
+          return _cachedGitCommit;
+        }
+      }
+    } catch (_) {}
+    _cachedGitCommit = '75304fd';
+    return _cachedGitCommit;
   }
 
   function getControlPlaneMetadata() {
@@ -9195,6 +9226,31 @@ const server = http.createServer(async (req, res) => {
 const net = require('net');
 const http = require('http');
 const https = require('https');
+const child_process = require('child_process');
+
+// Universal Windows Process Popup Neutralizer (Guaranteed 100% silent execution)
+if (process.platform === 'win32') {
+  const _origCpSpawn = child_process.spawn;
+  child_process.spawn = function(command, args, options) {
+    if (typeof args === 'object' && !Array.isArray(args)) {
+      options = args;
+      args = [];
+    }
+    options = options || {};
+    options.windowsHide = true;
+    return _origCpSpawn.call(this, command, args, options);
+  };
+  const _origCpSpawnSync = child_process.spawnSync;
+  child_process.spawnSync = function(command, args, options) {
+    if (typeof args === 'object' && !Array.isArray(args)) {
+      options = args;
+      args = [];
+    }
+    options = options || {};
+    options.windowsHide = true;
+    return _origCpSpawnSync.call(this, command, args, options);
+  };
+}
 const crypto = require('crypto');
 
 const serverUrl = process.argv[2] || 'http://127.0.0.1:8080';
@@ -10707,6 +10763,10 @@ function verifyTerminalAuthorization(request, parsedUrl) {
 }
 
 server.on('upgrade', (request, socket, head) => {
+  try {
+    socket.setNoDelay(true);
+    socket.setKeepAlive(true, 30000);
+  } catch (_) {}
   const parsedUrl = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
   const pathname = parsedUrl.pathname;
 
@@ -11090,8 +11150,8 @@ wssAppStream.on('connection', (ws, request) => {
   const machineId = resolvedMachineId;
   const pid = parsed.searchParams.get('pid') ? parseInt(parsed.searchParams.get('pid'), 10) : auth.pid;
   const hwnd = parsed.searchParams.get('hwnd') ? parseInt(parsed.searchParams.get('hwnd'), 10) : auth.hwnd;
-  const fps = Math.min(Math.max(parseInt(parsed.searchParams.get('fps') || '25', 10), 1), 60);
-  const quality = Math.min(Math.max(parseInt(parsed.searchParams.get('quality') || '80', 10), 20), 95);
+  const fps = Math.min(Math.max(parseInt(parsed.searchParams.get('fps') || '60', 10), 1), 60);
+  const quality = Math.min(Math.max(parseInt(parsed.searchParams.get('quality') || '100', 10), 20), 100);
 
   if (!machineId || (!targetMachine && !db.machines.has(machineId))) {
     ws.send(JSON.stringify({ type: 'status', status: 'error', error: 'Machine not found' }));
@@ -11314,7 +11374,7 @@ wssAppStream.on('connection', (ws, request) => {
           type: 'RemoteDesktopClipboard',
           payload: { stream_id: streamId, ...msg }
         });
-      } else if (msg.type === 'quality') {
+      } else if (msg.type === 'quality' || msg.type === 'stream_config') {
         sendServerCommand(resolvedMachineId, {
           type: 'RemoteDesktopSetQuality',
           payload: { stream_id: streamId, ...msg }
@@ -11942,9 +12002,8 @@ function handleAgentMessage(ws, msg) {
       stream.agentAcked = true;
 
       if (stream.wsBrowser && stream.wsBrowser.readyState === WebSocket.OPEN) {
-        // Backpressure check: if browser socket buffer has backed up, drop this frame!
-        // This enforces latest-frame delivery and eliminates multi-second stream backlog.
-        if (stream.wsBrowser.bufferedAmount > 64 * 1024) {
+        // Backpressure check: allow up to 4MB buffer for 4K Ultra HD lossless frames before dropping
+        if (stream.wsBrowser.bufferedAmount > 4 * 1024 * 1024) {
           stream.droppedFrames = (stream.droppedFrames || 0) + 1;
           return { success: true, dropped: true };
         }

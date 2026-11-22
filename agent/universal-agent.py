@@ -655,6 +655,7 @@ class RelayWebSocket:
         raw_s = _safe_create_connection((host, port), timeout=8.0)
         try:
             raw_s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            raw_s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             if hasattr(socket, "TCP_KEEPIDLE"):
                 raw_s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 20)
             if hasattr(socket, "TCP_KEEPINTVL"):
@@ -1005,36 +1006,18 @@ class CyberVPSAgent:
     def ensure_local_space_station_backend(self):
         """
         Self-Hosting Decentralized Backend Engine:
-        If local Space Station backend is not responding on 8080, automatically starts
-        services/server.js using node so this host becomes an active Space Station backend!
+        Checks if local Space Station backend is responding on 8080 via pure TCP socket.
+        Never kills port 8080, and spawns node server.js completely silently if not running.
         """
-        needs_restart = False
-        restart_flag = os.path.join(os.path.expanduser("~"), ".cybervps", "restart.flag")
-        if os.path.exists(restart_flag):
-            try:
-                os.remove(restart_flag)
-            except Exception:
-                pass
-            needs_restart = True
-        else:
-            try:
-                import urllib.request
-                req = urllib.request.Request("http://127.0.0.1:8080/metrics")
-                with urllib.request.urlopen(req, timeout=1.0) as resp:
-                    if resp.status == 200:
-                        return True
-                    else:
-                        needs_restart = True
-            except Exception:
-                needs_restart = True
-
-        if needs_restart:
-            try:
-                if sys.platform == "win32":
-                    subprocess.run(["powershell", "-NoProfile", "-Command", "Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"], capture_output=True, timeout=5)
-                    time.sleep(1.0)
-            except Exception:
-                pass
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.3)
+            is_open = (s.connect_ex(("127.0.0.1", 8080)) == 0)
+            s.close()
+            if is_open:
+                return True
+        except Exception:
+            pass
 
         candidates = [
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "services", "server.js"),
@@ -7437,7 +7420,7 @@ class CyberVPSAgent:
         """Captures full Windows/Linux desktop with real hardware mouse cursor overlay."""
         sys_os = platform.system()
         now_ms = int(time.time() * 1000)
-        quality = min(max(int(quality or 80), 20), 95)
+        quality = min(max(int(quality or 80), 20), 100)
         if sys_os == "Windows":
             try:
                 import ctypes
@@ -7583,15 +7566,31 @@ class CyberVPSAgent:
                         }
                     return {"success": False, "status": "permission_denied", "error": "BitBlt failed to capture display buffer."}
 
-                # Draw real-time hardware cursor
+                # Draw real-time hardware cursor with accurate hotspot subtraction
+                cursor_x = -1
+                cursor_y = -1
+                cursor_visible = False
                 try:
                     class CURSORINFO(ctypes.Structure):
                         _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD), ("hCursor", wintypes.HBITMAP), ("ptScreenPos", wintypes.POINT)]
+                    class ICONINFO(ctypes.Structure):
+                        _fields_ = [("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD), ("yHotspot", wintypes.DWORD), ("hbmMask", wintypes.HBITMAP), ("hbmColor", wintypes.HBITMAP)]
                     ci = CURSORINFO()
                     ci.cbSize = ctypes.sizeof(CURSORINFO)
                     if user32.GetCursorInfo(ctypes.byref(ci)):
-                        if ci.flags == 1 and ci.hCursor:
-                            user32.DrawIcon(memDC, ci.ptScreenPos.x, ci.ptScreenPos.y, ci.hCursor)
+                        if ci.flags == 1 and ci.hCursor: # CURSOR_SHOWING = 1
+                            cursor_x = int(ci.ptScreenPos.x)
+                            cursor_y = int(ci.ptScreenPos.y)
+                            cursor_visible = True
+                            ii = ICONINFO()
+                            if user32.GetIconInfo(ci.hCursor, ctypes.byref(ii)):
+                                user32.DrawIconEx(memDC, cursor_x - int(ii.xHotspot), cursor_y - int(ii.yHotspot), ci.hCursor, 0, 0, 0, None, 3)
+                                if ii.hbmMask:
+                                    gdi32.DeleteObject(ii.hbmMask)
+                                if ii.hbmColor:
+                                    gdi32.DeleteObject(ii.hbmColor)
+                            else:
+                                user32.DrawIcon(memDC, cursor_x, cursor_y, ci.hCursor)
                 except Exception:
                     pass
 
@@ -7658,6 +7657,9 @@ class CyberVPSAgent:
                     "is_minimized": False,
                     "format": fmt,
                     "data": b64_data,
+                    "cursor_x": cursor_x,
+                    "cursor_y": cursor_y,
+                    "cursor_visible": cursor_visible,
                     "timestamp": now_ms
                 }
             except Exception as e:
@@ -7903,6 +7905,35 @@ class CyberVPSAgent:
                         gdi32.BitBlt(memDC, 0, 0, w, h, screenDC, r.left, r.top, 0x00CC0020)
                         user32.ReleaseDC(None, screenDC)
 
+                # Draw real-time hardware cursor if within window bounds
+                cursor_x = -1
+                cursor_y = -1
+                cursor_visible = False
+                try:
+                    class CURSORINFO(ctypes.Structure):
+                        _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD), ("hCursor", wintypes.HBITMAP), ("ptScreenPos", wintypes.POINT)]
+                    class ICONINFO(ctypes.Structure):
+                        _fields_ = [("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD), ("yHotspot", wintypes.DWORD), ("hbmMask", wintypes.HBITMAP), ("hbmColor", wintypes.HBITMAP)]
+                    ci = CURSORINFO()
+                    ci.cbSize = ctypes.sizeof(CURSORINFO)
+                    if user32.GetCursorInfo(ctypes.byref(ci)):
+                        if ci.flags == 1 and ci.hCursor:
+                            cursor_x = int(ci.ptScreenPos.x) - r.left
+                            cursor_y = int(ci.ptScreenPos.y) - r.top
+                            cursor_visible = (0 <= cursor_x <= w and 0 <= cursor_y <= h)
+                            if cursor_visible:
+                                ii = ICONINFO()
+                                if user32.GetIconInfo(ci.hCursor, ctypes.byref(ii)):
+                                    user32.DrawIconEx(memDC, cursor_x - int(ii.xHotspot), cursor_y - int(ii.yHotspot), ci.hCursor, 0, 0, 0, None, 3)
+                                    if ii.hbmMask:
+                                        gdi32.DeleteObject(ii.hbmMask)
+                                    if ii.hbmColor:
+                                        gdi32.DeleteObject(ii.hbmColor)
+                                else:
+                                    user32.DrawIcon(memDC, cursor_x, cursor_y, ci.hCursor)
+                except Exception:
+                    pass
+
                 # Hardware-accelerated GDI+ JPEG encoding first
                 b64_data = self._encode_hbitmap_to_jpeg(hBmp, quality=quality)
                 fmt = "jpeg"
@@ -7967,6 +7998,9 @@ class CyberVPSAgent:
                     "is_minimized": False,
                     "format": fmt,
                     "data": b64_data,
+                    "cursor_x": cursor_x,
+                    "cursor_y": cursor_y,
+                    "cursor_visible": cursor_visible,
                     "timestamp": int(time.time() * 1000)
                 }
 
@@ -8326,6 +8360,18 @@ class CyberVPSAgent:
             with self.lock:
                 self.active_app_streams[stream_id]["hwnd"] = hwnd
                 self.active_app_streams[stream_id]["desktop_mode"] = False if hwnd else True
+
+    def handle_desktop_set_quality(self, payload):
+        stream_id = payload.get("stream_id")
+        quality = payload.get("quality")
+        fps = payload.get("fps")
+        with self.lock:
+            for sid, cfg in self.active_app_streams.items():
+                if not stream_id or sid == stream_id:
+                    if quality is not None:
+                        cfg["quality"] = min(max(int(quality), 20), 100)
+                    if fps is not None:
+                        cfg["fps"] = min(max(int(fps), 1), 60)
 
     def handle_desktop_input_mouse(self, payload):
         """Processes remote mouse events with pixel-perfect screen coordinate mapping."""
@@ -9719,6 +9765,8 @@ class CyberVPSAgent:
             self.handle_desktop_input_keyboard(payload)
         elif c_type in ["AppStreamClipboard", "RemoteDesktopClipboard"]:
             self.handle_desktop_clipboard(payload)
+        elif c_type in ["AppStreamSetQuality", "RemoteDesktopSetQuality"]:
+            self.handle_desktop_set_quality(payload)
         elif c_type in ["OtaUpdate", "OtaCheck", "FleetUpdate", "UpdateAgent"]:
             threading.Thread(target=self.handle_ota_update if c_type == "OtaCheck" else self.handle_rebuild_agent, args=(payload,), daemon=True).start()
         elif c_type == "RebootHost":

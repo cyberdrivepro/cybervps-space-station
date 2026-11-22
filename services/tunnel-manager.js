@@ -142,9 +142,10 @@ class TunnelManager {
 
     for (const p of candidatePaths) {
       try {
-        execSync(`${p} --version`, { stdio: 'ignore' });
-        cloudflaredBin = p;
-        break;
+        if (p !== 'cloudflared' && fs.existsSync(p)) {
+          cloudflaredBin = p;
+          break;
+        }
       } catch (_) {}
     }
 
@@ -198,7 +199,8 @@ class TunnelManager {
         '--no-autoupdate',
         '--url', `http://127.0.0.1:${this.port}`
       ], {
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
       });
 
       this.activeChild = child;
@@ -257,10 +259,20 @@ class TunnelManager {
           cleanup();
           reject(new Error(`cloudflared exited with code ${code}. Log: ${errorLog.slice(-300)}`));
         } else {
-          console.warn(`[!] [Tunnel Supervisor] cloudflared exited with code ${code}. Restarting tunnel in 2s...`);
+          this.reconnectAttempts = (this.reconnectAttempts || 0) + 1;
+          if (this.reconnectAttempts > 5) {
+            console.warn('[!] [Tunnel Supervisor] Maximum tunnel restart attempts reached. Backing off for 60s...');
+            setTimeout(() => {
+              this.reconnectAttempts = 0;
+              this.startCloudflareTunnel().catch(() => {});
+            }, 60000);
+            return;
+          }
+          const delay = Math.min(30000, 2000 * Math.pow(1.5, this.reconnectAttempts));
+          console.warn(`[!] [Tunnel Supervisor] cloudflared exited with code ${code}. Restarting tunnel in ${Math.round(delay/1000)}s...`);
           setTimeout(() => {
             this.startCloudflareTunnel().catch(e => console.error('[!] Supervisor restart failed:', e.message));
-          }, 2000);
+          }, delay);
         }
       });
 
@@ -307,7 +319,7 @@ class TunnelManager {
 
       console.log(`[*] Downloading cloudflared standalone binary for ${platform}-${arch}...`);
       if (platform === 'linux' || platform === 'win32') {
-        execSync(`curl -fsSL -o "${targetPath}" "${downloadUrl}"`, { timeout: 30000 });
+        execSync(`curl -fsSL -o "${targetPath}" "${downloadUrl}"`, { timeout: 30000, windowsHide: true });
         if (platform !== 'win32') fs.chmodSync(targetPath, 0o755);
         return targetPath;
       }
@@ -325,7 +337,7 @@ class TunnelManager {
     return new Promise((resolve, reject) => {
       // Test if ssh is available
       try {
-        execSync('ssh -V', { stdio: 'ignore' });
+        execSync('ssh -V', { stdio: 'ignore', windowsHide: true });
       } catch (_) {
         return reject(new Error('ssh client not available for pinggy tunnel'));
       }
@@ -340,7 +352,7 @@ class TunnelManager {
         '-p', '443',
         '-R0:localhost:' + this.port,
         'a.pinggy.io'
-      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 
       this.activeChild = child;
       let discoveredUrl = null;
